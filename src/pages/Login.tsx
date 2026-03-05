@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { motion } from 'motion/react';
 import { LogIn, Loader2 } from 'lucide-react';
+import logoImg from '../assets/Mystarz-logo.png';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -42,7 +43,7 @@ export default function Login() {
         className="mb-8"
       >
         <img
-          src="/src/assets/Mystarz-logo.png"
+          src={logoImg}
           alt="Mystarz ロゴ"
           className="h-16 w-auto object-contain"
         />
