@@ -25,13 +25,23 @@ interface User {
   team: string;
 }
 
-const COLORS = ['#6366f1', '#10b981'];
+const COLORS = ['#a855f7', '#ec4899'];
 
 const TEAMS = [
   { label: '①東京営業部・東京営業', key: '東京営業' },
   { label: '②大阪営業部・高槻営業', key: '高槻営業' },
   { label: '②大阪営業部・北浜営業', key: '北浜営業' },
 ];
+
+// ピンク・紫系のグラデーション下線コンポーネント
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-4">
+      <h2 className="text-lg font-bold text-zinc-800">{children}</h2>
+      <div className="mt-1 h-1 w-16 rounded-full bg-gradient-to-r from-purple-500 to-pink-500" />
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -45,7 +55,10 @@ export default function Dashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const departments = ['①東京営業部', '②大阪営業部'];
+
   useEffect(() => {
+    // 🚧 デモ用ダミーデータ（朱さんのAPI実装後に差し替え）
     setUsers([
       { id: '1', name: '権藤', team: '東京営業' },
       { id: '2', name: '浦上', team: '東京営業' },
@@ -106,52 +119,50 @@ export default function Dashboard() {
     navigate('/login');
   };
 
-const handleDownload = () => {
-  // ============================================
-  // 🚨 朱さんへ：差し替えが必要な箇所です
-  // --------------------------------------------
-  // 現在はデモ用のダミーCSVを出力しています。
-  // 本番稼働時は以下のコメントアウトを外して、
-  // ダミーデータ部分を削除してください🙏
-  //
-  // 差し替え後のコード↓
-  // window.open('/api/export/deals', '_blank');
-  // ============================================
-
-  const headers = ['案件名', '担当者', '部署', '金額', 'ステータス', '日付'];
-  const rows = [
-    ['案件A', '権藤', '東京営業', '1200000', '受注', '2026-03-01'],
-    ['案件B', '寺町', '高槻営業', '800000', '提案中', '2026-03-02'],
-    ['案件C', '浦上', '東京営業', '500000', '受注', '2026-03-03'],
-    ['案件D', '山田', '高槻営業', '300000', '失注', '2026-03-04'],
-    ['案件E', '小山', '北浜営業', '400000', '提案中', '2026-03-05'],
-  ];
-  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'deals_demo.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-};
-
+  const handleDownload = () => {
+    // ============================================
+    // 🚨 朱さんへ：差し替えが必要な箇所です
+    // --------------------------------------------
+    // 現在はデモ用のダミーCSVを出力しています。
+    // 本番稼働時は以下のコメントアウトを外して、
+    // ダミーデータ部分を削除してください🙏
+    //
+    // 差し替え後のコード↓
+    // window.open('/api/export/deals', '_blank');
+    // ============================================
+    const headers = ['案件名', '担当者', '部署', '金額', 'ステータス', '日付'];
+    const rows = [
+      ['案件A', '権藤', '東京営業', '1200000', '受注', '2026-03-01'],
+      ['案件B', '寺町', '高槻営業', '800000', '提案中', '2026-03-02'],
+      ['案件C', '浦上', '東京営業', '500000', '受注', '2026-03-03'],
+      ['案件D', '山田', '高槻営業', '300000', '失注', '2026-03-04'],
+      ['案件E', '小山', '北浜営業', '400000', '提案中', '2026-03-05'],
+    ];
+    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'deals_demo.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-500 border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen bg-zinc-100">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-6 py-4">
+      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-6 py-4 shadow-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between">
           <div className="flex items-center gap-2">
-            <LayoutDashboard className="h-6 w-6 text-indigo-600" />
+            <LayoutDashboard className="h-6 w-6 text-purple-500" />
             <h1 className="text-xl font-bold text-zinc-900">KPI ダッシュボード</h1>
           </div>
           <div className="flex items-center gap-4">
@@ -164,7 +175,7 @@ const handleDownload = () => {
             </button>
             <button
               onClick={() => navigate('/deals/new')}
-              className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-2 text-sm font-medium text-white hover:opacity-90"
             >
               <PlusCircle className="h-4 w-4" />
               新規案件入力
@@ -272,18 +283,18 @@ const handleDownload = () => {
         {/* KPI Cards */}
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm text-zinc-500">予算達成率</p>
-            <p className="mt-2 text-3xl font-bold text-indigo-600">{data?.budget.achievement_rate ?? 0}%</p>
+            <SectionTitle>予算達成率</SectionTitle>
+            <p className="mt-2 text-3xl font-bold text-purple-500">{data?.budget.achievement_rate ?? 0}%</p>
             <p className="mt-1 text-xs text-zinc-400">¥{(data?.budget.sales ?? 0).toLocaleString()} / ¥{(data?.budget.budget ?? 0).toLocaleString()}</p>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm text-zinc-500">総売上</p>
-            <p className="mt-2 text-3xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
+            <SectionTitle>総売上</SectionTitle>
+            <p className="mt-2 text-3xl font-bold text-pink-500">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
             <p className="mt-1 text-xs text-zinc-400">前期比 +{data?.sales.change_rate ?? 0}%</p>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="rounded-xl bg-white p-6 shadow-sm">
-            <p className="text-sm text-zinc-500">パイプライン</p>
-            <p className="mt-2 text-3xl font-bold text-amber-600">{data?.pipeline.proposal_count ?? 0}件</p>
+            <SectionTitle>パイプライン</SectionTitle>
+            <p className="mt-2 text-3xl font-bold text-fuchsia-500">{data?.pipeline.proposal_count ?? 0}件</p>
             <p className="mt-1 text-xs text-zinc-400">受注 {data?.pipeline.won_count ?? 0}件 / 成約率 {data?.pipeline.conversion_rate ?? 0}%</p>
           </motion.div>
         </div>
@@ -291,20 +302,20 @@ const handleDownload = () => {
         {/* Charts */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="rounded-xl bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-base font-semibold text-zinc-800">営業成績ランキング</h2>
+            <SectionTitle>営業成績ランキング</SectionTitle>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={data?.proposal_ranking ?? []} layout="vertical" margin={{ left: 16 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" />
                 <YAxis type="category" dataKey="name" width={48} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="count" fill="#a855f7" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </motion.div>
 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="rounded-xl bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-base font-semibold text-zinc-800">既存 vs 新規</h2>
+            <SectionTitle>既存 vs 新規</SectionTitle>
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
                 <Pie
