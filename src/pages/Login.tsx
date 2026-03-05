@@ -40,7 +40,8 @@ export default function Login() {
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-8"
+        className="mb-8 rounded-2xl bg-gradient-to-br from-purple-600 to-pink-500 px-10 py-6"
+
       >
         <img
           src={logoImg}
