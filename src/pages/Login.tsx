@@ -42,7 +42,7 @@ export default function Login() {
         className="mb-8"
       >
         <img
-          src="https://www.mystarz.co.jp/Mystarz-logo.png"
+          src="/src/assets/Mystarz-logo.png"
           alt="Mystarz ロゴ"
           className="h-16 w-auto object-contain"
         />
