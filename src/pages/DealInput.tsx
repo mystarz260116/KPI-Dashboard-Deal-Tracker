@@ -1,31 +1,54 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Clinic, DealStatus } from '../types';
+import { DealStatus } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Search, 
-  Plus, 
-  Check, 
-  ChevronRight, 
-  ArrowLeft, 
-  Loader2, 
+import {
+  Search,
+  Plus,
+  Check,
+  ChevronRight,
+  ArrowLeft,
+  Loader2,
   Building2,
   Send,
   LayoutDashboard
 } from 'lucide-react';
+
+interface Clinic {
+  id: string;
+  name: string;
+}
+
+// ============================================
+// 🚨 朱さんへ：差し替えが必要な箇所です
+// --------------------------------------------
+// 現在はデモ用のダミー医院リストです。
+// 本番稼働時は /api/clinics から取得する
+// 形に差し替えをお願いします🙏
+// ============================================
+const DUMMY_CLINICS: Clinic[] = [
+  { id: '1', name: '山田歯科医院' },
+  { id: '2', name: '田中デンタルクリニック' },
+  { id: '3', name: 'さくら歯科' },
+  { id: '4', name: '東京歯科クリニック' },
+  { id: '5', name: '大阪デンタルオフィス' },
+  { id: '6', name: 'ほほえみ歯科' },
+  { id: '7', name: 'スマイル歯科医院' },
+  { id: '8', name: '北浜デンタルクリニック' },
+  { id: '9', name: '高槻歯科医院' },
+  { id: '10', name: 'みなみ歯科クリニック' },
+];
 
 export default function DealInput() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState<'clinic' | 'details' | 'success'>('clinic');
   const [searchQuery, setSearchQuery] = useState('');
-  const [clinics, setClinics] = useState<Clinic[]>([]);
   const [selectedClinic, setSelectedClinic] = useState<Clinic | null>(null);
   const [isCreatingClinic, setIsCreatingClinic] = useState(false);
   const [newClinicName, setNewClinicName] = useState('');
 
-  // 入力項目のstate（仕様書に合わせて追加）
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [productName, setProductName] = useState('');
   const [unitCount, setUnitCount] = useState('');
@@ -37,26 +60,26 @@ export default function DealInput() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (searchQuery.length > 1) {
-      fetch(`/api/clinics?q=${searchQuery}`)
-        .then(res => res.json())
-        .then(setClinics);
-    } else {
-      setClinics([]);
-    }
-  }, [searchQuery]);
+  // 検索フィルター（ダミーデータから絞り込み）
+  const filteredClinics = searchQuery.length > 1
+    ? DUMMY_CLINICS.filter(c => c.name.includes(searchQuery))
+    : [];
 
-  const handleCreateClinic = async () => {
+  const handleCreateClinic = () => {
     if (!newClinicName) return;
-    const res = await fetch('/api/clinics', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newClinicName }),
-    });
-    const clinic = await res.json();
-    setSelectedClinic(clinic);
+    // ============================================
+    // 🚨 朱さんへ：差し替えが必要な箇所です
+    // --------------------------------------------
+    // 本番稼働時は /api/clinics にPOSTして
+    // 新規医院を登録する形に差し替えをお願いします🙏
+    // ============================================
+    const newClinic: Clinic = {
+      id: String(Date.now()),
+      name: newClinicName,
+    };
+    setSelectedClinic(newClinic);
     setIsCreatingClinic(false);
+    setNewClinicName('');
     setStep('details');
   };
 
@@ -67,37 +90,34 @@ export default function DealInput() {
     setIsSubmitting(true);
     setError('');
 
-    try {
-      const res = await fetch('/api/deals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.id,
-          clinicId: selectedClinic.id,
-          date,
-          productName,
-          unitCount: parseInt(unitCount),
-          amount: parseInt(amount),
-          status,
-          notes,
-          nextAction,
-          isNewClient,
-        }),
-      });
+    // ============================================
+    // 🚨 朱さんへ：差し替えが必要な箇所です
+    // --------------------------------------------
+    // 本番稼働時は /api/deals にPOSTして
+    // 商談データを登録する形に差し替えをお願いします🙏
+    //
+    // 差し替え後のコード例↓
+    // const res = await fetch('/api/deals', {
+    //   method: 'POST',
+    //   headers: { 'Content-Type': 'application/json' },
+    //   body: JSON.stringify({
+    //     userId: user?.id,
+    //     clinicId: selectedClinic.id,
+    //     date, productName,
+    //     unitCount: parseInt(unitCount),
+    //     amount: parseInt(amount),
+    //     status, notes, nextAction, isNewClient,
+    //   }),
+    // });
+    // ============================================
 
-      if (res.ok) {
-        setStep('success');
-      } else {
-        setError('送信に失敗しました');
-      }
-    } catch (err) {
-      setError('サーバーエラーが発生しました');
-    } finally {
+    // デモ用：0.8秒待って成功画面へ
+    setTimeout(() => {
       setIsSubmitting(false);
-    }
+      setStep('success');
+    }, 800);
   };
 
-  // 「続けて入力」ボタン押下時のリセット
   const handleReset = () => {
     setStep('clinic');
     setSelectedClinic(null);
@@ -114,7 +134,7 @@ export default function DealInput() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 p-4 sm:p-8">
+    <div className="min-h-screen bg-zinc-200 p-4 sm:p-8">
       <div className="mx-auto max-w-xl">
         {/* Header */}
         <div className="mb-8 flex items-center justify-between">
@@ -126,14 +146,14 @@ export default function DealInput() {
             {step === 'details' ? '医院選択に戻る' : 'ダッシュボード'}
           </button>
           <div className="flex h-2 w-24 gap-1">
-            <div className={`h-full flex-1 rounded-full ${step === 'clinic' ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
-            <div className={`h-full flex-1 rounded-full ${step === 'details' ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
-            <div className={`h-full flex-1 rounded-full ${step === 'success' ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
+            <div className={`h-full flex-1 rounded-full ${step === 'clinic' ? 'bg-purple-500' : 'bg-purple-200'}`} />
+            <div className={`h-full flex-1 rounded-full ${step === 'details' ? 'bg-purple-500' : 'bg-purple-200'}`} />
+            <div className={`h-full flex-1 rounded-full ${step === 'success' ? 'bg-purple-500' : 'bg-purple-200'}`} />
           </div>
         </div>
 
         <AnimatePresence mode="wait">
-          {/* ステップ①：医院選択 */}
+          {/* ステップ1：医院選択 */}
           {step === 'clinic' && (
             <motion.div
               key="clinic"
@@ -153,12 +173,12 @@ export default function DealInput() {
                     placeholder="医院名で検索..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 py-3 pl-10 pr-4 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 py-3 pl-10 pr-4 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                   />
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  {clinics.map((clinic) => (
+                  {filteredClinics.map((clinic) => (
                     <button
                       key={clinic.id}
                       onClick={() => {
@@ -175,12 +195,15 @@ export default function DealInput() {
                     </button>
                   ))}
 
-                  {searchQuery.length > 1 && clinics.length === 0 && !isCreatingClinic && (
+                  {searchQuery.length > 1 && filteredClinics.length === 0 && !isCreatingClinic && (
                     <div className="py-8 text-center">
                       <p className="text-sm text-zinc-500">候補が見つかりませんでした</p>
                       <button
-                        onClick={() => setIsCreatingClinic(true)}
-                        className="mt-4 inline-flex items-center rounded-lg bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-100"
+                        onClick={() => {
+                          setNewClinicName(searchQuery);
+                          setIsCreatingClinic(true);
+                        }}
+                        className="mt-4 inline-flex items-center rounded-lg bg-purple-50 px-4 py-2 text-sm font-semibold text-purple-600 hover:bg-purple-100"
                       >
                         <Plus className="mr-1 h-4 w-4" />
                         新規作成する
@@ -202,12 +225,12 @@ export default function DealInput() {
                     placeholder="正式な医院名を入力"
                     value={newClinicName}
                     onChange={(e) => setNewClinicName(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-200 px-4 py-2 focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-lg border border-zinc-200 px-4 py-2 focus:border-purple-500 focus:outline-none"
                   />
                   <div className="mt-4 flex gap-2">
                     <button
                       onClick={handleCreateClinic}
-                      className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                      className="flex-1 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 py-2 text-sm font-semibold text-white hover:opacity-90"
                     >
                       登録して選択
                     </button>
@@ -223,7 +246,7 @@ export default function DealInput() {
             </motion.div>
           )}
 
-          {/* ステップ②：詳細入力 */}
+          {/* ステップ2：詳細入力 */}
           {step === 'details' && selectedClinic && (
             <motion.div
               key="details"
@@ -233,10 +256,9 @@ export default function DealInput() {
               className="space-y-6"
             >
               <div className="rounded-2xl bg-white p-6 shadow-sm border border-zinc-200">
-                {/* 選択中の医院表示 */}
                 <div className="mb-6 flex items-center gap-3 border-b border-zinc-100 pb-4">
-                  <div className="rounded-full bg-indigo-50 p-2">
-                    <Building2 className="h-5 w-5 text-indigo-600" />
+                  <div className="rounded-full bg-purple-50 p-2">
+                    <Building2 className="h-5 w-5 text-purple-500" />
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">選択中の医院</p>
@@ -245,7 +267,6 @@ export default function DealInput() {
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-6">
-
                   {/* 日付 */}
                   <div>
                     <label className="mb-2 block text-sm font-medium text-zinc-700">
@@ -256,22 +277,22 @@ export default function DealInput() {
                       required
                       value={date}
                       onChange={(e) => setDate(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
 
-                  {/* 商品名 */}
+                  {/* 製品名 */}
                   <div>
                     <label className="mb-2 block text-sm font-medium text-zinc-700">
-                      商品名 <span className="text-red-500">*</span>
+                      製品名 <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
                       required
                       value={productName}
                       onChange={(e) => setProductName(e.target.value)}
-                      placeholder="商品名を入力"
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      placeholder="製品名を入力"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
 
@@ -287,14 +308,14 @@ export default function DealInput() {
                       value={unitCount}
                       onChange={(e) => setUnitCount(e.target.value)}
                       placeholder="0"
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-lg font-bold focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-lg font-bold focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
 
                   {/* 受注金額 */}
                   <div>
                     <label className="mb-2 block text-sm font-medium text-zinc-700">
-                      受注金額 (¥) <span className="text-red-500">*</span>
+                      受注金額（円） <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="number"
@@ -302,7 +323,7 @@ export default function DealInput() {
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       placeholder="500000"
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-lg font-bold focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-lg font-bold focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
 
@@ -314,7 +335,7 @@ export default function DealInput() {
                     <div className="grid grid-cols-2 gap-2">
                       {([
                         { value: 'proposal',    label: '提案中' },
-                        { value: 'negotiating', label: '商談中' },
+                        { value: 'negotiating', label: '交渉中' },
                         { value: 'won',         label: '受注'   },
                         { value: 'lost',        label: '失注'   },
                       ] as const).map((s) => (
@@ -324,7 +345,7 @@ export default function DealInput() {
                           onClick={() => setStatus(s.value)}
                           className={`rounded-xl py-3 text-sm font-semibold transition ${
                             status === s.value
-                              ? 'bg-indigo-600 text-white shadow-md'
+                              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md'
                               : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
                           }`}
                         >
@@ -342,9 +363,9 @@ export default function DealInput() {
                     <textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
-                      placeholder="商談の内容を入力"
+                      placeholder="商談の内容を記入"
                       rows={3}
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
 
@@ -358,18 +379,18 @@ export default function DealInput() {
                       value={nextAction}
                       onChange={(e) => setNextAction(e.target.value)}
                       placeholder="例：来週サンプル持参"
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
 
-                  {/* 新規／既存 */}
+                  {/* 新規クライアント */}
                   <div className="flex items-center gap-3 rounded-xl border border-zinc-100 p-4">
                     <input
                       type="checkbox"
                       id="newClient"
                       checked={isNewClient}
                       onChange={(e) => setIsNewClient(e.target.checked)}
-                      className="h-5 w-5 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+                      className="h-5 w-5 rounded border-zinc-300 text-purple-600 focus:ring-purple-500"
                     />
                     <label htmlFor="newClient" className="text-sm font-medium text-zinc-700">
                       新規クライアント（既存でない）
@@ -385,21 +406,21 @@ export default function DealInput() {
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="flex w-full items-center justify-center rounded-xl bg-indigo-600 py-4 font-bold text-white shadow-lg transition hover:bg-indigo-700 disabled:opacity-50"
+                    className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-lg transition hover:opacity-90 disabled:opacity-50"
                   >
                     {isSubmitting ? (
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                     ) : (
                       <Send className="mr-2 h-5 w-5" />
                     )}
-                    商談を記録する
+                    商談を登録する
                   </button>
                 </form>
               </div>
             </motion.div>
           )}
 
-          {/* ステップ③：送信完了 */}
+          {/* ステップ3：送信完了 */}
           {step === 'success' && (
             <motion.div
               key="success"
@@ -407,16 +428,16 @@ export default function DealInput() {
               animate={{ opacity: 1, scale: 1 }}
               className="text-center"
             >
-              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-purple-100 text-purple-600">
                 <Check className="h-10 w-10" />
               </div>
-              <h2 className="mb-2 text-2xl font-bold text-zinc-900">送信完了！</h2>
-              <p className="mb-8 text-zinc-500">商談が正常に記録されました。</p>
+              <h2 className="mb-2 text-2xl font-bold text-zinc-900">登録完了！</h2>
+              <p className="mb-8 text-zinc-500">商談が正常に登録されました。</p>
 
               <div className="space-y-3">
                 <button
                   onClick={handleReset}
-                  className="flex w-full items-center justify-center rounded-xl bg-indigo-600 py-4 font-bold text-white shadow-md transition hover:bg-indigo-700"
+                  className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-md transition hover:opacity-90"
                 >
                   続けて入力する
                 </button>
