@@ -45,8 +45,6 @@ export default function Dashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const departments = ['①東京営業部', '②大阪営業部'];
-
   useEffect(() => {
     setUsers([
       { id: '1', name: '権藤', team: '東京営業' },
@@ -207,9 +205,15 @@ export default function Dashboard() {
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
               >
                 <option value="">部署を選択</option>
-                {departments.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
+                <optgroup label="①東京営業部">
+                  <option value="①東京営業部">①東京営業部全体</option>
+                  <option value="東京営業">東京営業</option>
+                </optgroup>
+                <optgroup label="②大阪営業部">
+                  <option value="②大阪営業部">②大阪営業部全体</option>
+                  <option value="高槻営業">高槻営業</option>
+                  <option value="北浜営業">北浜営業</option>
+                </optgroup>
               </select>
             </div>
           )}
