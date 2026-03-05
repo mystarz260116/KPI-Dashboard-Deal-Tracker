@@ -202,22 +202,32 @@ export default function Dashboard() {
             </div>
           )}
 
+
+
+          {/* Individual select */}
           {granularity === 'individual' && (
-            <div>
-              <label className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
-                担当者選択
-              </label>
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-zinc-400" />
               <select
                 value={selectedUser}
-                onChange={(e) => setSelectedUser(e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                onChange={e => setSelectedUser(e.target.value)}
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
               >
-                <option value="">選択してください</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                <option value="">担当者を選択</option>
+                {departments.map(dept => (
+                  <optgroup key={dept} label={dept}>
+                    {users
+                      .filter(u => u.department === dept)
+                      .map(u => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
           )}
-        </div>
+
+
 
         {/* KPI Grid */}
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
