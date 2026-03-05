@@ -106,9 +106,36 @@ export default function Dashboard() {
     navigate('/login');
   };
 
-  const handleDownload = () => {
-    window.open('/api/export/deals', '_blank');
-  };
+const handleDownload = () => {
+  // ============================================
+  // 🚨 朱さんへ：差し替えが必要な箇所です
+  // --------------------------------------------
+  // 現在はデモ用のダミーCSVを出力しています。
+  // 本番稼働時は以下のコメントアウトを外して、
+  // ダミーデータ部分を削除してください🙏
+  //
+  // 差し替え後のコード↓
+  // window.open('/api/export/deals', '_blank');
+  // ============================================
+
+  const headers = ['案件名', '担当者', '部署', '金額', 'ステータス', '日付'];
+  const rows = [
+    ['案件A', '権藤', '東京営業', '1200000', '受注', '2026-03-01'],
+    ['案件B', '寺町', '高槻営業', '800000', '提案中', '2026-03-02'],
+    ['案件C', '浦上', '東京営業', '500000', '受注', '2026-03-03'],
+    ['案件D', '山田', '高槻営業', '300000', '失注', '2026-03-04'],
+    ['案件E', '小山', '北浜営業', '400000', '提案中', '2026-03-05'],
+  ];
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'deals_demo.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 
   if (isLoading) {
     return (
