@@ -18,6 +18,8 @@ import {
   Download
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import logoImg from '../assets/M.png';
+
 
 interface User {
   id: string;
@@ -162,7 +164,7 @@ export default function Dashboard() {
       <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-6 py-4 shadow-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between">
           <div className="flex items-center gap-2">
-            <LayoutDashboard className="h-6 w-6 text-purple-500" />
+            <img src={logoImg} alt="Mystarz" className="h-8 w-auto object-contain" />
             <h1 className="text-xl font-bold text-zinc-900">KPI ダッシュボード</h1>
           </div>
           <div className="flex items-center gap-4">
