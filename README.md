@@ -1,20 +1,32 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# \# KPI管理アプリ
 
-# Run and deploy your AI Studio app
+# 
 
-This contains everything you need to run your app locally.
+# 株式会社マイ・スターズの営業KPI管理アプリです。
 
-View your app in AI Studio: https://ai.studio/apps/294c3ce8-55ae-4577-9e69-f6da68959d9c
+# 
 
-## Run Locally
+# \## 機能
 
-**Prerequisites:**  Node.js
+# \- KPIダッシュボード（予算達成率・総売上・パイプライン）
 
+# \- 部署別・個人別フィルター
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# \- 新規案件入力フォーム
+
+# \- CSV出力
+
+# 
+
+# \## 技術スタック
+
+# \- React / TypeScript / Vite
+
+# \- Tailwind CSS
+
+# \- Recharts
+
+# \- Vercel
+
+# 
+
