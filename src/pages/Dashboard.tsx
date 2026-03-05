@@ -22,10 +22,16 @@ import { motion } from 'motion/react';
 interface User {
   id: string;
   name: string;
-  department: string;
+  team: string;
 }
 
 const COLORS = ['#6366f1', '#10b981'];
+
+const TEAMS = [
+  { label: '①東京営業部・東京営業', key: '東京営業' },
+  { label: '②大阪営業部・高槻営業', key: '高槻営業' },
+  { label: '②大阪営業部・北浜営業', key: '北浜営業' },
+];
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -43,31 +49,31 @@ export default function Dashboard() {
 
   useEffect(() => {
     setUsers([
-      { id: '1', name: '権藤', department: '①東京営業部' },
-      { id: '2', name: '浦上', department: '①東京営業部' },
-      { id: '3', name: '井出', department: '①東京営業部' },
-      { id: '4', name: '茂田', department: '①東京営業部' },
-      { id: '5', name: '熊木', department: '①東京営業部' },
-      { id: '6', name: '山口', department: '①東京営業部' },
-      { id: '7', name: '小野寺', department: '①東京営業部' },
-      { id: '8', name: '工藤', department: '①東京営業部' },
-      { id: '9', name: '寺町', department: '②大阪営業部' },
-      { id: '10', name: '今井', department: '②大阪営業部' },
-      { id: '11', name: '阪本', department: '②大阪営業部' },
-      { id: '12', name: '熊懐', department: '②大阪営業部' },
-      { id: '13', name: '川合', department: '②大阪営業部' },
-      { id: '14', name: '山田', department: '②大阪営業部' },
-      { id: '15', name: '松井', department: '②大阪営業部' },
-      { id: '16', name: '平', department: '②大阪営業部' },
-      { id: '17', name: '宮川', department: '②大阪営業部' },
-      { id: '18', name: '小山', department: '②大阪営業部' },
-      { id: '19', name: '竹内', department: '②大阪営業部' },
-      { id: '20', name: '中澤', department: '②大阪営業部' },
-      { id: '21', name: '枡田', department: '②大阪営業部' },
-      { id: '22', name: '藤丸', department: '②大阪営業部' },
-      { id: '23', name: '中西', department: '②大阪営業部' },
-      { id: '24', name: '片山', department: '②大阪営業部' },
-      { id: '25', name: '山本', department: '②大阪営業部' },
+      { id: '1', name: '権藤', team: '東京営業' },
+      { id: '2', name: '浦上', team: '東京営業' },
+      { id: '3', name: '井出', team: '東京営業' },
+      { id: '4', name: '茂田', team: '東京営業' },
+      { id: '5', name: '熊木', team: '東京営業' },
+      { id: '6', name: '山口', team: '東京営業' },
+      { id: '7', name: '小野寺', team: '東京営業' },
+      { id: '8', name: '工藤', team: '東京営業' },
+      { id: '9', name: '寺町', team: '高槻営業' },
+      { id: '10', name: '今井', team: '高槻営業' },
+      { id: '11', name: '阪本', team: '高槻営業' },
+      { id: '12', name: '熊懐', team: '高槻営業' },
+      { id: '13', name: '川合', team: '高槻営業' },
+      { id: '14', name: '山田', team: '高槻営業' },
+      { id: '15', name: '松井', team: '高槻営業' },
+      { id: '16', name: '平', team: '高槻営業' },
+      { id: '17', name: '宮川', team: '高槻営業' },
+      { id: '18', name: '小山', team: '北浜営業' },
+      { id: '19', name: '竹内', team: '北浜営業' },
+      { id: '20', name: '中澤', team: '北浜営業' },
+      { id: '21', name: '枡田', team: '北浜営業' },
+      { id: '22', name: '藤丸', team: '北浜営業' },
+      { id: '23', name: '中西', team: '北浜営業' },
+      { id: '24', name: '片山', team: '北浜営業' },
+      { id: '25', name: '山本', team: '北浜営業' },
     ]);
     setData({
       budget: { sales: 3200000, budget: 4000000, achievement_rate: 80 },
@@ -218,10 +224,10 @@ export default function Dashboard() {
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
               >
                 <option value="">担当者を選択</option>
-                {departments.map(dept => (
-                  <optgroup key={dept} label={dept}>
+                {TEAMS.map(team => (
+                  <optgroup key={team.key} label={team.label}>
                     {users
-                      .filter(u => u.department === dept)
+                      .filter(u => u.team === team.key)
                       .map(u => (
                         <option key={u.id} value={u.id}>{u.name}</option>
                       ))}
@@ -253,7 +259,6 @@ export default function Dashboard() {
 
         {/* Charts */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Sales Ranking */}
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="rounded-xl bg-white p-6 shadow-sm">
             <h2 className="mb-4 text-base font-semibold text-zinc-800">営業成績ランキング</h2>
             <ResponsiveContainer width="100%" height={240}>
@@ -267,7 +272,6 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </motion.div>
 
-          {/* Sales Mix */}
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="rounded-xl bg-white p-6 shadow-sm">
             <h2 className="mb-4 text-base font-semibold text-zinc-800">既存 vs 新規</h2>
             <ResponsiveContainer width="100%" height={240}>
