@@ -10,20 +10,28 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const { } = useAuth();
+  const { login } = useAuth();
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError('');
+const handleSubmit = async (e: FormEvent) => {
+  e.preventDefault();
+  setIsLoading(true);
+  setError('');
 
-    // 🚧 デモ用：APIなしでログイン（朱さんのAPI実装後に差し替え）
-    setTimeout(() => {
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      navigate(isMobile ? '/deals/new' : '/dashboard');
-      setIsLoading(false);
-    }, 800);
-  };
+  // 🚧 デモ用ダミーログイン（朱さんのAPI実装後に差し替え）
+  setTimeout(() => {
+    login({
+      id: '1',
+      email: email,
+      name: 'デモユーザー',
+      department: '①大阪営業部',
+      role: 'sales',
+    });
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    navigate(isMobile ? '/deals/new' : '/dashboard');
+    setIsLoading(false);
+  }, 800);
+};
+
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4">

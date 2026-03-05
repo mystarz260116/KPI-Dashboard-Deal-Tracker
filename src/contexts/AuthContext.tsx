@@ -10,13 +10,12 @@
 // 差し替えをお願いします🙏
 // ============================================
 
-
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
 import { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
+  login: (user: User) => void;
   logout: () => Promise<void>;
   isLoading: boolean;
 }
@@ -34,23 +33,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // ここは朱さんがSupabase Authに差し替えお願いします。
-    // 今は仮の実装
-    const savedUser = localStorage.getItem('user');
+    const savedUser = localStorage.getItem('demo_user');
     if (savedUser) {
       setUser(JSON.parse(savedUser));
     }
     setIsLoading(false);
   }, []);
 
+  const login = (newUser: User) => {
+    setUser(newUser);
+    localStorage.setItem('demo_user', JSON.stringify(newUser));
+  };
+
   const logout = async () => {
-    // ここも朱さんがSupabase Authに差し替えお願いします。
     setUser(null);
-    localStorage.removeItem('user');
+    localStorage.removeItem('demo_user');
   };
 
   return (
-    <AuthContext.Provider value={{ user, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
