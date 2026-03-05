@@ -115,7 +115,7 @@ export default function Login() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.5 }}
-        className="mt-8 text-xs text-zinc-400"
+        className="mt-8 text-xs text-white/70"
       >
         mystarz　All rights Reserved. Copyright ©mystarz 2026
       </motion.p>
