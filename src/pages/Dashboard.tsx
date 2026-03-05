@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../App';
+import { useAuth } from '../contexts/AuthContext';
 import { KPIData, Granularity, Period } from '../types';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -25,13 +25,9 @@ export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [period, setPeriod] = useState<Period>('month');
-
-  // ② 'global' → 'all' に修正
   const [granularity, setGranularity] = useState<Granularity>('all');
   const [selectedDept, setSelectedDept] = useState('');
   const [selectedUser, setSelectedUser] = useState('');
-
-  // ③ id を string に修正
   const [users, setUsers] = useState<{ id: string; name: string; department: string }[]>([]);
   const [data, setData] = useState<KPIData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,40 +39,42 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetch('/api/users')
-      .then(res => res.json())
-      .then(setUsers);
-  }, []);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      const now = new Date();
-      let from = new Date();
-      if (period === 'day') from.setDate(now.getDate() - 1);
-      else if (period === 'week') from.setDate(now.getDate() - 7);
-      else from.setMonth(now.getMonth() - 1);
-
-      const params = new URLSearchParams({
-        from: from.toISOString().split('T')[0],
-        to: now.toISOString().split('T')[0],
-        granularity,
-        department: selectedDept,
-        userId: selectedUser
-      });
-
-      const res = await fetch(`/api/kpi?${params}`);
-      const kpi = await res.json();
-      setData(kpi);
-      setIsLoading(false);
-    };
-
-    fetchData();
+    // 🚧 デモ用ダミーデータ（朱さんのAPI実装後に差し替え）
+    setUsers([
+      { id: '1', name: '田中', department: '①大阪営業部' },
+      { id: '2', name: '山田', department: '①大阪営業部' },
+      { id: '3', name: '佐藤', department: '②東京営業部' },
+    ]);
+    setData({
+      budget: { sales: 3200000, budget: 4000000, achievement_rate: 80 },
+      sales: { sales: 3200000, prev_sales: 2800000, change_rate: 14.3 },
+      pipeline: { proposal_count: 24, won_count: 8, conversion_rate: 33.3 },
+      proposal_ranking: [
+        { name: '田中', count: 8 },
+        { name: '山田', count: 6 },
+        { name: '佐藤', count: 5 },
+        { name: '鈴木', count: 3 },
+        { name: '伊藤', count: 2 },
+      ],
+      won_ranking: [
+        { name: '田中', count: 3 },
+        { name: '山田', count: 2 },
+        { name: '佐藤', count: 2 },
+        { name: '鈴木', count: 1 },
+        { name: '伊藤', count: 0 },
+      ],
+      sales_mix: {
+        existing_sales: 2240000,
+        new_sales: 960000,
+        existing_rate: 70,
+        new_rate: 30,
+      },
+    });
+    setIsLoading(false);
   }, [period, granularity, selectedDept, selectedUser]);
 
   if (!data) return null;
 
-  // ① 新しい KPIData の型に合わせてアクセス方法を修正
   const achievementRate = data.budget.achievement_rate;
   const conversionRate = data.pipeline.conversion_rate;
 
@@ -157,7 +155,6 @@ export default function Dashboard() {
               onChange={(e) => setGranularity(e.target.value as Granularity)}
               className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             >
-              {/* ② 'global' → 'all' に修正 */}
               <option value="all">全体</option>
               <option value="department">部署</option>
               <option value="individual">個人</option>
@@ -191,7 +188,6 @@ export default function Dashboard() {
                 className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
               >
                 <option value="">選択してください</option>
-                {/* ③ id が string になったので value={String(u.id)} 不要 */}
                 {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
@@ -200,7 +196,7 @@ export default function Dashboard() {
 
         {/* KPI Grid */}
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {/* ① 予算達成率 */}
+          {/* 予算達成率 */}
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -223,13 +219,12 @@ export default function Dashboard() {
               />
             </div>
             <div className="mt-4 flex justify-between text-xs text-zinc-500">
-              {/* ① data.budget.sales / data.budget.budget に修正 */}
               <span>売上: ¥{data.budget.sales.toLocaleString()}</span>
               <span>予算: ¥{data.budget.budget.toLocaleString()}</span>
             </div>
           </motion.div>
 
-          {/* ② 売上合計 */}
+          {/* 売上合計 */}
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -240,13 +235,11 @@ export default function Dashboard() {
               <h3 className="text-sm font-semibold text-zinc-500">売上合計</h3>
               <TrendingUp className="h-5 w-5 text-emerald-600" />
             </div>
-            {/* ① data.sales.sales に修正 */}
             <div className="text-4xl font-bold text-zinc-900">
               ¥{data.sales.sales.toLocaleString()}
             </div>
             <div className="mt-2 flex items-center gap-1 text-sm text-emerald-600">
               <TrendingUp className="h-4 w-4" />
-              {/* ① data.sales.change_rate に修正 */}
               <span>
                 {data.sales.change_rate >= 0 ? '+' : ''}
                 {data.sales.change_rate.toFixed(1)}%{' '}
@@ -255,7 +248,7 @@ export default function Dashboard() {
             </div>
           </motion.div>
 
-          {/* ③ 提案パイプライン */}
+          {/* 提案パイプライン */}
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -269,14 +262,12 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-xs text-zinc-500">提案件数</p>
-                {/* ① data.pipeline.proposal_count に修正 */}
                 <p className="text-2xl font-bold text-zinc-900">
                   {data.pipeline.proposal_count}件
                 </p>
               </div>
               <div>
                 <p className="text-xs text-zinc-500">受注件数</p>
-                {/* ① data.pipeline.won_count に修正 */}
                 <p className="text-2xl font-bold text-zinc-900">
                   {data.pipeline.won_count}件
                 </p>
@@ -290,7 +281,7 @@ export default function Dashboard() {
             </div>
           </motion.div>
 
-          {/* ④⑤ 営業別ランキング（提案数・受注数） */}
+          {/* 営業別受注数ランキング */}
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -302,7 +293,6 @@ export default function Dashboard() {
             </h3>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                {/* ① data.won_ranking に修正 */}
                 <BarChart data={data.won_ranking} layout="vertical" margin={{ left: 40 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" hide />
@@ -317,7 +307,7 @@ export default function Dashboard() {
             </div>
           </motion.div>
 
-          {/* ⑥ 既存vs新規売上比率 */}
+          {/* 既存vs新規売上比率 */}
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -349,7 +339,6 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </div>
             <div className="mt-4 flex justify-between text-xs text-zinc-500">
-              {/* ① data.sales_mix に修正 */}
               <span>既存: ¥{data.sales_mix.existing_sales.toLocaleString()}</span>
               <span>新規: ¥{data.sales_mix.new_sales.toLocaleString()}</span>
             </div>
