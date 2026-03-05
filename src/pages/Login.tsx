@@ -34,13 +34,13 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 p-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-purple-600 via-pink-500 to-rose-400 p-4">
 
       {/* ロゴ */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-8 rounded-2xl bg-gradient-to-br from-purple-600 to-pink-500 px-10 py-6"
+        className="mb-8"
 
       >
         <img
