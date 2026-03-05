@@ -10,8 +10,6 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-
-  // 🚨 朱さんへ：useAuthのlogin関数はSupabase Auth実装後に追加してください
   const { } = useAuth();
 
   const handleSubmit = async (e: FormEvent) => {
@@ -19,27 +17,12 @@ export default function Login() {
     setIsLoading(true);
     setError('');
 
-    try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (response.ok) {
-        // 🚨 朱さんへ：ここをSupabase Authのログイン処理に差し替えてください
-        // login(data.user); ← Supabase Auth実装後に復活させる
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        navigate(isMobile ? '/deals/new' : '/dashboard');
-      } else {
-        const data = await response.json();
-        setError(data.error || 'ログインに失敗しました');
-      }
-    } catch (err) {
-      setError('サーバーとの通信に失敗しました');
-    } finally {
+    // 🚧 デモ用：APIなしでログイン（朱さんのAPI実装後に差し替え）
+    setTimeout(() => {
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      navigate(isMobile ? '/deals/new' : '/dashboard');
       setIsLoading(false);
-    }
+    }, 800);
   };
 
   return (
@@ -63,7 +46,7 @@ export default function Login() {
               type="email"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={e => setEmail(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-zinc-300 px-4 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               placeholder="example@mail.com"
             />
@@ -77,7 +60,7 @@ export default function Login() {
               type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={e => setPassword(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-zinc-300 px-4 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               placeholder="••••••••"
             />
