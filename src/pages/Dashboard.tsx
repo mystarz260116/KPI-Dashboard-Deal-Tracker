@@ -157,7 +157,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-100">
+    <div className="min-h-screen bg-zinc-200">
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-6 py-4 shadow-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between">
