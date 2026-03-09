@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import DealInput from './pages/DealInput';
+import DealHistory from './pages/DealHistory';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/signup" element={<AuthRedirect><Signup /></AuthRedirect>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/deals/new" element={<ProtectedRoute><DealInput /></ProtectedRoute>} />
+          <Route path="/deals/history" element={<ProtectedRoute><DealHistory /></ProtectedRoute>} />
           <Route path="/" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>
