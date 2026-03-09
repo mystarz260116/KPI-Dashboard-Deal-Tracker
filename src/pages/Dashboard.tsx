@@ -159,6 +159,12 @@ export default function Dashboard() {
               className="flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
               <Download className="h-4 w-4" />CSV出力
             </button>
+
+<button onClick={() => navigate('/deals/history')}
+  className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+  <TrendingUp className="h-4 w-4" />商談履歴
+</button>
+
             <button onClick={() => navigate('/deals/new')}
               className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
               <PlusCircle className="h-4 w-4" />新規案件入力
