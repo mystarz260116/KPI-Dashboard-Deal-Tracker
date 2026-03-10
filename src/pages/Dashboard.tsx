@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { KPIData, Granularity, Period } from '../types';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend
 } from 'recharts';
 import {
-  LayoutDashboard, PlusCircle, Filter, Calendar, Users,
+  PlusCircle, Filter, Calendar, Users,
   TrendingUp, Target, LogOut, Download
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -17,18 +17,9 @@ interface User {
   id: string;
   name: string;
   department: string;
-  team: string;
 }
 
 const COLORS = ['#6366f1', '#10b981'];
-
-const TEAMS = [
-  { dept: '①東京営業部', team: '東京営業' },
-  { dept: '②大阪営業部', team: '高槻営業' },
-  { dept: '②大阪営業部', team: '北浜営業' },
-];
-
-const DEPARTMENTS = ['①東京営業部', '②大阪営業部'];
 
 interface SectionTitleProps { title: string; color: string; }
 function SectionTitle({ title, color }: SectionTitleProps) {
@@ -39,78 +30,269 @@ function SectionTitle({ title, color }: SectionTitleProps) {
   );
 }
 
+function formatDateInput(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getDefaultDateRange(period: Period) {
+  const now = new Date();
+  const current = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (period === 'yearly') {
+    const start = new Date(current.getFullYear(), 0, 1);
+    const end = new Date(current.getFullYear(), 11, 31);
+    return {
+      from: formatDateInput(start),
+      to: formatDateInput(end),
+    };
+  }
+
+  if (period === 'quarterly') {
+    const quarterStartMonth = Math.floor(current.getMonth() / 3) * 3;
+    const start = new Date(current.getFullYear(), quarterStartMonth, 1);
+    const end = new Date(current.getFullYear(), quarterStartMonth + 3, 0);
+    return {
+      from: formatDateInput(start),
+      to: formatDateInput(end),
+    };
+  }
+
+  if (period === 'weekly') {
+    const day = current.getDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const start = new Date(current.getFullYear(), current.getMonth(), current.getDate() + diffToMonday);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    return {
+      from: formatDateInput(start),
+      to: formatDateInput(end),
+    };
+  }
+
+  const start = new Date(current.getFullYear(), current.getMonth(), 1);
+  const end = new Date(current.getFullYear(), current.getMonth() + 1, 0);
+  return {
+    from: formatDateInput(start),
+    to: formatDateInput(end),
+  };
+}
+
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const [period, setPeriod] = useState<Period>('monthly');
   const [granularity, setGranularity] = useState<Granularity>('all');
+  const defaultRange = getDefaultDateRange(period);
+  const [fromDate, setFromDate] = useState(defaultRange.from);
+  const [toDate, setToDate] = useState(defaultRange.to);
+
   const [selectedDept, setSelectedDept] = useState('');
   const [selectedUser, setSelectedUser] = useState('');
+
+  const [appliedPeriod, setAppliedPeriod] = useState<Period>('monthly');
+  const [appliedGranularity, setAppliedGranularity] = useState<Granularity>('all');
+  const [appliedFromDate, setAppliedFromDate] = useState(defaultRange.from);
+  const [appliedToDate, setAppliedToDate] = useState(defaultRange.to);
+  const [appliedDept, setAppliedDept] = useState('');
+  const [appliedUser, setAppliedUser] = useState('');
   const [data, setData] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [pendingMergeCount, setPendingMergeCount] = useState(0);
+  const [isMergeCountLoading, setIsMergeCountLoading] = useState(true);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [selectedCsvFile, setSelectedCsvFile] = useState<File | null>(null);
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [importResultMessage, setImportResultMessage] = useState('');
+
+  const departmentOptions = Array.from(
+    new Set(users.map(u => u.department).filter(Boolean))
+  );
+  useEffect(() => {
+    const nextRange = getDefaultDateRange(period);
+    setFromDate(nextRange.from);
+    setToDate(nextRange.to);
+  }, [period]);
 
   useEffect(() => {
-    // TODO: replace with /api/users
-    setUsers([
-      { id: '1',  name: '権藤',  department: '①東京営業部', team: '東京営業' },
-      { id: '2',  name: '浦上',  department: '①東京営業部', team: '東京営業' },
-      { id: '3',  name: '井出',  department: '①東京営業部', team: '東京営業' },
-      { id: '4',  name: '茂田',  department: '①東京営業部', team: '東京営業' },
-      { id: '5',  name: '熊木',  department: '①東京営業部', team: '東京営業' },
-      { id: '6',  name: '山口',  department: '①東京営業部', team: '東京営業' },
-      { id: '7',  name: '小野寺',department: '①東京営業部', team: '東京営業' },
-      { id: '8',  name: '工藤',  department: '①東京営業部', team: '東京営業' },
-      { id: '9',  name: '寺町',  department: '②大阪営業部', team: '高槻営業' },
-      { id: '10', name: '今井',  department: '②大阪営業部', team: '高槻営業' },
-      { id: '11', name: '阪本',  department: '②大阪営業部', team: '高槻営業' },
-      { id: '12', name: '熊懐',  department: '②大阪営業部', team: '高槻営業' },
-      { id: '13', name: '川合',  department: '②大阪営業部', team: '高槻営業' },
-      { id: '14', name: '山田',  department: '②大阪営業部', team: '高槻営業' },
-      { id: '15', name: '松井',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '16', name: '平',    department: '②大阪営業部', team: '北浜営業' },
-      { id: '17', name: '宮川',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '18', name: '小山',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '19', name: '竹内',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '20', name: '中澤',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '21', name: '枡田',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '22', name: '藤丸',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '23', name: '中西',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '24', name: '片山',  department: '②大阪営業部', team: '北浜営業' },
-      { id: '25', name: '山本',  department: '②大阪営業部', team: '北浜営業' },
-    ]);
+    const fetchPendingMergeCount = async () => {
+      setIsMergeCountLoading(true);
 
-    // TODO: replace with /api/kpi?period=...&granularity=...
-    setData({
-      budget: { sales: 3200000, budget: 4000000, achievement_rate: 80 },
-      sales: { sales: 3200000, prev_sales: 2800000, change_rate: 14.3 },
-      visit_ranking: [
-        { name: '権藤',   count: 12 },
-        { name: '寺町',   count: 10 },
-        { name: '浦上',   count: 8  },
-        { name: '山田',   count: 7  },
-        { name: '工藤',   count: 5  },
-      ],
-      won_ranking: [
-        { name: '権藤',   count: 3 },
-        { name: '寺町',   count: 2 },
-        { name: '浦上',   count: 2 },
-        { name: '山田',   count: 1 },
-        { name: '工藤',   count: 0 },
-      ],
-      conversion_rate: 33.3,
-      avg_order_value: 400000,
-      new_orders: [
-        { clinic: '山田歯科医院',       sales: '権藤'  },
-        { clinic: 'さくら歯科',         sales: '寺町'  },
-        { clinic: '東京歯科クリニック', sales: '浦上'  },
-        { clinic: 'ほほえみ歯科',       sales: '山田'  },
-        { clinic: 'スマイル歯科医院',   sales: '工藤'  },
-      ],
+      try {
+        const res = await fetch('/api/merge/candidates/count');
+        if (!res.ok) {
+          throw new Error('merge candidates count fetch failed');
+        }
+
+        const result = await res.json();
+        setPendingMergeCount(result.pending_count ?? 0);
+      } catch (err) {
+        console.error('merge candidates count error:', err);
+        setPendingMergeCount(0);
+      } finally {
+        setIsMergeCountLoading(false);
+      }
+    };
+
+    fetchPendingMergeCount();
+  }, []);
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      setIsLoading(true);
+      setError('');
+
+      try {
+        const usersRes = await fetch('/api/users');
+        if (!usersRes.ok) {
+          throw new Error('users fetch failed');
+        }
+
+        const usersData: User[] = await usersRes.json();
+        setUsers(usersData);
+
+        const params = new URLSearchParams({
+          period: appliedPeriod,
+          granularity: appliedGranularity,
+          from: appliedFromDate,
+          to: appliedToDate,
+        });
+
+        if (appliedDept) params.set('department', appliedDept);
+        if (appliedUser) params.set('userId', appliedUser);
+
+        const kpiRes = await fetch(`/api/kpi?${params.toString()}`);
+        if (!kpiRes.ok) {
+          throw new Error('kpi fetch failed');
+        }
+
+        const kpiData = await kpiRes.json();
+        setData(kpiData);
+      } catch (err) {
+        console.error('dashboard fetch error:', err);
+        setError('ダッシュボードの取得に失敗しました');
+        setUsers([]);
+        setData(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [appliedPeriod, appliedGranularity, appliedDept, appliedUser, appliedFromDate, appliedToDate]);
+  const handleApplyFilters = () => {
+    setAppliedPeriod(period);
+    setAppliedGranularity(granularity);
+    setAppliedFromDate(fromDate);
+    setAppliedToDate(toDate);
+    setAppliedDept(selectedDept);
+    setAppliedUser(selectedUser);
+  };
+
+  const parseCsvLine = (line: string) => {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      const next = line[i + 1];
+
+      if (char === '"') {
+        if (inQuotes && next === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+
+      if (char === ',' && !inQuotes) {
+        values.push(current);
+        current = '';
+        continue;
+      }
+
+      current += char;
+    }
+
+    values.push(current);
+    return values;
+  };
+
+  const parseCsvText = (text: string) => {
+    const normalized = text.replace(/^\uFEFF/, '');
+    const lines = normalized
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    if (lines.length < 2) {
+      return [];
+    }
+
+    const headers = parseCsvLine(lines[0]);
+
+    return lines.slice(1).map(line => {
+      const cells = parseCsvLine(line);
+      return headers.reduce<Record<string, string>>((row, header, index) => {
+        row[header] = cells[index] ?? '';
+        return row;
+      }, {});
     });
-    setIsLoading(false);
-  }, [period, granularity, selectedDept, selectedUser]);
+  };
+
+  const uploadSalesCsv = async () => {
+    if (!selectedCsvFile) {
+      setImportResultMessage('CSVファイルを選択してください。');
+      return;
+    }
+
+    setIsImportingCsv(true);
+    setImportResultMessage('');
+
+    try {
+      const csvText = await selectedCsvFile.text();
+      const rows = parseCsvText(csvText);
+
+      if (rows.length === 0) {
+        throw new Error('CSVに取込対象の行がありません。');
+      }
+
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error: insertError } = await supabase
+          .from('sales_import_raw_rows')
+          .insert(chunk);
+
+        if (insertError) {
+          throw insertError;
+        }
+      }
+
+      const finalizeRes = await fetch('/api/import/sales/finalize', {
+        method: 'POST',
+      });
+
+      if (!finalizeRes.ok) {
+        throw new Error('取込後の同期処理に失敗しました。');
+      }
+
+      const finalizeResult = await finalizeRes.json();
+      setImportResultMessage(
+        `CSV取込が完了しました。候補生成件数: ${finalizeResult.inserted_count ?? 0}件 / 顧客担当紐付け更新: ${finalizeResult.customer_external_staff_maps_upserted ?? 0}件`
+      );
+      setSelectedCsvFile(null);
+      setPendingMergeCount(finalizeResult.inserted_count ?? pendingMergeCount);
+      setIsImportModalOpen(false);
+    } catch (err: any) {
+      console.error('sales csv import error:', err);
+      setImportResultMessage(err?.message ?? 'CSV取込に失敗しました。');
+    } finally {
+      setIsImportingCsv(false);
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -159,11 +341,28 @@ export default function Dashboard() {
               className="flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
               <Download className="h-4 w-4" />CSV出力
             </button>
+            <button onClick={() => {
+              setIsImportModalOpen(true);
+              setImportResultMessage('');
+            }}
+              className="flex items-center gap-1 rounded-lg border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50">
+              <PlusCircle className="h-4 w-4" />CSV取込
+            </button>
 
-<button onClick={() => navigate('/deals/history')}
-  className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
-  <TrendingUp className="h-4 w-4" />商談履歴
-</button>
+            <button onClick={() => navigate('/deals/history')}
+              className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+              <TrendingUp className="h-4 w-4" />商談履歴
+            </button>
+
+            <button onClick={() => navigate('/customer-merge')}
+              className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100">
+              <Target className="h-4 w-4" />取引先マージ
+              {!isMergeCountLoading && pendingMergeCount > 0 && (
+                <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
+                  {pendingMergeCount}
+                </span>
+              )}
+            </button>
 
             <button onClick={() => navigate('/deals/new')}
               className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
@@ -178,6 +377,28 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-8">
+        {importResultMessage && (
+          <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 shadow-sm">
+            {importResultMessage}
+          </div>
+        )}
+        {!isMergeCountLoading && pendingMergeCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm"
+          >
+            <div>
+              未対応の取引先マージ候補が <span className="font-bold">{pendingMergeCount}件</span> あります。
+            </div>
+            <button
+              onClick={() => navigate('/customer-merge')}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600"
+            >
+              確認する
+            </button>
+          </motion.div>
+        )}
         {/* Filters */}
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
           className="mb-6 flex flex-wrap items-center gap-4 rounded-xl bg-white p-4 shadow-sm">
@@ -191,10 +412,28 @@ export default function Dashboard() {
             <Calendar className="h-4 w-4 text-zinc-400" />
             <select value={period} onChange={e => setPeriod(e.target.value as Period)}
               className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
-              <option value="daily">日次</option>
               <option value="weekly">週次</option>
               <option value="monthly">月次</option>
+              <option value="quarterly">四半期</option>
+              <option value="yearly">年次</option>
             </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-zinc-400" />
+            <input
+              type="date"
+              value={fromDate}
+              onChange={e => setFromDate(e.target.value)}
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
+            />
+            <span className="text-sm text-zinc-400">〜</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={e => setToDate(e.target.value)}
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
+            />
           </div>
 
           {/* Granularity */}
@@ -218,12 +457,9 @@ export default function Dashboard() {
               <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
                 <option value="">部署を選択</option>
-                {DEPARTMENTS.map(d => (
+                {departmentOptions.map(d => (
                   <option key={d} value={d}>{d}</option>
                 ))}
-                <option value="東京営業">東京営業</option>
-                <option value="高槻営業">高槻営業</option>
-                <option value="北浜営業">北浜営業</option>
               </select>
             </div>
           )}
@@ -235,18 +471,27 @@ export default function Dashboard() {
               <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
                 <option value="">担当者を選択</option>
-                {TEAMS.map(t => (
-                  <optgroup key={t.team} label={`${t.dept}・${t.team}`}>
-                    {users.filter(u => u.team === t.team).map(u => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
-                  </optgroup>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}（{u.department}）
+                  </option>
                 ))}
               </select>
             </div>
           )}
+          <button
+            onClick={handleApplyFilters}
+            className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            確定
+          </button>
         </motion.div>
-
+      
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+            {error}
+          </div>
+        )}
         {/* Row 1: 予算達成率 + 売上合計 */}
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
@@ -276,14 +521,18 @@ export default function Dashboard() {
             className="rounded-xl bg-white p-6 shadow-sm">
             <SectionTitle title="開拓転換率" color="#f59e0b" />
             <p className="text-4xl font-bold text-amber-500">{data?.conversion_rate ?? 0}%</p>
-            <p className="mt-2 text-sm text-zinc-500">訪問件数 ÷ 受注件数</p>
+            <p className="mt-2 text-sm text-zinc-500">
+              期間内新規作成取引先のうち、新規受注に至った割合
+            </p>
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
             className="rounded-xl bg-white p-6 shadow-sm">
             <SectionTitle title="受注単価 / 医院" color="#ec4899" />
             <p className="text-4xl font-bold text-pink-500">¥{(data?.avg_order_value ?? 0).toLocaleString()}</p>
-            <p className="mt-2 text-sm text-zinc-500">受注金額 ÷ 受注件数</p>
+            <p className="mt-2 text-sm text-zinc-500">
+              新規取引先売上 ÷ 新規取引先数
+            </p>
           </motion.div>
         </div>
 
@@ -342,6 +591,58 @@ export default function Dashboard() {
           </div>
         </motion.div>
       </main>
+    {/* Import Modal */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-zinc-900">CSV取込</h2>
+              <button
+                onClick={() => {
+                  if (!isImportingCsv) setIsImportModalOpen(false);
+                }}
+                className="rounded-lg px-2 py-1 text-sm text-zinc-500 hover:bg-zinc-100"
+              >
+                閉じる
+              </button>
+            </div>
+
+            <p className="mb-4 text-sm text-zinc-600">
+              売上CSVを取り込んだ後、顧客同期・担当紐付け・マージ候補生成までまとめて実行します。
+            </p>
+
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={e => setSelectedCsvFile(e.target.files?.[0] ?? null)}
+              className="mb-4 block w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+            />
+
+            {selectedCsvFile && (
+              <div className="mb-4 text-sm text-zinc-600">
+                選択中: {selectedCsvFile.name}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setIsImportModalOpen(false)}
+                disabled={isImportingCsv}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={uploadSalesCsv}
+                disabled={isImportingCsv}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isImportingCsv ? '取込中...' : '取込実行'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
