@@ -1,26 +1,46 @@
-import { useState, FormEvent } from 'react';
+import { useState, FormEvent, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
+import { supabase } from '../lib/supabase';
 import { UserPlus, Loader2, ArrowLeft } from 'lucide-react';
 
 export default function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [department, setDepartment] = useState('①大阪営業部');
+  const [departmentId, setDepartmentId] = useState('1');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  // 🚨 朱さんへ：useAuthのlogin関数はSupabase Auth実装後に追加してください
+  type Department = {
+    id: number;
+    name: string;
+  };
 
-  const departments = [
-    '①大阪営業部',
-    '①-1 高槻営業',
-    '①-2 北浜営業',
-    '②東京営業部',
-    '②-1 東京営業'
-  ];
+  const [departments, setDepartments] = useState<Department[]>([]);
+
+  useEffect(() => {
+    const fetchDepartments = async () => {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('id, name')
+        .order('id', { ascending: true });
+
+      if (error) {
+        setError('部署一覧の取得に失敗しました');
+        return;
+      }
+
+      setDepartments(data ?? []);
+
+      if (data && data.length > 0) {
+        setDepartmentId(String(data[0].id));
+      }
+    };
+
+    fetchDepartments();
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -28,21 +48,32 @@ export default function Signup() {
     setError('');
 
     try {
-      const response = await fetch('/api/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name, department }),
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name,
+            department_id: Number(departmentId),
+            role: 'user'
+          }
+        }
       });
 
-      if (response.ok) {
-        // 🚨 朱さんへ：ここをSupabase Authの登録処理に差し替えてください
-        // login(data.user); ← Supabase Auth実装後に復活させる
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        navigate(isMobile ? '/deals/new' : '/dashboard');
-      } else {
-        const data = await response.json();
-        setError(data.error || '登録に失敗しました');
+      if (signUpError) {
+        setError(signUpError.message || '登録に失敗しました');
+        setIsLoading(false);
+        return;
       }
+
+      if (!data.user) {
+        setError('ユーザー作成に失敗しました');
+        setIsLoading(false);
+        return;
+      }
+
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      navigate(isMobile ? '/deals/new' : '/dashboard');
     } catch (err) {
       setError('サーバーとの通信に失敗しました');
     } finally {
@@ -82,12 +113,16 @@ export default function Signup() {
               部署 <span className="text-red-500">*</span>
             </label>
             <select
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
+              required
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-zinc-300 px-4 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
             >
-              {departments.map(d => (
-                <option key={d} value={d}>{d}</option>
+              {departments.length === 0 && (
+                <option value="">部署を読み込み中...</option>
+              )}
+              {departments.map((d) => (
+                <option key={d.id} value={String(d.id)}>{d.name}</option>
               ))}
             </select>
           </div>
@@ -128,7 +163,7 @@ export default function Signup() {
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || departments.length === 0}
             className="flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
           >
             {isLoading ? (

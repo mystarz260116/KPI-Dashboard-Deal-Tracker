@@ -203,6 +203,39 @@ async function startServer() {
   });
 
   // Deals API
+  app.get("/api/deals", (req, res) => {
+    const userId = req.query.userId as string | undefined;
+
+    let query = `
+      SELECT
+        d.id,
+        d.user_id,
+        u.name as user_name,
+        u.department,
+        d.clinic_id,
+        c.name as clinic_name,
+        c.address as clinic_address,
+        d.amount,
+        d.status,
+        d.is_new_client,
+        d.created_at
+      FROM deals d
+      JOIN users u ON d.user_id = u.id
+      JOIN clinics c ON d.clinic_id = c.id
+    `;
+
+    const params: Array<string | number> = [];
+
+    if (userId) {
+      query += ` WHERE d.user_id = ?`;
+      params.push(userId);
+    }
+
+    query += ` ORDER BY d.created_at DESC`;
+
+    const deals = db.prepare(query).all(...params);
+    res.json(deals);
+  });
   app.post("/api/deals", (req, res) => {
     const { userId, clinicId, amount, status, isNewClient } = req.body;
     db.prepare("INSERT INTO deals (user_id, clinic_id, amount, status, is_new_client) VALUES (?, ?, ?, ?, ?)").run(

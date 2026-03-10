@@ -11,6 +11,8 @@
 // ============================================
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
+import type { Session } from '@supabase/supabase-js';
 import { User } from '../types';
 
 interface AuthContextType {
@@ -32,22 +34,85 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const savedUser = localStorage.getItem('demo_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
+  const buildUserFromSession = async (session: Session | null): Promise<User | null> => {
+    if (!session?.user) return null;
+
+    const userId = session.user.id;
+
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('name, email, role, department_id')
+      .eq('id', userId)
+      .single();
+
+    if (error || !profile) {
+      console.error('profile fetch error:', error);
+      return null;
     }
-    setIsLoading(false);
+
+    let departmentName = '';
+
+    if (profile.department_id) {
+      const { data: dept } = await supabase
+        .from('departments')
+        .select('name')
+        .eq('id', profile.department_id)
+        .single();
+
+      departmentName = dept?.name ?? '';
+    }
+
+    return {
+      id: userId,
+      name: profile.name,
+      department: departmentName,
+      email: profile.email,
+      role: profile.role,
+    };
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const initializeAuth = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isMounted) return;
+
+      const user = await buildUserFromSession(session);
+      setUser(user);
+      setIsLoading(false);
+    };
+
+    initializeAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const load = async () => {
+        const user = await buildUserFromSession(session);
+        setUser(user);
+        setIsLoading(false);
+      };
+
+      load();
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = (newUser: User) => {
     setUser(newUser);
-    localStorage.setItem('demo_user', JSON.stringify(newUser));
   };
 
   const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('demo_user');
   };
 
   return (

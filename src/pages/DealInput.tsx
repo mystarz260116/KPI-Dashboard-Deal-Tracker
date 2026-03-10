@@ -1,4 +1,5 @@
-import { useState, FormEvent } from 'react';
+import { supabase } from '../lib/supabase';
+import { useState, FormEvent, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -10,27 +11,8 @@ import {
 interface Clinic {
   id: string;
   name: string;
+  kind: 'customer' | 'prospect';
 }
-
-// ============================================
-// 朱さんへ：差し替えが必要な箇所です
-// --------------------------------------------
-// 現在はデモ用のダミー医院リストです
-// 本番稼働時は /api/clinics から取得する
-// 形に差し替えをお願いします🙏
-// ============================================
-const DUMMY_CLINICS: Clinic[] = [
-  { id: '1',  name: '山田歯科医院' },
-  { id: '2',  name: '田中デンタルクリニック' },
-  { id: '3',  name: 'さくら歯科' },
-  { id: '4',  name: '東京歯科クリニック' },
-  { id: '5',  name: '大阪デンタルオフィス' },
-  { id: '6',  name: 'ほほえみ歯科' },
-  { id: '7',  name: 'スマイル歯科医院' },
-  { id: '8',  name: '北浜デンタルクリニック' },
-  { id: '9',  name: '高槻歯科医院' },
-  { id: '10', name: 'みなみ歯科クリニック' },
-];
 
 type ActivityType = 'visit' | 'proposal' | 'negotiating' | 'won' | 'lost';
 
@@ -44,6 +26,8 @@ export default function DealInput() {
   const [isCreatingClinic, setIsCreatingClinic] = useState(false);
   const [newClinicName, setNewClinicName] = useState('');
 
+  const [clinics, setClinics] = useState<Clinic[]>([]);
+
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [activityType, setActivityType] = useState<ActivityType>('visit');
   const [productName, setProductName] = useState('');
@@ -54,52 +38,152 @@ export default function DealInput() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const filteredClinics = searchQuery.length > 1
-    ? DUMMY_CLINICS.filter(c => c.name.includes(searchQuery))
-    : [];
+  const filteredClinics = clinics;
 
-  const handleCreateClinic = () => {
-    if (!newClinicName) return;
-    // ============================================
-    // 朱さんへ：差し替えが必要な箇所です
-    // --------------------------------------------
-    // 本番稼働時は POST /api/clinics で
-    // 新規医院を登録する形に差し替えをお願いします🙏
-    // ============================================
-    const newClinic: Clinic = { id: String(Date.now()), name: newClinicName };
-    setSelectedClinic(newClinic);
-    setIsCreatingClinic(false);
-    setNewClinicName('');
-    setStep('details');
+    useEffect(() => {
+    const fetchClinics = async () => {
+      const keyword = searchQuery.trim();
+
+      if (keyword.length === 0) {
+        setClinics([]);
+        setError('');
+        return;
+      }
+
+      if (!user?.id) {
+        setClinics([]);
+        setError('');
+        return;
+      }
+
+      const [{ data: customerData, error: customerError }, { data: prospectData, error: prospectError }] = await Promise.all([
+        supabase
+          .from('customers')
+          .select('code, name')
+          .or(`name.ilike.%${keyword}%,code.ilike.%${keyword}%`)
+          .order('name', { ascending: true })
+          .limit(20),
+        supabase
+          .from('prospect_customers')
+          .select('id, name, status')
+          .eq('created_by', user.id)
+          .in('status', ['new', 'matched'])
+          .ilike('name', `%${keyword}%`)
+          .order('name', { ascending: true })
+          .limit(20),
+      ]);
+
+      console.log('clinic search keyword:', keyword);
+      console.log('customer search data:', customerData);
+      console.log('customer search error:', customerError);
+      console.log('prospect search data:', prospectData);
+      console.log('prospect search error:', prospectError);
+
+      if (customerError || prospectError) {
+        console.error('clinic search error:', customerError ?? prospectError);
+        setError('医院検索に失敗しました');
+        setClinics([]);
+        return;
+      }
+
+      setError('');
+
+      const customerResults: Clinic[] = (customerData ?? []).map((c: any) => ({
+        id: c.code,
+        name: c.name,
+        kind: 'customer',
+      }));
+
+      const prospectResults: Clinic[] = (prospectData ?? []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        kind: 'prospect',
+      }));
+
+      const mergedResults = [...prospectResults, ...customerResults];
+      setClinics(mergedResults);
+    };
+
+    fetchClinics();
+  }, [searchQuery, user?.id]);
+
+  const handleCreateClinic = async () => {
+    const clinicName = newClinicName.trim();
+    if (!clinicName || !user?.id) return;
+
+    setError('');
+
+    try {
+      const { data, error: insertError } = await supabase
+        .from('prospect_customers')
+        .insert({
+          name: clinicName,
+          created_by: user.id,
+          status: 'new',
+        })
+        .select('id, name')
+        .single();
+
+      if (insertError || !data) {
+        console.error('prospect clinic insert error:', insertError);
+        setError('新規医院の登録に失敗しました');
+        return;
+      }
+
+      const newClinic: Clinic = {
+        id: data.id,
+        name: data.name,
+        kind: 'prospect',
+      };
+
+      setSelectedClinic(newClinic);
+      setIsCreatingClinic(false);
+      setNewClinicName('');
+      setStep('details');
+    } catch (err) {
+      console.error('prospect clinic create error:', err);
+      setError('新規医院の登録に失敗しました');
+    }
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedClinic) return;
+    if (!selectedClinic || !user?.id) return;
+
     setIsSubmitting(true);
     setError('');
-    // ============================================
-    // 朱さんへ：差し替えが必要な箇所です
-    // --------------------------------------------
-    // 本番稼働時は POST /api/deals でデータを登録する
-    // 差し替え後のコード例：
-    // const res = await fetch('/api/deals', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({
-    //     userId: user?.id,
-    //     clinicId: selectedClinic.id,
-    //     date, activityType, productName,
-    //     unitCount: parseInt(unitCount),
-    //     amount: parseInt(amount),
-    //     notes, nextAction,
-    //   }),
-    // });
-    // ============================================
-    setTimeout(() => {
-      setIsSubmitting(false);
+
+    const payload = {
+      user_id: user.id,
+      customer_code: selectedClinic.kind === 'customer' ? selectedClinic.id : null,
+      prospect_customer_id: selectedClinic.kind === 'prospect' ? selectedClinic.id : null,
+      deal_date: date,
+      activity_type: activityType,
+      product_name: productName || null,
+      unit_count: unitCount ? Number(unitCount) : null,
+      amount: amount ? Number(amount) : null,
+      notes: notes || null,
+      next_action: nextAction || null,
+    };
+
+    try {
+      const { error: insertError } = await supabase
+        .from('deals')
+        .insert(payload);
+
+      if (insertError) {
+        console.error('deal insert error:', insertError);
+        setError('商談の登録に失敗しました');
+        return;
+      }
+
       setStep('success');
-    }, 800);
+    } catch (err) {
+      console.error('deal submit error:', err);
+      setError('商談の登録に失敗しました');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleReset = () => {
@@ -161,6 +245,11 @@ export default function DealInput() {
                 </div>
 
                 <div className="mt-4 space-y-2">
+                  {error && (
+                    <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                      {error}
+                    </div>
+                  )}
                   {filteredClinics.map(clinic => (
                     <button key={clinic.id}
                       onClick={() => { setSelectedClinic(clinic); setStep('details'); }}
@@ -168,13 +257,18 @@ export default function DealInput() {
                     >
                       <div className="flex items-center gap-3">
                         <Building2 className="h-5 w-5 text-zinc-400" />
-                        <span className="font-medium text-zinc-900">{clinic.name}</span>
+                        <div>
+                          <span className="font-medium text-zinc-900">{clinic.name}</span>
+                          {clinic.kind === 'prospect' && (
+                            <p className="mt-1 text-xs font-medium text-purple-500">新規登録院</p>
+                          )}
+                        </div>
                       </div>
                       <ChevronRight className="h-4 w-4 text-zinc-300" />
                     </button>
                   ))}
 
-                  {searchQuery.length > 1 && filteredClinics.length === 0 && !isCreatingClinic && (
+                  {searchQuery.trim().length > 0 && filteredClinics.length === 0 && !isCreatingClinic && !error && (
                     <div className="py-8 text-center">
                       <p className="text-sm text-zinc-500">候補が見つかりませんでした</p>
                       <button

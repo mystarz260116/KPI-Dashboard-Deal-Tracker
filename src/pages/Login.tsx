@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import { LogIn, Loader2 } from 'lucide-react';
 import logoImg from '../assets/Mystarz-logo.png';
@@ -18,19 +19,39 @@ export default function Login() {
     setIsLoading(true);
     setError('');
 
-    // ============================================
-    // 🚨 朱さんへ：差し替えが必要な箇所です
-    // --------------------------------------------
-    // 現在はデモ用のダミーログインです。
-    // 本番稼働時は Supabase Auth の
-    // signInWithPassword に差し替えをお願いします🙏
-    // ============================================
-    setTimeout(() => {
-      login({ id: 'demo', name: 'デモユーザー', department: '①東京営業部' });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        setError('メールアドレスまたはパスワードが正しくありません');
+        setIsLoading(false);
+        return;
+      }
+
+      if (!data.user) {
+        setError('ログインに失敗しました');
+        setIsLoading(false);
+        return;
+      }
+
+      const metadata = data.user.user_metadata ?? {};
+
+      login({
+        id: data.user.id,
+        name: metadata.name ?? data.user.email ?? 'ユーザー',
+        department: metadata.department ?? '',
+      });
+
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       navigate(isMobile ? '/deals/new' : '/dashboard');
+    } catch (e) {
+      setError('サーバーに接続できませんでした');
+    } finally {
       setIsLoading(false);
-    }, 800);
+    }
   };
 
   return (

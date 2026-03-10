@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, Building2, Search, Filter,
@@ -17,65 +18,6 @@ interface Deal {
   notes?: string;
   nextAction?: string;
 }
-
-// ============================================
-// 朱さんへ：差し替えが必要な箇所です
-// --------------------------------------------
-// 現在はデモ用のダミーデータです
-// 本番稼働時は GET /api/deals?userId=xxx から取得する
-// 形に差し替えをお願いします🙏
-// ============================================
-const DUMMY_DEALS: Deal[] = [
-  {
-    id: '1',
-    clinicName: '山田歯科医院',
-    activityType: 'won',
-    date: '2026-03-06',
-    productName: '商品A',
-    amount: 500000,
-    notes: '院長と面談、即決いただけた',
-    nextAction: '契約書送付',
-  },
-  {
-    id: '2',
-    clinicName: 'さくら歯科',
-    activityType: 'proposal',
-    date: '2026-03-05',
-    notes: '提案資料を持参、前向きな反応',
-    nextAction: '来週フォロー',
-  },
-  {
-    id: '3',
-    clinicName: '東京歯科クリニック',
-    activityType: 'visit',
-    date: '2026-03-04',
-    notes: '初回訪問、受付に資料置いてきた',
-    nextAction: '再訪問',
-  },
-  {
-    id: '4',
-    clinicName: 'ほほえみ歯科',
-    activityType: 'negotiating',
-    date: '2026-03-03',
-    notes: '価格交渉中',
-    nextAction: '上長に確認後連絡',
-  },
-  {
-    id: '5',
-    clinicName: '高槻歯科医院',
-    activityType: 'lost',
-    date: '2026-03-02',
-    notes: '他社に決定',
-  },
-  {
-    id: '6',
-    clinicName: '北浜デンタルクリニック',
-    activityType: 'visit',
-    date: '2026-03-01',
-    notes: '院長不在、次回アポ取得',
-    nextAction: '3/10 再訪問',
-  },
-];
 
 const ACTIVITY_LABELS: Record<Deal['activityType'], string> = {
   visit:       '訪問',
@@ -99,8 +41,47 @@ export default function DealHistory() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<Deal['activityType'] | 'all'>('all');
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [error, setError] = useState('');
 
-  const filtered = DUMMY_DEALS.filter(d => {
+  useEffect(() => {
+    const fetchDeals = async () => {
+      if (!user?.id) return;
+
+      const { data, error } = await supabase
+        .from('deals')
+        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, product_name, amount, notes, next_action, customers(name), prospect_customers(name)')
+        .eq('user_id', user.id)
+        .order('deal_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('deal history fetch error:', error);
+        setError('商談履歴の取得に失敗しました');
+        setDeals([]);
+        return;
+      }
+
+      setError('');
+
+      const results: Deal[] = (data ?? []).map((d: any) => ({
+        id: d.id,
+        clinicName: d.customers?.name ?? d.prospect_customers?.name ?? d.customer_code ?? d.prospect_customer_id,
+        activityType: d.activity_type,
+        date: d.deal_date,
+        productName: d.product_name ?? undefined,
+        amount: d.amount ?? undefined,
+        notes: d.notes ?? undefined,
+        nextAction: d.next_action ?? undefined,
+      }));
+
+      setDeals(results);
+    };
+
+    fetchDeals();
+  }, [user?.id]);
+
+  const filtered = deals.filter(d => {
     const matchSearch = searchQuery === '' || d.clinicName.includes(searchQuery);
     const matchType = filterType === 'all' || d.activityType === filterType;
     return matchSearch && matchType;
@@ -151,6 +132,12 @@ export default function DealHistory() {
             ))}
           </div>
         </div>
+
+        {error && (
+          <div className="mb-4 rounded-2xl bg-red-50 p-4 text-sm text-red-600 shadow-sm border border-red-200">
+            {error}
+          </div>
+        )}
 
         {/* 件数 */}
         <p className="mb-3 text-xs text-zinc-500">{filtered.length}件の商談</p>
