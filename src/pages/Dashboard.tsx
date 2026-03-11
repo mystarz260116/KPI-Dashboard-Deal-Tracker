@@ -259,28 +259,49 @@ export default function Dashboard() {
         throw new Error('CSVに取込対象の行がありません。');
       }
 
-      const uploadRes = await fetch('/api/import/sales/upload', {
+      let uploadedCount = 0;
+
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+
+        const uploadRes = await fetch('/api/import/sales/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ rows: chunk }),
+        });
+
+        const uploadContentType = uploadRes.headers.get('content-type') ?? '';
+        const uploadResult = uploadContentType.includes('application/json')
+          ? await uploadRes.json()
+          : null;
+
+        if (!uploadRes.ok) {
+          throw new Error(uploadResult?.error ?? 'CSV取込に失敗しました。');
+        }
+
+        uploadedCount += uploadResult?.uploaded_count ?? chunk.length;
+      }
+
+      const finalizeRes = await fetch('/api/import/sales/finalize', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ rows }),
       });
 
-      const uploadContentType = uploadRes.headers.get('content-type') ?? '';
-      const uploadResult = uploadContentType.includes('application/json')
-        ? await uploadRes.json()
+      const finalizeContentType = finalizeRes.headers.get('content-type') ?? '';
+      const finalizeResult = finalizeContentType.includes('application/json')
+        ? await finalizeRes.json()
         : null;
 
-      if (!uploadRes.ok) {
-        throw new Error(uploadResult?.error ?? 'CSV取込と同期処理に失敗しました。');
+      if (!finalizeRes.ok) {
+        throw new Error(finalizeResult?.error ?? '取込後の同期処理に失敗しました。');
       }
 
       setImportResultMessage(
-        `CSV取込と同期処理が完了しました。取込件数: ${uploadResult?.uploaded_count ?? 0}件 / 顧客担当紐付け更新: ${uploadResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${uploadResult?.merge_candidates_inserted_count ?? 0}件`
+        `CSV取込と同期処理が完了しました。取込件数: ${uploadedCount}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
       );
       setSelectedCsvFile(null);
-      setPendingMergeCount(uploadResult?.merge_candidates_inserted_count ?? pendingMergeCount);
+      setPendingMergeCount(finalizeResult?.inserted_count ?? pendingMergeCount);
       setIsImportModalOpen(false);
     } catch (err: any) {
       console.error('sales csv import error:', err);
