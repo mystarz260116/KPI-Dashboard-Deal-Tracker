@@ -1,5 +1,5 @@
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin';
-import { similarity } from '../../src/lib/mergeUtils';
+import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { similarity } from '../../src/lib/mergeUtils.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

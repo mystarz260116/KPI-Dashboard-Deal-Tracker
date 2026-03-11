@@ -1,6 +1,6 @@
 
 
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin';
+import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 
 async function syncCustomerExternalStaffMaps() {
   const { data: salesRows, error: salesRowsError } = await supabaseAdmin

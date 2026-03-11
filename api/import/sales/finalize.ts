@@ -1,5 +1,5 @@
-import { supabaseAdmin } from '../../../src/lib/supabaseAdmin';
-import { similarity } from '../../../src/lib/mergeUtils';
+import { supabaseAdmin } from '../../../src/lib/supabaseAdmin.js';
+import { similarity } from '../../../src/lib/mergeUtils.js';
 
 async function syncCustomerExternalStaffMaps() {
   const { data: salesRows, error: salesRowsError } = await supabaseAdmin

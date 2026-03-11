@@ -1,12 +1,12 @@
 
 
-import { supabaseAdmin } from '../src/lib/supabaseAdmin';
+import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
 import {
   getPeriodRange,
   getYearMonthsBetween,
   toDateString,
   type Period,
-} from '../src/lib/dateUtils';
+} from '../src/lib/dateUtils.js';
 
 type Granularity = 'all' | 'department' | 'individual';
 

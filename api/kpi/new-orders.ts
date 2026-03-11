@@ -1,7 +1,7 @@
 
 
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin';
-import { toDateString } from '../../src/lib/dateUtils';
+import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { toDateString } from '../../src/lib/dateUtils.js';
 
 type Granularity = 'all' | 'department' | 'individual';
 
