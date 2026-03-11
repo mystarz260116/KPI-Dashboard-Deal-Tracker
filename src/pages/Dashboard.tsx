@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
 import { KPIData, Granularity, Period } from '../types';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -260,31 +259,28 @@ export default function Dashboard() {
         throw new Error('CSVに取込対象の行がありません。');
       }
 
-      for (let i = 0; i < rows.length; i += 500) {
-        const chunk = rows.slice(i, i + 500);
-        const { error: insertError } = await supabase
-          .from('sales_import_raw_rows')
-          .insert(chunk);
-
-        if (insertError) {
-          throw insertError;
-        }
-      }
-
-      const finalizeRes = await fetch('/api/import/sales/finalize', {
+      const uploadRes = await fetch('/api/import/sales/upload', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rows }),
       });
 
-      if (!finalizeRes.ok) {
-        throw new Error('取込後の同期処理に失敗しました。');
+      const uploadContentType = uploadRes.headers.get('content-type') ?? '';
+      const uploadResult = uploadContentType.includes('application/json')
+        ? await uploadRes.json()
+        : null;
+
+      if (!uploadRes.ok) {
+        throw new Error(uploadResult?.error ?? 'CSV取込と同期処理に失敗しました。');
       }
 
-      const finalizeResult = await finalizeRes.json();
       setImportResultMessage(
-        `CSV取込が完了しました。候補生成件数: ${finalizeResult.inserted_count ?? 0}件 / 顧客担当紐付け更新: ${finalizeResult.customer_external_staff_maps_upserted ?? 0}件`
+        `CSV取込と同期処理が完了しました。取込件数: ${uploadResult?.uploaded_count ?? 0}件 / 顧客担当紐付け更新: ${uploadResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${uploadResult?.merge_candidates_inserted_count ?? 0}件`
       );
       setSelectedCsvFile(null);
-      setPendingMergeCount(finalizeResult.inserted_count ?? pendingMergeCount);
+      setPendingMergeCount(uploadResult?.merge_candidates_inserted_count ?? pendingMergeCount);
       setIsImportModalOpen(false);
     } catch (err: any) {
       console.error('sales csv import error:', err);
