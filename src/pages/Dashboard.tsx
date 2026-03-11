@@ -259,6 +259,7 @@ export default function Dashboard() {
         throw new Error('CSVに取込対象の行がありません。');
       }
 
+      const importBatchId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       let uploadedCount = 0;
 
       for (let i = 0; i < rows.length; i += 500) {
@@ -269,7 +270,7 @@ export default function Dashboard() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ rows: chunk }),
+          body: JSON.stringify({ rows: chunk, import_batch_id: importBatchId }),
         });
 
         const uploadContentType = uploadRes.headers.get('content-type') ?? '';
@@ -286,6 +287,10 @@ export default function Dashboard() {
 
       const finalizeRes = await fetch('/api/import/sales/finalize', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ import_batch_id: importBatchId }),
       });
 
       const finalizeContentType = finalizeRes.headers.get('content-type') ?? '';

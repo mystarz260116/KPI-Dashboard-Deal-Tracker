@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../../../src/lib/supabaseAdmin.js';
 import { similarity } from '../../../src/lib/mergeUtils.js';
 
-async function syncCustomerExternalStaffMaps() {
+async function syncCustomerExternalStaffMaps(customerCodes?: string[] | null) {
   const { data: salesRows, error: salesRowsError } = await supabaseAdmin
     .from('sales_import_rows')
     .select('customer_code, external_staff_code')
@@ -12,9 +12,13 @@ async function syncCustomerExternalStaffMaps() {
     throw salesRowsError;
   }
 
+  const filteredSalesRows = customerCodes?.length
+    ? (salesRows ?? []).filter((row: any) => customerCodes.includes(String(row.customer_code)))
+    : (salesRows ?? []);
+
   const uniqueMapRows = Array.from(
     new Map(
-      (salesRows ?? [])
+      filteredSalesRows
         .filter((row: any) => row.customer_code && row.external_staff_code)
         .map((row: any) => [
           `${String(row.customer_code)}::${String(row.external_staff_code)}`,
@@ -49,20 +53,14 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const batchId = req.body?.import_batch_id ?? null;
+
   try {
     const { error: syncError } = await supabaseAdmin.rpc('sync_master_from_sales_import_raw');
 
     if (syncError) {
       console.error('sales import finalize sync error:', syncError);
       return res.status(500).json({ error: 'sales import finalize sync failed' });
-    }
-
-    let customerExternalStaffMapResult;
-    try {
-      customerExternalStaffMapResult = await syncCustomerExternalStaffMaps();
-    } catch (customerExternalStaffMapsError) {
-      console.error('sales import finalize customer external staff maps error:', customerExternalStaffMapsError);
-      return res.status(500).json({ error: 'customer external staff maps sync failed' });
     }
 
     const { data: prospects, error: prospectsError } = await supabaseAdmin
@@ -75,13 +73,45 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'prospects fetch failed' });
     }
 
-    const { data: customers, error: customersError } = await supabaseAdmin
+    let batchCustomerCodes: string[] | null = null;
+
+    if (batchId) {
+      const { data: batchRows, error: batchRowsError } = await supabaseAdmin
+        .from('sales_import_raw_rows')
+        .select('得意先コード')
+        .eq('import_batch_id', batchId);
+
+      if (batchRowsError) {
+        console.error('sales import finalize batch lookup error:', batchRowsError);
+        return res.status(500).json({ error: 'batch lookup failed' });
+      }
+
+      batchCustomerCodes = Array.from(
+        new Set((batchRows ?? []).map((r: any) => String(r['得意先コード'])).filter(Boolean))
+      );
+    }
+
+    let customersQuery = supabaseAdmin
       .from('customers')
       .select('code, name');
+
+    if (batchCustomerCodes && batchCustomerCodes.length > 0) {
+      customersQuery = customersQuery.in('code', batchCustomerCodes);
+    }
+
+    const { data: customers, error: customersError } = await customersQuery;
 
     if (customersError) {
       console.error('sales import finalize customers error:', customersError);
       return res.status(500).json({ error: 'customers fetch failed' });
+    }
+
+    let customerExternalStaffMapResult;
+    try {
+      customerExternalStaffMapResult = await syncCustomerExternalStaffMaps(batchCustomerCodes);
+    } catch (customerExternalStaffMapsError) {
+      console.error('sales import finalize customer external staff maps error:', customerExternalStaffMapsError);
+      return res.status(500).json({ error: 'customer external staff maps sync failed' });
     }
 
     const candidateRows: Array<{

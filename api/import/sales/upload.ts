@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../../src/lib/supabaseAdmin.js';
+import crypto from 'crypto';
 
 // Type for incoming rows from the CSV parser on the client
 // We keep it flexible because CSV headers may vary
@@ -45,10 +46,17 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'rows are required' });
     }
 
+    const batchId = req.body?.import_batch_id ?? crypto.randomUUID();
+
+    const rowsWithBatch = rows.map((r) => ({
+      ...r,
+      import_batch_id: batchId,
+    }));
+
     // 1. Insert CSV rows into raw table
     let uploadResult;
     try {
-      uploadResult = await insertSalesImportRawRows(rows);
+      uploadResult = await insertSalesImportRawRows(rowsWithBatch);
     } catch (uploadError) {
       console.error('sales import upload error:', uploadError);
       return res.status(500).json({ error: 'sales import raw upload failed' });
@@ -67,6 +75,7 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       success: true,
       uploaded_count: uploadResult.inserted_count,
+      import_batch_id: batchId,
       finalized: true,
     });
   } catch (error) {
