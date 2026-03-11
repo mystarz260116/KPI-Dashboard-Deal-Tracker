@@ -1,5 +1,22 @@
 export function normalize(value: string): string {
-  return (value ?? '')
+  return Array.from(value ?? '')
+    .map((char) => {
+      const code = char.charCodeAt(0);
+
+      // Full-width ASCII variants (numbers, alphabet, symbols) -> half-width
+      if (code >= 0xff01 && code <= 0xff5e) {
+        return String.fromCharCode(code - 0xfee0);
+      }
+
+      // Full-width space -> half-width space
+      if (code === 0x3000) {
+        return ' ';
+      }
+
+      return char;
+    })
+    .join('')
+    .toLowerCase()
     .replace(/[\s　]+/g, '')
     .replace(/[()（）]/g, '')
     .trim();
