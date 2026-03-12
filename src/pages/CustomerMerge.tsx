@@ -35,6 +35,19 @@ export default function CustomerMerge() {
     await loadCandidates();
   }
 
+  async function handleReject(prospectId: string, customerCode: string) {
+    await fetch('/api/merge/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prospect_customer_id: prospectId,
+        customer_code: customerCode,
+      }),
+    });
+
+    await loadCandidates();
+  }
+
   useEffect(() => {
     async function init() {
       setLoading(true);
@@ -88,12 +101,21 @@ export default function CustomerMerge() {
                     {(c.match_score * 100).toFixed(0)}%
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleMerge(c.prospect_customer_id, c.customer_code)}
-                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700"
-                    >
-                      マージ
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleMerge(c.prospect_customer_id, c.customer_code)}
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700"
+                      >
+                        マージ
+                      </button>
+
+                      <button
+                        onClick={() => handleReject(c.prospect_customer_id, c.customer_code)}
+                        className="rounded-lg bg-zinc-500 px-3 py-1.5 text-white hover:bg-zinc-600"
+                      >
+                        却下
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

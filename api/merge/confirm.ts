@@ -1,5 +1,3 @@
-
-
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 
 export default async function handler(req: any, res: any) {
@@ -42,7 +40,8 @@ export default async function handler(req: any, res: any) {
         reviewed_at: new Date().toISOString(),
       })
       .eq('prospect_customer_id', prospect_customer_id)
-      .eq('customer_code', customer_code);
+      .eq('customer_code', customer_code)
+      .eq('decision', 'pending');
 
     if (candidateApproveError) {
       console.error('merge confirm candidate approve error:', candidateApproveError);
@@ -57,7 +56,8 @@ export default async function handler(req: any, res: any) {
         reviewed_at: new Date().toISOString(),
       })
       .eq('prospect_customer_id', prospect_customer_id)
-      .neq('customer_code', customer_code);
+      .neq('customer_code', customer_code)
+      .eq('decision', 'pending');
 
     if (candidateRejectOthersError) {
       console.error('merge confirm candidate reject error:', candidateRejectOthersError);

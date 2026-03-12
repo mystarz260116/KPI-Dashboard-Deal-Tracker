@@ -26,6 +26,22 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'customers fetch failed' });
     }
 
+    // 既存の候補を取得（rejected を再生成しないため）
+    const { data: existingCandidates, error: existingError } = await supabaseAdmin
+      .from('customer_merge_candidates')
+      .select('prospect_customer_id, customer_code, decision');
+
+    if (existingError) {
+      console.error('generate merge existing candidates error:', existingError);
+      return res.status(500).json({ error: 'existing candidates fetch failed' });
+    }
+
+    const rejectedPairs = new Set(
+      (existingCandidates ?? [])
+        .filter((c: any) => c.decision === 'rejected')
+        .map((c: any) => `${c.prospect_customer_id}::${c.customer_code}`)
+    );
+
     const candidateRows: Array<{
       prospect_customer_id: string;
       customer_code: string;
@@ -40,6 +56,13 @@ export default async function handler(req: any, res: any) {
       (customers ?? []).forEach((customer: any) => {
         const score = similarity(prospectName, customer.name ?? '');
         if (score < 0.6) return;
+
+        const pairKey = `${prospect.id}::${customer.code}`;
+
+        // 過去に rejected された同一ペアは再生成しない
+        if (rejectedPairs.has(pairKey)) {
+          return;
+        }
 
         candidateRows.push({
           prospect_customer_id: prospect.id,

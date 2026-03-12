@@ -106,6 +106,21 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'customers fetch failed' });
     }
 
+    const { data: existingCandidates, error: existingCandidatesError } = await supabaseAdmin
+      .from('customer_merge_candidates')
+      .select('prospect_customer_id, customer_code, decision');
+
+    if (existingCandidatesError) {
+      console.error('sales import finalize existing candidates error:', existingCandidatesError);
+      return res.status(500).json({ error: 'existing candidates fetch failed' });
+    }
+
+    const rejectedPairs = new Set(
+      (existingCandidates ?? [])
+        .filter((c: any) => c.decision === 'rejected')
+        .map((c: any) => `${c.prospect_customer_id}::${c.customer_code}`)
+    );
+
     let customerExternalStaffMapResult;
     try {
       customerExternalStaffMapResult = await syncCustomerExternalStaffMaps(batchCustomerCodes);
@@ -128,6 +143,9 @@ export default async function handler(req: any, res: any) {
       (customers ?? []).forEach((customer: any) => {
         const score = similarity(prospectName, customer.name ?? '');
         if (score < 0.6) return;
+
+        const pairKey = `${prospect.id}::${customer.code}`;
+        if (rejectedPairs.has(pairKey)) return;
 
         candidateRows.push({
           prospect_customer_id: prospect.id,
