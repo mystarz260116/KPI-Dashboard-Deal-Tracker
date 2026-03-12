@@ -1,5 +1,3 @@
-
-
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin'
 
@@ -29,11 +27,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
       .eq('prospect_customer_id', prospect_customer_id)
       .eq('customer_code', customer_code)
+      .eq('decision', 'pending')
       .select()
 
     if (error) {
       console.error('merge reject error:', error)
       res.status(500).json({ error: 'failed to reject merge candidate' })
+      return
+    }
+
+    if (!data || data.length === 0) {
+      res.status(400).json({
+        error: 'candidate not found or already reviewed'
+      })
       return
     }
 
