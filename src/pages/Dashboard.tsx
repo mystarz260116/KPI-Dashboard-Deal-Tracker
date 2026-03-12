@@ -255,6 +255,9 @@ export default function Dashboard() {
       const csvText = await selectedCsvFile.text();
       const rows = parseCsvText(csvText);
 
+      console.log('CSV rows length:', rows.length);
+      console.log('CSV first rows:', rows.slice(0, 5));
+
       if (rows.length === 0) {
         throw new Error('CSVに取込対象の行がありません。');
       }
