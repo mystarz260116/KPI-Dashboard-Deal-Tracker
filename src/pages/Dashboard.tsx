@@ -233,13 +233,17 @@ export default function Dashboard() {
 
     const headers = parseCsvLine(lines[0]);
 
-    return lines.slice(1).map(line => {
-      const cells = parseCsvLine(line);
-      return headers.reduce<Record<string, string>>((row, header, index) => {
-        row[header] = cells[index] ?? '';
-        return row;
-      }, {});
-    });
+    return lines
+      .slice(1)
+      .map(line => {
+        const cells = parseCsvLine(line);
+        return headers.reduce<Record<string, string>>((row, header, index) => {
+          row[header] = cells[index] ?? '';
+          return row;
+        }, {});
+      })
+      // 空行・無効行を除外（得意先コードが空の行は除外）
+      .filter(row => String(row['得意先コード'] ?? '').trim() !== '');
   };
 
   const uploadSalesCsv = async () => {
