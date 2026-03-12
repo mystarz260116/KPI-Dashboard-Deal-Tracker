@@ -1,6 +1,14 @@
 {
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/@vite/(.*)", "destination": "/@vite/$1" },
+    { "source": "/@react-refresh", "destination": "/@react-refresh" },
+    { "source": "/@id/(.*)", "destination": "/@id/$1" },
+    { "source": "/@fs/(.*)", "destination": "/@fs/$1" },
+    { "source": "/src/(.*)", "destination": "/src/$1" },
+    { "source": "/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/node_modules/(.*)", "destination": "/node_modules/$1" },
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
