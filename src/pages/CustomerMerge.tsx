@@ -67,7 +67,7 @@ export default function CustomerMerge() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-100">
+    <div className="min-h-screen bg-zinc-200">
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-200 bg-white px-6 py-3 shadow-sm">
         <div className="flex items-center gap-2">
           <GitMerge className="h-5 w-5 text-indigo-600" />
