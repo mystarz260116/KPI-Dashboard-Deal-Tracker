@@ -21,7 +21,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('customer_merge_candidates')
       .update({
         decision: 'rejected',
-        review_note: review_note ?? null,
         reviewed_by: reviewed_by ?? null,
         reviewed_at: new Date().toISOString()
       })
