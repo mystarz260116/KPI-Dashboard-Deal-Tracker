@@ -5,8 +5,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, Plus, Check, ChevronRight, ArrowLeft,
-  Loader2, Building2, Send, LayoutDashboard
+  Loader2, Building2, Send, LayoutDashboard, GitMerge, BellRing
 } from 'lucide-react';
+
 
 interface Clinic {
   id: string;
@@ -27,6 +28,7 @@ export default function DealInput() {
   const [newClinicName, setNewClinicName] = useState('');
 
   const [clinics, setClinics] = useState<Clinic[]>([]);
+  const [mergeCandidateCount, setMergeCandidateCount] = useState(0);
 
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [activityType, setActivityType] = useState<ActivityType>('visit');
@@ -39,6 +41,23 @@ export default function DealInput() {
   const [error, setError] = useState('');
 
   const filteredClinics = clinics;
+
+  const fetchMergeCandidateCount = async () => {
+  try {
+    const res = await fetch('/api/merge/candidates/count');
+    if (!res.ok) {
+      setMergeCandidateCount(0);
+      return;
+    }
+
+    const data = await res.json();
+    const count = typeof data?.count === 'number' ? data.count : 0;
+    setMergeCandidateCount(count);
+  } catch (err) {
+    console.error('merge candidate count fetch error:', err);
+    setMergeCandidateCount(0);
+  }
+};
 
     useEffect(() => {
     const fetchClinics = async () => {
@@ -177,6 +196,7 @@ export default function DealInput() {
         return;
       }
 
+      await fetchMergeCandidateCount();
       setStep('success');
     } catch (err) {
       console.error('deal submit error:', err);
@@ -202,6 +222,10 @@ export default function DealInput() {
 
   const isWon = activityType === 'won';
 
+  useEffect(() => {
+  fetchMergeCandidateCount();
+  }, []);
+
   return (
     <div className="min-h-screen bg-zinc-200 p-4 sm:p-8">
       <div className="mx-auto max-w-xl">
@@ -221,6 +245,39 @@ export default function DealInput() {
             <div className={`h-full flex-1 rounded-full ${step === 'success' ? 'bg-purple-500' : 'bg-purple-200'}`} />
           </div>
         </div>
+
+        {mergeCandidateCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-4 shadow-sm"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-amber-100 p-2 text-amber-600">
+                  <BellRing className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-zinc-900">取引先マージの確認が必要です</p>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    未確認のマージ候補が
+                    <span className="mx-1 font-bold text-amber-600">{mergeCandidateCount}件</span>
+                    あります。
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => navigate('/customer-merge')}
+                className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-md transition hover:opacity-90"
+              >
+                <GitMerge className="mr-2 h-4 w-4" />
+                マージを確認
+              </button>
+            </div>
+          </motion.div>
+        )}
 
         <AnimatePresence mode="wait">
 
