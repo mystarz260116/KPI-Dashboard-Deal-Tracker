@@ -91,7 +91,7 @@ export default function CustomerMerge() {
           )}
         </div>
         <button
-          onClick={() => navigate('/input')}
+          onClick={() => navigate('/deals/new')}
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 sm:w-auto sm:justify-start sm:py-1.5"
         >
           <LayoutDashboard className="h-4 w-4" />

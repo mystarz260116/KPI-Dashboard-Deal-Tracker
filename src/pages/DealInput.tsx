@@ -232,13 +232,29 @@ export default function DealInput() {
 
         {/* ヘッダー */}
         <div className="mb-8 flex items-center justify-between">
-          <button
-            onClick={() => step === 'details' ? setStep('clinic') : navigate('/dashboard')}
-            className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
-          >
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            {step === 'details' ? '医院選択に戻る' : 'ダッシュボード'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => step === 'details' ? setStep('clinic') : navigate('/dashboard')}
+              className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
+            >
+              <ArrowLeft className="mr-1 h-4 w-4" />
+              {step === 'details' ? '医院選択に戻る' : 'ダッシュボード'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/customer-merge')}
+              className="inline-flex items-center justify-center rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:opacity-90"
+            >
+              <GitMerge className="mr-1.5 h-4 w-4" />
+              マージ
+              {mergeCandidateCount > 0 && (
+                <span className="ml-2 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                  {mergeCandidateCount}
+                </span>
+              )}
+            </button>
+          </div>
           <div className="flex h-2 w-24 gap-1">
             <div className={`h-full flex-1 rounded-full ${step === 'clinic'  ? 'bg-purple-500' : 'bg-purple-200'}`} />
             <div className={`h-full flex-1 rounded-full ${step === 'details' ? 'bg-purple-500' : 'bg-purple-200'}`} />
