@@ -1,5 +1,3 @@
-
-
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
 import {
   getPeriodRange,
@@ -8,7 +6,42 @@ import {
   type Period,
 } from '../src/lib/dateUtils.js';
 
+
 type Granularity = 'all' | 'department' | 'individual';
+
+async function fetchAllSalesRows(startDate: string, endDate: string) {
+  const pageSize = 1000;
+  let from = 0;
+  const allRows: any[] = [];
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabaseAdmin
+      .from('sales_import_rows')
+      .select('delivery_date, customer_code, customer_name, external_staff_code, amount')
+      .gte('delivery_date', startDate)
+      .lt('delivery_date', endDate)
+      .order('delivery_date', { ascending: true })
+      .order('customer_code', { ascending: true })
+      .order('external_staff_code', { ascending: true })
+      .range(from, to);
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = data ?? [];
+    allRows.push(...rows);
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
+  }
+
+  return allRows;
+}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -147,24 +180,18 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'previous deals fetch failed' });
     }
 
-    const { data: currentSalesRows, error: currentSalesRowsError } = await supabaseAdmin
-      .from('sales_import_rows')
-      .select('delivery_date, customer_code, customer_name, external_staff_code, amount')
-      .gte('delivery_date', currentStart)
-      .lt('delivery_date', currentEnd);
-
-    if (currentSalesRowsError) {
+    let currentSalesRows: any[] = [];
+    try {
+      currentSalesRows = await fetchAllSalesRows(currentStart, currentEnd);
+    } catch (currentSalesRowsError) {
       console.error('kpi current sales rows error:', currentSalesRowsError);
       return res.status(500).json({ error: 'current sales rows fetch failed' });
     }
 
-    const { data: previousSalesRows, error: previousSalesRowsError } = await supabaseAdmin
-      .from('sales_import_rows')
-      .select('delivery_date, customer_code, customer_name, external_staff_code, amount')
-      .gte('delivery_date', previousStart)
-      .lt('delivery_date', previousEnd);
-
-    if (previousSalesRowsError) {
+    let previousSalesRows: any[] = [];
+    try {
+      previousSalesRows = await fetchAllSalesRows(previousStart, previousEnd);
+    } catch (previousSalesRowsError) {
       console.error('kpi previous sales rows error:', previousSalesRowsError);
       return res.status(500).json({ error: 'previous sales rows fetch failed' });
     }
