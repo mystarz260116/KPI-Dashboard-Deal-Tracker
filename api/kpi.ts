@@ -9,38 +9,17 @@ import {
 
 type Granularity = 'all' | 'department' | 'individual';
 
-async function fetchAllSalesRows(startDate: string, endDate: string) {
-  const pageSize = 1000;
-  let from = 0;
-  const allRows: any[] = [];
+async function fetchSalesSumByStaff(startDate: string, endDate: string) {
+  const { data, error } = await supabaseAdmin.rpc('get_sales_sum_by_staff', {
+    p_start_date: startDate,
+    p_end_date: endDate,
+  });
 
-  while (true) {
-    const to = from + pageSize - 1;
-    const { data, error } = await supabaseAdmin
-      .from('sales_import_rows')
-      .select('delivery_date, customer_code, customer_name, external_staff_code, amount')
-      .gte('delivery_date', startDate)
-      .lt('delivery_date', endDate)
-      .order('delivery_date', { ascending: true })
-      .order('customer_code', { ascending: true })
-      .order('external_staff_code', { ascending: true })
-      .range(from, to);
-
-    if (error) {
-      throw error;
-    }
-
-    const rows = data ?? [];
-    allRows.push(...rows);
-
-    if (rows.length < pageSize) {
-      break;
-    }
-
-    from += pageSize;
+  if (error) {
+    throw error;
   }
 
-  return allRows;
+  return data ?? [];
 }
 
 export default async function handler(req: any, res: any) {
@@ -182,7 +161,7 @@ export default async function handler(req: any, res: any) {
 
     let currentSalesRows: any[] = [];
     try {
-      currentSalesRows = await fetchAllSalesRows(currentStart, currentEnd);
+      currentSalesRows = await fetchSalesSumByStaff(currentStart, currentEnd);
     } catch (currentSalesRowsError) {
       console.error('kpi current sales rows error:', currentSalesRowsError);
       return res.status(500).json({ error: 'current sales rows fetch failed' });
@@ -190,7 +169,7 @@ export default async function handler(req: any, res: any) {
 
     let previousSalesRows: any[] = [];
     try {
-      previousSalesRows = await fetchAllSalesRows(previousStart, previousEnd);
+      previousSalesRows = await fetchSalesSumByStaff(previousStart, previousEnd);
     } catch (previousSalesRowsError) {
       console.error('kpi previous sales rows error:', previousSalesRowsError);
       return res.status(500).json({ error: 'previous sales rows fetch failed' });
@@ -219,12 +198,7 @@ export default async function handler(req: any, res: any) {
       mergedCustomerNameMap.set(c.code, c.name ?? c.code);
     });
 
-    const mergedSalesTotal = (currentSalesRows ?? [])
-      .filter((row: any) => mergedCustomerCodesInPeriod.includes(row.customer_code))
-      .reduce((sum: number, row: any) => {
-        const amount = Number(row.amount ?? 0);
-        return sum + (Number.isFinite(amount) ? amount : 0);
-      }, 0);
+    const mergedSalesTotal = 0;
 
     let budgetsQuery = supabaseAdmin
       .from('budgets')
@@ -264,12 +238,12 @@ export default async function handler(req: any, res: any) {
     });
 
     const salesTotal = scopedCurrentSalesRows.reduce((sum: number, row: any) => {
-      const amount = Number(row.amount ?? 0);
+      const amount = Number(row.sales_total ?? 0);
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0);
 
     const previousSalesTotal = scopedPreviousSalesRows.reduce((sum: number, row: any) => {
-      const amount = Number(row.amount ?? 0);
+      const amount = Number(row.sales_total ?? 0);
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0);
 
