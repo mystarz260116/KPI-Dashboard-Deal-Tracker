@@ -218,6 +218,10 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'budgets fetch failed' });
     }
 
+    const scopedCreatedProspects = (createdProspects ?? []).filter((p: any) =>
+      allowedUserIds.has(p.created_by)
+    );
+
     const scopedCurrentDeals = (currentDeals ?? []).filter((d: any) => allowedUserIds.has(d.user_id));
     const scopedCurrentSalesRows = (currentSalesRows ?? []).filter((row: any) =>
       allowedExternalStaffCodes.has(String(row.external_staff_code))
@@ -254,8 +258,8 @@ export default async function handler(req: any, res: any) {
         ? null
         : 0;
 
-    const newProspectsCount = (createdProspects ?? []).length;
-    const mergedProspectsCount = (createdProspects ?? []).filter((p: any) =>
+    const newProspectsCount = scopedCreatedProspects.length;
+    const mergedProspectsCount = scopedCreatedProspects.filter((p: any) =>
       p.status === 'merged' && p.merged_customer_code
     ).length;
     const conversionRate = newProspectsCount > 0
