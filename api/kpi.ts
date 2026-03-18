@@ -198,7 +198,23 @@ export default async function handler(req: any, res: any) {
       mergedCustomerNameMap.set(c.code, c.name ?? c.code);
     });
 
-    const mergedSalesTotal = 0;
+    let mergedSalesTotal = 0;
+    try {
+      const { data: mergedSalesData, error: mergedSalesError } = await supabaseAdmin.rpc(
+        'get_merged_sales_total',
+        {
+          p_start_date: currentStart,
+          p_end_date: currentEnd,
+          p_customer_codes: mergedCustomerCodesInPeriod,
+        }
+      );
+
+      if (mergedSalesError) throw mergedSalesError;
+
+      mergedSalesTotal = Number(mergedSalesData?.[0]?.sales_total ?? 0);
+    } catch (e) {
+      console.error('kpi merged sales error:', e);
+    }
 
     let budgetsQuery = supabaseAdmin
       .from('budgets')
