@@ -12,6 +12,7 @@ export interface User {
   name: string;
   department: string;
   role: UserRole;       // 営業 / 上長 / 管理者
+  can_view_dashboard: boolean; // ダッシュボード閲覧権限
 }
 
 // ============================================
@@ -53,7 +54,7 @@ export type DealStatus =
 // ダッシュボード：フィルター
 // ============================================
 
-export type Period = 'day' | 'week' | 'month';
+export type Period = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 export type Granularity = 'all' | 'department' | 'individual';
 // ※旧: 'global' → 'all' に変更（仕様書に合わせた）
 

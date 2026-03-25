@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('name, email, role, department_id')
+      .select('name, email, role, department_id, can_view_dashboard')
       .eq('id', userId)
       .single();
 
@@ -68,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       department: departmentName,
       email: profile.email,
       role: profile.role,
+      can_view_dashboard: profile.can_view_dashboard ?? false,
     };
   };
 

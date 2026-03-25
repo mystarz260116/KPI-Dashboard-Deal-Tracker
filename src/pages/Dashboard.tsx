@@ -115,6 +115,12 @@ export default function Dashboard() {
   }, [period]);
 
   useEffect(() => {
+    if (user && user.can_view_dashboard === false) {
+      navigate('/deals/new', { replace: true });
+    }
+  }, [user, navigate]);
+
+  useEffect(() => {
     const fetchPendingMergeCount = async () => {
       setIsMergeCountLoading(true);
 
@@ -352,6 +358,17 @@ export default function Dashboard() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (user && user.can_view_dashboard === false) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-100 px-6">
+        <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-xl font-bold text-zinc-900">ダッシュボード閲覧権限がありません</h1>
+          <p className="mt-3 text-sm text-zinc-600">案件入力画面へ移動します。</p>
+        </div>
       </div>
     );
   }
