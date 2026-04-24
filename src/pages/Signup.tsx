@@ -48,26 +48,34 @@ export default function Signup() {
     setError('');
 
     try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            name,
-            department_id: Number(departmentId),
-            role: 'user'
-          }
-        }
+      const registerRes = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          name,
+          department_id: Number(departmentId),
+        }),
       });
 
-      if (signUpError) {
-        setError(signUpError.message || '登録に失敗しました');
+      const registerResult = await registerRes.json().catch(() => null);
+
+      if (!registerRes.ok) {
+        setError(registerResult?.error ?? '登録に失敗しました');
         setIsLoading(false);
         return;
       }
 
-      if (!data.user) {
-        setError('ユーザー作成に失敗しました');
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (signInError || !signInData.user) {
+        setError(signInError?.message ?? '登録後のログインに失敗しました');
         setIsLoading(false);
         return;
       }

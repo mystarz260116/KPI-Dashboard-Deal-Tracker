@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { requireAuthenticatedProfile } from '../_lib/auth.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -6,7 +7,11 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { prospect_customer_id, customer_code, merged_by } = req.body ?? {};
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+
+    const { prospect_customer_id, customer_code } = req.body ?? {};
+    const mergedBy = profile.id;
 
     if (!prospect_customer_id || !customer_code) {
       return res.status(400).json({ error: 'prospect_customer_id and customer_code are required' });
@@ -16,11 +21,8 @@ export default async function handler(req: any, res: any) {
       status: 'merged',
       merged_customer_code: customer_code,
       merged_at: new Date().toISOString(),
+      merged_by: mergedBy,
     };
-
-    if (merged_by) {
-      mergePayload.merged_by = merged_by;
-    }
 
     const { error: prospectUpdateError } = await supabaseAdmin
       .from('prospect_customers')
@@ -36,7 +38,7 @@ export default async function handler(req: any, res: any) {
       .from('customer_merge_candidates')
       .update({
         decision: 'approved',
-        reviewed_by: merged_by ?? null,
+        reviewed_by: mergedBy,
         reviewed_at: new Date().toISOString(),
       })
       .eq('prospect_customer_id', prospect_customer_id)
@@ -52,7 +54,7 @@ export default async function handler(req: any, res: any) {
       .from('customer_merge_candidates')
       .update({
         decision: 'rejected',
-        reviewed_by: merged_by ?? null,
+        reviewed_by: mergedBy,
         reviewed_at: new Date().toISOString(),
       })
       .eq('prospect_customer_id', prospect_customer_id)

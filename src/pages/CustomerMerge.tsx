@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { authFetch } from '../lib/authFetch';
 import { motion } from 'motion/react';
-import { GitMerge, LayoutDashboard, CheckCircle, XCircle } from 'lucide-react';
+import { GitMerge, LayoutDashboard, CheckCircle, XCircle, LogOut } from 'lucide-react';
 
 interface MergeCandidate {
   prospect_customer_id: string;
@@ -13,6 +15,7 @@ interface MergeCandidate {
 }
 
 export default function CustomerMerge() {
+  const { logout } = useAuth();
   const [candidates, setCandidates] = useState<MergeCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [merging, setMerging] = useState<string | null>(null);
@@ -21,7 +24,7 @@ export default function CustomerMerge() {
 
   async function loadCandidates() {
     try {
-      const res = await fetch('/api/merge/candidates');
+      const res = await authFetch('/api/merge/candidates');
       if (!res.ok) throw new Error();
       const data = await res.json();
       setCandidates(data ?? []);
@@ -34,7 +37,7 @@ export default function CustomerMerge() {
   async function handleMerge(prospectId: string, customerCode: string) {
     setMerging(prospectId);
     try {
-      await fetch('/api/merge/confirm', {
+      await authFetch('/api/merge/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -50,7 +53,7 @@ export default function CustomerMerge() {
   async function handleReject(prospectId: string, customerCode: string) {
     setRejecting(prospectId);
     try {
-      await fetch('/api/merge/reject', {
+      await authFetch('/api/merge/reject', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -78,6 +81,11 @@ export default function CustomerMerge() {
     return 'text-red-500 bg-red-50';
   }
 
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
   return (
     <div className="min-h-screen bg-zinc-200">
       <header className="sticky top-0 z-10 flex flex-col gap-3 border-b border-zinc-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -90,13 +98,24 @@ export default function CustomerMerge() {
             </span>
           )}
         </div>
-        <button
-          onClick={() => navigate('/deals/new')}
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 sm:w-auto sm:justify-start sm:py-1.5"
-        >
-          <LayoutDashboard className="h-4 w-4" />
-          入力画面へ戻る
-        </button>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <button
+            onClick={() => navigate('/deals/new')}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 sm:flex-none sm:justify-start sm:py-1.5"
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            入力画面へ戻る
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+            aria-label="ログアウト"
+            title="ログアウト"
+          >
+            <LogOut className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">

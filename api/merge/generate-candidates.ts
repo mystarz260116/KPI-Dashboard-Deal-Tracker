@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 import { similarity } from '../../src/lib/mergeUtils.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../_lib/auth.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -7,6 +8,10 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+    if (!requireDashboardAccess(profile, res)) return;
+
     const { data: prospects, error: prospectsError } = await supabaseAdmin
       .from('prospect_customers')
       .select('id, name, status, merged_customer_code')

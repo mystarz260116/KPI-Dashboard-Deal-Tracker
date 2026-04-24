@@ -10,6 +10,7 @@ export interface User {
   id: string;           // SupabaseはUUID（文字列）
   email: string;
   name: string;
+  department_id: number | null;
   department: string;
   role: UserRole;       // 営業 / 上長 / 管理者
   can_view_dashboard: boolean; // ダッシュボード閲覧権限
@@ -82,7 +83,7 @@ export interface BudgetPanel {
 export interface SalesPanel {
   sales: number;          // 今期の売上
   prev_sales: number;     // 前期間の売上
-  change_rate: number;    // 前期間比（%）
+  change_rate: number | null;    // 前期間比（%）
 }
 
 // ③提案パイプライン
@@ -155,4 +156,3 @@ export interface ConversionRate {
   approach_type: ApproachType;
   rate: number;   // 例：visit=0.10, referral=0.70
 }
-

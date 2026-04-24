@@ -1,6 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import { LogIn, Loader2 } from 'lucide-react';
@@ -11,8 +10,6 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
-  const { login } = useAuth();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -36,17 +33,6 @@ export default function Login() {
         setIsLoading(false);
         return;
       }
-
-      const metadata = data.user.user_metadata ?? {};
-
-      login({
-        id: data.user.id,
-        name: metadata.name ?? data.user.email ?? 'ユーザー',
-        department: metadata.department ?? '',
-      });
-
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      navigate(isMobile ? '/deals/new' : '/dashboard');
     } catch (e) {
       setError('サーバーに接続できませんでした');
     } finally {

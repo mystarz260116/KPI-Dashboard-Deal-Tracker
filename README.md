@@ -16,13 +16,18 @@ https://kpi-dashboard-deal-tracker.vercel.app/login
 
 
 
-> ※現在はデモ用のダミーデータを表示しています。メールアドレス・パスワードは何でも入力してログインできます。
+> ※現在は Supabase Auth と Vercel API を前提に動作します。
 
 
 
 \## 📁 ファイル構成
 
-src/ assets/ ロゴ画像 contexts/ AuthContext.tsx（認証） pages/ Dashboard.tsx / Login.tsx / DealInput.tsx types/ 型定義 App.tsx main.tsx
+- `src/`: Vite + React フロントエンド
+- `src/contexts/AuthContext.tsx`: Supabase Auth による認証状態管理
+- `src/pages/`: ログイン、ダッシュボード、商談入力、履歴、マージ画面
+- `api/`: Vercel Serverless Functions
+- `src/lib/supabase.ts`: フロントエンド用 Supabase クライアント
+- `src/lib/supabaseAdmin.ts`: API 用 Supabase クライアント
 
 
 ## 🔧 開発環境のセットアップ
@@ -60,35 +65,11 @@ npm run dev
 \- CSV出力（デモ用ダミーデータ）
 
 
-## 🙏 朱さんへのお願い（API連携）
+## 🧭 実装方針
 
-現在はデモ用のダミーデータを使用しています。
-
-本番稼働に向けて以下のAPI実装をお願いします。
-
-詳細は別添の「朱さんへのお願いリスト.pdf」をご参照ください。
-
-
-
-| # | 場所 | お願い内容 |
-
-|---|------|-----------|
-
-| ① | AuthContext.tsx | Supabase Auth の onAuthStateChange に差し替え |
-
-| ② | Login.tsx | Supabase Auth の signInWithPassword に差し替え |
-
-| ③ | Dashboard.tsx | /api/users と /api/kpi への差し替え |
-
-| ④ | Dashboard.tsx | /api/export/deals への差し替え（CSV出力） |
-
-| ⑤ | DealInput.tsx | /api/clinics?q=検索ワード への差し替え |
-
-| ⑥ | DealInput.tsx | POST /api/clinics（新規医院登録） |
-
-| ⑦ | DealInput.tsx | POST /api/deals（商談登録） |
-
-| ⑧ | DealInput.tsx | activityType を /api/deals に含める |
+- 本番・プレビュー環境では `api/` 配下の Vercel Serverless Functions を正とします。
+- フロントエンドは `fetch('/api/...')` と Supabase Auth を利用します。
+- サーバーサイドの DB 操作は `src/lib/supabaseAdmin.ts` 経由で行います。
 
 
 
@@ -103,4 +84,3 @@ npm run dev
 \- Framer Motion
 
 \- Vercel
-

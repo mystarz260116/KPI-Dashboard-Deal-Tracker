@@ -17,6 +17,12 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
+      proxy: {
+        '/api': {
+          target: `http://127.0.0.1:${process.env.LOCAL_API_PORT ?? '3000'}`,
+          changeOrigin: true,
+        },
+      },
     },
     // ✅ これを追加！React Routerの/loginなどのパスを正しく動かすため
     preview: {

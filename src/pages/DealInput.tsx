@@ -2,10 +2,12 @@ import { supabase } from '../lib/supabase';
 import { useState, FormEvent, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { toDateString } from '../lib/dateUtils';
+import { authFetch } from '../lib/authFetch';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, Plus, Check, ChevronRight, ArrowLeft,
-  Loader2, Building2, Send, LayoutDashboard, GitMerge, BellRing
+  Loader2, Building2, Send, LayoutDashboard, GitMerge, BellRing, LogOut
 } from 'lucide-react';
 
 
@@ -15,10 +17,63 @@ interface Clinic {
   kind: 'customer' | 'prospect';
 }
 
-type ActivityType = 'visit' | 'proposal' | 'negotiating' | 'won' | 'lost';
+type ContactRole = '院長' | '副院長' | '事務長・経営者' | '技工担当' | '衛生士・スタッフ' | '受付' | 'その他';
+type DecisionMakerContact = 'yes' | 'no' | 'unknown';
+type DealTemperature = 'A' | 'B' | 'C' | 'D' | 'E';
+type NextActionType = '見積提出' | 'サンプル持参' | '再訪問' | '電話フォロー' | 'メール・資料送付' | '院長面談設定' | '保留' | 'なし';
+
+const PROPOSAL_CATEGORIES = [
+  'CADCAM冠',
+  'emax',
+  'FMC',
+  'インプラント',
+  'インレー・アンレー',
+  'ジルコニア',
+  'その他の自費クラウン',
+  'その他の保険クラウン',
+  'デンチャー(自費)',
+  'デンチャー(保険)',
+  'バイトプレート',
+  '前装冠',
+] as const;
+
+const CONTACT_ROLES: ContactRole[] = [
+  '院長',
+  '副院長',
+  '事務長・経営者',
+  '技工担当',
+  '衛生士・スタッフ',
+  '受付',
+  'その他',
+];
+
+const DECISION_MAKER_OPTIONS: { value: DecisionMakerContact; label: string; rule: string }[] = [
+  { value: 'yes', label: 'はい', rule: '院長・経営者・事務長など、導入判断できる相手に提案できた場合' },
+  { value: 'no', label: 'いいえ', rule: '受付・スタッフ対応のみで、決裁者に届いていない場合' },
+  { value: 'unknown', label: '不明', rule: '相手の決裁権限が判断できない場合' },
+];
+
+const TEMPERATURE_OPTIONS: { value: DealTemperature; label: string; rule: string }[] = [
+  { value: 'A', label: 'A すぐ案件化', rule: '見積・サンプル・受注相談など、具体的な次工程が決まっている' },
+  { value: 'B', label: 'B 見込みあり', rule: '課題や関心が明確で、次回提案につながる' },
+  { value: 'C', label: 'C 長期フォロー', rule: '情報提供中心。時期は未定だが関係継続の余地がある' },
+  { value: 'D', label: 'D 可能性低い', rule: '反応が薄い、タイミング不一致、既存業者への不満が弱い' },
+  { value: 'E', label: 'E 失注・拒否', rule: '明確に不要、取引不可、競合継続が確定している' },
+];
+
+const NEXT_ACTION_OPTIONS: { value: NextActionType; rule: string }[] = [
+  { value: '見積提出', rule: '金額提示が次の宿題の場合' },
+  { value: 'サンプル持参', rule: '技工物や資料を見せる約束がある場合' },
+  { value: '再訪問', rule: '対面で再度商談する場合' },
+  { value: '電話フォロー', rule: '短期確認や日程調整を電話で行う場合' },
+  { value: 'メール・資料送付', rule: '資料送付やメール回答が次の動きの場合' },
+  { value: '院長面談設定', rule: '決裁者に会うことが次の目的の場合' },
+  { value: '保留', rule: '時期待ちで、具体日が未確定の場合' },
+  { value: 'なし', rule: '明確に追わない、または失注の場合' },
+];
 
 export default function DealInput() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<'clinic' | 'details' | 'success'>('clinic');
@@ -30,13 +85,15 @@ export default function DealInput() {
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [mergeCandidateCount, setMergeCandidateCount] = useState(0);
 
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [activityType, setActivityType] = useState<ActivityType>('visit');
-  const [productName, setProductName] = useState('');
-  const [unitCount, setUnitCount] = useState('');
-  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(() => toDateString(new Date()));
+  const [contactRole, setContactRole] = useState<ContactRole>('院長');
+  const [decisionMakerContact, setDecisionMakerContact] = useState<DecisionMakerContact>('unknown');
+  const [proposalCategory, setProposalCategory] = useState<(typeof PROPOSAL_CATEGORIES)[number]>('CADCAM冠');
+  const [specificProduct, setSpecificProduct] = useState('');
+  const [dealTemperature, setDealTemperature] = useState<DealTemperature>('C');
   const [notes, setNotes] = useState('');
-  const [nextAction, setNextAction] = useState('');
+  const [nextActionType, setNextActionType] = useState<NextActionType>('再訪問');
+  const [nextActionDate, setNextActionDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -44,14 +101,14 @@ export default function DealInput() {
 
   const fetchMergeCandidateCount = async () => {
   try {
-    const res = await fetch('/api/merge/candidates/count');
+    const res = await authFetch('/api/merge/candidates/count');
     if (!res.ok) {
       setMergeCandidateCount(0);
       return;
     }
 
     const data = await res.json();
-    const count = typeof data?.count === 'number' ? data.count : 0;
+    const count = typeof data?.pending_count === 'number' ? data.pending_count : 0;
     setMergeCandidateCount(count);
   } catch (err) {
     console.error('merge candidate count fetch error:', err);
@@ -172,17 +229,33 @@ export default function DealInput() {
     setIsSubmitting(true);
     setError('');
 
+    if (nextActionType !== 'なし' && nextActionType !== '保留' && !nextActionDate) {
+      setError('次回アクション日を入力してください');
+      setIsSubmitting(false);
+      return;
+    }
+
     const payload = {
       user_id: user.id,
       customer_code: selectedClinic.kind === 'customer' ? selectedClinic.id : null,
       prospect_customer_id: selectedClinic.kind === 'prospect' ? selectedClinic.id : null,
       deal_date: date,
-      activity_type: activityType,
-      product_name: productName || null,
-      unit_count: unitCount ? Number(unitCount) : null,
-      amount: amount ? Number(amount) : null,
+      activity_type: 'visit',
+      contact_role: contactRole,
+      decision_maker_contact: decisionMakerContact,
+      proposal_category: proposalCategory,
+      product_name: specificProduct || null,
+      deal_temperature: dealTemperature,
+      next_action_type: nextActionType,
+      next_action_date: nextActionDate || null,
+      unit_count: null,
+      amount: null,
       notes: notes || null,
-      next_action: nextAction || null,
+      next_action: nextActionType === 'なし'
+        ? null
+        : nextActionDate
+          ? `${nextActionType}（${nextActionDate}）`
+          : nextActionType,
     };
 
     try {
@@ -210,21 +283,26 @@ export default function DealInput() {
     setStep('clinic');
     setSelectedClinic(null);
     setSearchQuery('');
-    setDate(new Date().toISOString().split('T')[0]);
-    setActivityType('visit');
-    setProductName('');
-    setUnitCount('');
-    setAmount('');
+    setDate(toDateString(new Date()));
+    setContactRole('院長');
+    setDecisionMakerContact('unknown');
+    setProposalCategory('CADCAM冠');
+    setSpecificProduct('');
+    setDealTemperature('C');
     setNotes('');
-    setNextAction('');
+    setNextActionType('再訪問');
+    setNextActionDate('');
     setError('');
   };
-
-  const isWon = activityType === 'won';
 
   useEffect(() => {
   fetchMergeCandidateCount();
   }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   return (
     <div className="min-h-screen bg-zinc-200 p-4 sm:p-8">
@@ -244,7 +322,7 @@ export default function DealInput() {
             <button
               type="button"
               onClick={() => navigate('/customer-merge')}
-              className="inline-flex items-center justify-center rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-lg bg-linear-to-r from-purple-500 to-pink-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:opacity-90"
             >
               <GitMerge className="mr-1.5 h-4 w-4" />
               マージ
@@ -255,10 +333,21 @@ export default function DealInput() {
               )}
             </button>
           </div>
-          <div className="flex h-2 w-24 gap-1">
-            <div className={`h-full flex-1 rounded-full ${step === 'clinic'  ? 'bg-purple-500' : 'bg-purple-200'}`} />
-            <div className={`h-full flex-1 rounded-full ${step === 'details' ? 'bg-purple-500' : 'bg-purple-200'}`} />
-            <div className={`h-full flex-1 rounded-full ${step === 'success' ? 'bg-purple-500' : 'bg-purple-200'}`} />
+          <div className="flex items-center gap-3">
+            <div className="flex h-2 w-24 gap-1">
+              <div className={`h-full flex-1 rounded-full ${step === 'clinic'  ? 'bg-purple-500' : 'bg-purple-200'}`} />
+              <div className={`h-full flex-1 rounded-full ${step === 'details' ? 'bg-purple-500' : 'bg-purple-200'}`} />
+              <div className={`h-full flex-1 rounded-full ${step === 'success' ? 'bg-purple-500' : 'bg-purple-200'}`} />
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-lg p-2 text-zinc-400 transition hover:bg-white hover:text-zinc-700"
+              aria-label="ログアウト"
+              title="ログアウト"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
           </div>
         </div>
 
@@ -266,7 +355,7 @@ export default function DealInput() {
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-6 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-4 shadow-sm"
+            className="mb-6 rounded-2xl border border-amber-200 bg-linear-to-r from-amber-50 to-orange-50 p-4 shadow-sm"
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
@@ -286,7 +375,7 @@ export default function DealInput() {
               <button
                 type="button"
                 onClick={() => navigate('/customer-merge')}
-                className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-md transition hover:opacity-90"
+                className="inline-flex items-center justify-center rounded-xl bg-linear-to-r from-purple-500 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-md transition hover:opacity-90"
               >
                 <GitMerge className="mr-2 h-4 w-4" />
                 マージを確認
@@ -368,7 +457,7 @@ export default function DealInput() {
                   />
                   <div className="mt-4 flex gap-2">
                     <button onClick={handleCreateClinic}
-                      className="flex-1 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 py-2 text-sm font-semibold text-white hover:opacity-90">
+                      className="flex-1 rounded-lg bg-linear-to-r from-purple-500 to-pink-500 py-2 text-sm font-semibold text-white hover:opacity-90">
                       登録して選択
                     </button>
                     <button onClick={() => setIsCreatingClinic(false)}
@@ -401,10 +490,10 @@ export default function DealInput() {
 
                 <form onSubmit={handleSubmit} className="space-y-6">
 
-                  {/* 日付 */}
+                  {/* 訪問日 */}
                   <div>
                     <label className="mb-2 block text-sm font-medium text-zinc-700">
-                      日付 <span className="text-red-500">*</span>
+                      訪問日 <span className="text-red-500">*</span>
                     </label>
                     <input type="date" required value={date}
                       onChange={e => setDate(e.target.value)}
@@ -412,66 +501,112 @@ export default function DealInput() {
                     />
                   </div>
 
-                  {/* 活動種別 */}
+                  {/* 営業担当 */}
                   <div>
                     <label className="mb-2 block text-sm font-medium text-zinc-700">
-                      活動種別 <span className="text-red-500">*</span>
+                      営業担当 <span className="text-red-500">*</span>
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([
-                        { value: 'visit',       label: '訪問' },
-                        { value: 'proposal',    label: '提案中' },
-                        { value: 'negotiating', label: '交渉中' },
-                        { value: 'won',         label: '受注' },
-                        { value: 'lost',        label: '失注' },
-                      ] as const).map(s => (
-                        <button key={s.value} type="button"
-                          onClick={() => setActivityType(s.value)}
-                          className={`rounded-xl py-3 text-sm font-semibold transition ${
-                            activityType === s.value
-                              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md'
-                              : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
-                          }`}>
-                          {s.label}
+                    <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 font-semibold text-zinc-700">
+                      {user?.name ?? user?.email ?? 'ログインユーザー'}
+                    </div>
+                  </div>
+
+                  {/* 接触相手 */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      接触相手 <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      required
+                      value={contactRole}
+                      onChange={e => setContactRole(e.target.value as ContactRole)}
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    >
+                      {CONTACT_ROLES.map(role => (
+                        <option key={role} value={role}>{role}</option>
+                      ))}
+                    </select>
+                    <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                      入力ルール：主に説明・提案した相手。複数いる場合は決裁に近い人を優先します。
+                    </p>
+                  </div>
+
+                  {/* 決裁者接触 */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      決裁者接触 <span className="text-red-500">*</span>
+                    </label>
+                    <div className="space-y-2">
+                      {DECISION_MAKER_OPTIONS.map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setDecisionMakerContact(option.value)}
+                          className={`w-full rounded-xl border p-3 text-left transition ${
+                            decisionMakerContact === option.value
+                              ? 'border-purple-400 bg-purple-50 text-purple-700'
+                              : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="block text-sm font-bold">{option.label}</span>
+                          <span className="mt-1 block text-xs leading-relaxed">{option.rule}</span>
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* 受注の場合のみ表示 */}
-                  {isWon && (
-                    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-                      className="space-y-6 rounded-xl border border-purple-100 bg-purple-50 p-4">
-                      <p className="text-xs font-semibold text-purple-500">受注情報（任意）</p>
+                  {/* 提案カテゴリ */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      提案カテゴリ <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      required
+                      value={proposalCategory}
+                      onChange={e => setProposalCategory(e.target.value as (typeof PROPOSAL_CATEGORIES)[number])}
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    >
+                      {PROPOSAL_CATEGORIES.map(category => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                  </div>
 
-                      <div>
-                        <label className="mb-2 block text-sm font-medium text-zinc-700">商品名</label>
-                        <input type="text" value={productName}
-                          onChange={e => setProductName(e.target.value)}
-                          placeholder="商品名を入力"
-                          className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-                        />
-                      </div>
+                  {/* 具体商品 */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">具体商品</label>
+                    <input
+                      type="text"
+                      value={specificProduct}
+                      onChange={e => setSpecificProduct(e.target.value)}
+                      placeholder="任意：商品名・型番・補足など"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    />
+                  </div>
 
-                      <div>
-                        <label className="mb-2 block text-sm font-medium text-zinc-700">受注本数</label>
-                        <input type="number" min={0} value={unitCount}
-                          onChange={e => setUnitCount(e.target.value)}
-                          placeholder="0"
-                          className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-lg font-bold focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-medium text-zinc-700">受注金額（円）</label>
-                        <input type="number" value={amount}
-                          onChange={e => setAmount(e.target.value)}
-                          placeholder="500000"
-                          className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-lg font-bold focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-                        />
-                      </div>
-                    </motion.div>
-                  )}
+                  {/* 商談温度 */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      商談温度 <span className="text-red-500">*</span>
+                    </label>
+                    <div className="space-y-2">
+                      {TEMPERATURE_OPTIONS.map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setDealTemperature(option.value)}
+                          className={`w-full rounded-xl border p-3 text-left transition ${
+                            dealTemperature === option.value
+                              ? 'border-purple-400 bg-purple-50 text-purple-700'
+                              : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="block text-sm font-bold">{option.label}</span>
+                          <span className="mt-1 block text-xs leading-relaxed">{option.rule}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
                   {/* 内容・メモ */}
                   <div>
@@ -485,10 +620,40 @@ export default function DealInput() {
 
                   {/* 次アクション */}
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-zinc-700">次アクション</label>
-                    <input type="text" value={nextAction}
-                      onChange={e => setNextAction(e.target.value)}
-                      placeholder="例：来週サンプル持参"
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      次回アクション <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      required
+                      value={nextActionType}
+                      onChange={e => setNextActionType(e.target.value as NextActionType)}
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    >
+                      {NEXT_ACTION_OPTIONS.map(action => (
+                        <option key={action.value} value={action.value}>{action.value}</option>
+                      ))}
+                    </select>
+                    <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                      入力ルール：次に営業側が実行する一手を選びます。未定なら「保留」、追わないなら「なし」。
+                    </p>
+                    <div className="mt-2 rounded-xl bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-500">
+                      {NEXT_ACTION_OPTIONS.find(action => action.value === nextActionType)?.rule}
+                    </div>
+                  </div>
+
+                  {/* 次回アクション日 */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      次回アクション日
+                      {nextActionType !== 'なし' && nextActionType !== '保留' && (
+                        <span className="text-red-500"> *</span>
+                      )}
+                    </label>
+                    <input
+                      type="date"
+                      required={nextActionType !== 'なし' && nextActionType !== '保留'}
+                      value={nextActionDate}
+                      onChange={e => setNextActionDate(e.target.value)}
                       className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     />
                   </div>
@@ -498,7 +663,7 @@ export default function DealInput() {
                   )}
 
                   <button type="submit" disabled={isSubmitting}
-                    className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-lg transition hover:opacity-90 disabled:opacity-50">
+                    className="flex w-full items-center justify-center rounded-xl bg-linear-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-lg transition hover:opacity-90 disabled:opacity-50">
                     {isSubmitting
                       ? <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       : <Send className="mr-2 h-5 w-5" />}
@@ -521,7 +686,7 @@ export default function DealInput() {
               <p className="mb-8 text-zinc-500">商談が正常に登録されました。</p>
               <div className="space-y-3">
                 <button onClick={handleReset}
-                  className="flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-md transition hover:opacity-90">
+                  className="flex w-full items-center justify-center rounded-xl bg-linear-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-md transition hover:opacity-90">
                   続けて入力する
                 </button>
                 <button onClick={() => navigate('/dashboard')}

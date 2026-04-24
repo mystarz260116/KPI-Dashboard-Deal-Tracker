@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js'
+import { requireAuthenticatedProfile } from '../_lib/auth.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -8,7 +9,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { prospect_customer_id, customer_code, review_note, reviewed_by } = req.body
+    const profile = await requireAuthenticatedProfile(req, res)
+    if (!profile) return
+
+    const { prospect_customer_id, customer_code } = req.body
 
     if (!prospect_customer_id || !customer_code) {
       res.status(400).json({
@@ -21,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('customer_merge_candidates')
       .update({
         decision: 'rejected',
-        reviewed_by: reviewed_by ?? null,
+        reviewed_by: profile.id,
         reviewed_at: new Date().toISOString()
       })
       .eq('prospect_customer_id', prospect_customer_id)

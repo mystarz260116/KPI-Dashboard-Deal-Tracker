@@ -1,23 +1,13 @@
 // src/contexts/AuthContext.tsx
 
-
-// ============================================
-// 🚨 朱さんへ：差し替えが必要な箇所です
-// --------------------------------------------
-// このファイルの login / logout / useEffect は
-// 現在 localStorage の仮実装になっています。
-// Supabase Auth（onAuthStateChange）への
-// 差し替えをお願いします🙏
-// ============================================
-
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import { User } from '../types';
+import { perfMark, perfMeasure } from '../lib/perf';
 
 interface AuthContextType {
   user: User | null;
-  login: (user: User) => void;
   logout: () => Promise<void>;
   isLoading: boolean;
 }
@@ -41,7 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('name, email, role, department_id, can_view_dashboard')
+      .select('name, email, role, department_id, can_view_dashboard, departments(name)')
       .eq('id', userId)
       .single();
 
@@ -50,21 +40,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    let departmentName = '';
-
-    if (profile.department_id) {
-      const { data: dept } = await supabase
-        .from('departments')
-        .select('name')
-        .eq('id', profile.department_id)
-        .single();
-
-      departmentName = dept?.name ?? '';
-    }
+    const departments = (profile as any).departments;
+    const departmentName = Array.isArray(departments)
+      ? (departments[0]?.name ?? '')
+      : (departments?.name ?? '');
 
     return {
       id: userId,
       name: profile.name,
+      department_id: profile.department_id ?? null,
       department: departmentName,
       email: profile.email,
       role: profile.role,
@@ -76,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
 
     const initializeAuth = async () => {
+      perfMark('auth:init:start');
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -85,6 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const user = await buildUserFromSession(session);
       setUser(user);
       setIsLoading(false);
+      perfMark('auth:init:end');
+      perfMeasure('auth:init', 'auth:init:start', 'auth:init:end');
     };
 
     initializeAuth();
@@ -93,9 +80,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       const load = async () => {
+        perfMark('auth:change:start');
         const user = await buildUserFromSession(session);
         setUser(user);
         setIsLoading(false);
+        perfMark('auth:change:end');
+        perfMeasure('auth:change', 'auth:change:start', 'auth:change:end');
       };
 
       load();
@@ -107,17 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = (newUser: User) => {
-    setUser(newUser);
-  };
-
   const logout = async () => {
     await supabase.auth.signOut();
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

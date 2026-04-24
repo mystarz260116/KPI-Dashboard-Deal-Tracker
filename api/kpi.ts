@@ -5,21 +5,45 @@ import {
   toDateString,
   type Period,
 } from '../src/lib/dateUtils.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth.js';
+import {
+  fetchCustomerCodesByProfileId,
+  fetchRegionalSalesTotal,
+} from './_lib/regionalReads.js';
 
 
 type Granularity = 'all' | 'department' | 'individual';
 
-async function fetchSalesSumByStaff(startDate: string, endDate: string) {
-  const { data, error } = await supabaseAdmin.rpc('get_sales_sum_by_staff', {
-    p_start_date: startDate,
-    p_end_date: endDate,
-  });
+async function fetchSalesImportRowsTotal(
+  startDate: string,
+  endExclusiveDate: string,
+  allowedCustomerCodes?: Set<string>,
+  departmentId?: number
+) {
+  const customerCodes = allowedCustomerCodes
+    ? Array.from(allowedCustomerCodes)
+    : null;
 
-  if (error) {
-    throw error;
+  if (customerCodes && customerCodes.length === 0) {
+    return 0;
   }
 
-  return data ?? [];
+  return fetchRegionalSalesTotal({
+    startDate,
+    endExclusiveDate,
+    customerCodes: customerCodes ?? undefined,
+    departmentId,
+  });
+}
+
+function getPreviousYearRange(start: Date, endExclusive: Date) {
+  const prevStart = new Date(start);
+  prevStart.setFullYear(prevStart.getFullYear() - 1);
+
+  const prevEnd = new Date(endExclusive);
+  prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+
+  return { prevStart, prevEnd };
 }
 
 export default async function handler(req: any, res: any) {
@@ -28,9 +52,14 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+    if (!requireDashboardAccess(profile, res)) return;
+
     const period = (req.query.period as Period | undefined) ?? 'monthly';
     const granularity = (req.query.granularity as Granularity | undefined) ?? 'all';
-    const department = (req.query.department as string | undefined) ?? '';
+    const departmentIdParam = (req.query.departmentId as string | undefined) ?? '';
+    const legacyDepartment = (req.query.department as string | undefined) ?? '';
     const userId = (req.query.userId as string | undefined) ?? '';
 
     const fromParam = req.query.from as string | undefined;
@@ -45,21 +74,16 @@ export default async function handler(req: any, res: any) {
       start = new Date(fromParam);
       end = new Date(toParam);
       end = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
-
-      // Previous period = same range one year earlier
-      prevStart = new Date(start);
-      prevStart.setFullYear(prevStart.getFullYear() - 1);
-
-      prevEnd = new Date(end);
-      prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+      const previousRange = getPreviousYearRange(start, end);
+      prevStart = previousRange.prevStart;
+      prevEnd = previousRange.prevEnd;
     } else {
       const range = getPeriodRange(period);
       start = range.start;
       end = range.end;
-      prevStart = new Date(start);
-      prevStart.setFullYear(prevStart.getFullYear() - 1);
-      prevEnd = new Date(end);
-      prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+      const previousRange = getPreviousYearRange(start, end);
+      prevStart = previousRange.prevStart;
+      prevEnd = previousRange.prevEnd;
     }
 
     const currentStart = toDateString(start);
@@ -89,8 +113,14 @@ export default async function handler(req: any, res: any) {
     }));
 
     let filteredUsers = users;
-    if (granularity === 'department' && department) {
-      filteredUsers = filteredUsers.filter((u) => u.department === department);
+    const selectedDepartment = departmentIdParam
+      ? Number(departmentIdParam)
+      : legacyDepartment
+        ? users.find((u) => u.department === legacyDepartment)?.department_id ?? null
+        : null;
+
+    if (granularity === 'department' && selectedDepartment) {
+      filteredUsers = filteredUsers.filter((u) => u.department_id === selectedDepartment);
     }
     if (granularity === 'individual' && userId) {
       filteredUsers = filteredUsers.filter((u) => u.id === userId);
@@ -98,6 +128,11 @@ export default async function handler(req: any, res: any) {
 
     const allowedUserIds = new Set(filteredUsers.map((u) => u.id));
     const allowedDepartmentIds = Array.from(new Set(filteredUsers.map((u) => u.department_id).filter(Boolean)));
+    const selectedSalesDepartmentId = granularity === 'department' && selectedDepartment
+      ? selectedDepartment
+      : granularity === 'individual'
+        ? users.find((u) => u.id === userId)?.department_id ?? null
+        : null;
 
     const { data: createdProspects, error: createdProspectsError } = await supabaseAdmin
       .from('prospect_customers')
@@ -123,19 +158,24 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'merged prospects fetch failed' });
     }
 
-    const { data: profileStaffMaps, error: profileStaffMapsError } = await supabaseAdmin
-      .from('profile_external_staff_maps')
-      .select('profile_id, external_staff_code');
+    let allowedCustomerCodes = new Set<string>();
 
-    if (profileStaffMapsError) {
-      console.error('kpi profile staff map error:', profileStaffMapsError);
-      return res.status(500).json({ error: 'profile staff map fetch failed' });
+    if (granularity === 'individual') {
+      const selectedUserRow = users.find((u) => u.id === userId);
+      let customerCodes: string[] = [];
+
+      try {
+        customerCodes = await fetchCustomerCodesByProfileId(
+          userId,
+          selectedUserRow?.department_id ?? null
+        );
+      } catch (customerCodesError) {
+        console.error('kpi customer codes by profile error:', customerCodesError);
+        return res.status(500).json({ error: 'customer codes fetch failed' });
+      }
+
+      allowedCustomerCodes = new Set(customerCodes);
     }
-
-    const filteredStaffMaps = (profileStaffMaps ?? []).filter((m: any) => allowedUserIds.has(m.profile_id));
-    const allowedExternalStaffCodes = new Set(
-      filteredStaffMaps.map((m: any) => String(m.external_staff_code))
-    );
 
     const { data: currentDeals, error: currentDealsError } = await supabaseAdmin
       .from('deals')
@@ -146,33 +186,6 @@ export default async function handler(req: any, res: any) {
     if (currentDealsError) {
       console.error('kpi current deals error:', currentDealsError);
       return res.status(500).json({ error: 'current deals fetch failed' });
-    }
-
-    const { data: previousDeals, error: previousDealsError } = await supabaseAdmin
-      .from('deals')
-      .select('id, user_id, deal_date, activity_type, amount')
-      .gte('deal_date', previousStart)
-      .lt('deal_date', previousEnd);
-
-    if (previousDealsError) {
-      console.error('kpi previous deals error:', previousDealsError);
-      return res.status(500).json({ error: 'previous deals fetch failed' });
-    }
-
-    let currentSalesRows: any[] = [];
-    try {
-      currentSalesRows = await fetchSalesSumByStaff(currentStart, currentEnd);
-    } catch (currentSalesRowsError) {
-      console.error('kpi current sales rows error:', currentSalesRowsError);
-      return res.status(500).json({ error: 'current sales rows fetch failed' });
-    }
-
-    let previousSalesRows: any[] = [];
-    try {
-      previousSalesRows = await fetchSalesSumByStaff(previousStart, previousEnd);
-    } catch (previousSalesRowsError) {
-      console.error('kpi previous sales rows error:', previousSalesRowsError);
-      return res.status(500).json({ error: 'previous sales rows fetch failed' });
     }
 
     const scopedMergedProspectsInPeriod = (mergedProspectsInPeriod ?? []).filter((p: any) =>
@@ -200,18 +213,11 @@ export default async function handler(req: any, res: any) {
 
     let mergedSalesTotal = 0;
     try {
-      const { data: mergedSalesData, error: mergedSalesError } = await supabaseAdmin.rpc(
-        'get_merged_sales_total',
-        {
-          p_start_date: currentStart,
-          p_end_date: currentEnd,
-          p_customer_codes: mergedCustomerCodesInPeriod,
-        }
-      );
-
-      if (mergedSalesError) throw mergedSalesError;
-
-      mergedSalesTotal = Number(mergedSalesData?.[0]?.sales_total ?? 0);
+      mergedSalesTotal = await fetchRegionalSalesTotal({
+        startDate: currentStart,
+        endExclusiveDate: currentEnd,
+        customerCodes: mergedCustomerCodesInPeriod,
+      });
     } catch (e) {
       console.error('kpi merged sales error:', e);
     }
@@ -240,38 +246,45 @@ export default async function handler(req: any, res: any) {
     );
 
     const scopedCurrentDeals = (currentDeals ?? []).filter((d: any) => allowedUserIds.has(d.user_id));
-    const scopedCurrentSalesRows = (currentSalesRows ?? []).filter((row: any) =>
-      allowedExternalStaffCodes.has(String(row.external_staff_code))
-    );
-    const scopedPreviousSalesRows = (previousSalesRows ?? []).filter((row: any) =>
-      allowedExternalStaffCodes.has(String(row.external_staff_code))
-    );
-
     const scopedBudgets = (budgetsData ?? []).filter((b: any) => {
       if (granularity === 'individual') return b.user_id === userId;
       if (granularity === 'department') return allowedDepartmentIds.includes(b.department_id);
       return allowedUserIds.has(b.user_id);
     });
 
-    const salesTotal = scopedCurrentSalesRows.reduce((sum: number, row: any) => {
-      const amount = Number(row.sales_total ?? 0);
-      return sum + (Number.isFinite(amount) ? amount : 0);
-    }, 0);
+    let sharedSalesTotal = 0;
+    let sharedPreviousSalesTotal = 0;
+    const salesFilterCodes = granularity === 'individual' ? allowedCustomerCodes : undefined;
 
-    const previousSalesTotal = scopedPreviousSalesRows.reduce((sum: number, row: any) => {
-      const amount = Number(row.sales_total ?? 0);
-      return sum + (Number.isFinite(amount) ? amount : 0);
-    }, 0);
+    try {
+      [sharedSalesTotal, sharedPreviousSalesTotal] = await Promise.all([
+        fetchSalesImportRowsTotal(
+          currentStart,
+          currentEnd,
+          salesFilterCodes,
+          selectedSalesDepartmentId ?? undefined
+        ),
+        fetchSalesImportRowsTotal(
+          previousStart,
+          previousEnd,
+          salesFilterCodes,
+          selectedSalesDepartmentId ?? undefined
+        ),
+      ]);
+    } catch (salesImportRowsError) {
+      console.error('kpi sales import rows error:', salesImportRowsError);
+      return res.status(500).json({ error: 'sales import rows fetch failed' });
+    }
 
     const budgetTotal = scopedBudgets.reduce((sum: number, b: any) => {
       const amount = Number(b.target_amount ?? 0);
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0);
 
-    const achievementRate = budgetTotal > 0 ? Number(((salesTotal / budgetTotal) * 100).toFixed(1)) : 0;
-    const changeRate = previousSalesTotal > 0
-      ? Number((((salesTotal - previousSalesTotal) / previousSalesTotal) * 100).toFixed(1))
-      : salesTotal > 0
+    const achievementRate = budgetTotal > 0 ? Number(((sharedSalesTotal / budgetTotal) * 100).toFixed(1)) : 0;
+    const changeRate = sharedPreviousSalesTotal > 0
+      ? Number((((sharedSalesTotal - sharedPreviousSalesTotal) / sharedPreviousSalesTotal) * 100).toFixed(1))
+      : sharedSalesTotal > 0
         ? null
         : 0;
 
@@ -330,14 +343,14 @@ export default async function handler(req: any, res: any) {
 
     return res.status(200).json({
       budget: {
-        sales: salesTotal,
+        sales: sharedSalesTotal,
         budget: budgetTotal,
         achievement_rate: achievementRate,
         target_year_months: targetYearMonths,
       },
       sales: {
-        sales: salesTotal,
-        prev_sales: previousSalesTotal,
+        sales: sharedSalesTotal,
+        prev_sales: sharedPreviousSalesTotal,
         change_rate: changeRate,
       },
       visit_ranking,

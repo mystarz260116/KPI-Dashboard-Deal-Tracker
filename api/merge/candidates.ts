@@ -1,6 +1,7 @@
 
 
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { requireAuthenticatedProfile } from '../_lib/auth.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -8,6 +9,9 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+
     const { data, error } = await supabaseAdmin
       .from('customer_merge_candidates')
       .select(`

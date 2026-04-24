@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { KPIData, Granularity, Period } from '../types';
+import { toDateString } from '../lib/dateUtils';
+import { authFetch } from '../lib/authFetch';
+import { isPerfEnabled, perfNow } from '../lib/perf';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -15,7 +18,13 @@ import logoImg from '../assets/M.png';
 interface User {
   id: string;
   name: string;
+  department_id: number | null;
   department: string;
+}
+
+interface DepartmentOption {
+  id: string;
+  name: string;
 }
 
 const COLORS = ['#6366f1', '#10b981'];
@@ -30,7 +39,58 @@ function SectionTitle({ title, color }: SectionTitleProps) {
 }
 
 function formatDateInput(date: Date) {
-  return date.toISOString().slice(0, 10);
+  return toDateString(date);
+}
+
+function formatImportDatetimeInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function extractCsvRecords(text: string) {
+  const records: string[] = [];
+  let start = 0;
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      const record = text.slice(start, i).replace(/\r$/, '');
+      records.push(record);
+
+      if (char === '\r' && next === '\n') {
+        i += 1;
+      }
+
+      start = i + 1;
+    }
+  }
+
+  return {
+    records,
+    remainder: text.slice(start),
+  };
+}
+
+function formatChangeRate(changeRate: number | null | undefined) {
+  if (changeRate == null) return '-';
+  if (changeRate > 0) return `+${changeRate}`;
+  return `${changeRate}`;
 }
 
 function getDefaultDateRange(period: Period) {
@@ -96,6 +156,7 @@ export default function Dashboard() {
   const [appliedUser, setAppliedUser] = useState('');
   const [data, setData] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingMergeCount, setPendingMergeCount] = useState(0);
@@ -104,10 +165,45 @@ export default function Dashboard() {
   const [selectedCsvFile, setSelectedCsvFile] = useState<File | null>(null);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [importResultMessage, setImportResultMessage] = useState('');
+  const [importDepartmentId, setImportDepartmentId] = useState('');
+  const [importedAtInput, setImportedAtInput] = useState(() => formatImportDatetimeInput(new Date()));
+  const [perfStats, setPerfStats] = useState<{
+    usersMs: number;
+    kpiMs: number;
+    totalMs: number;
+  } | null>(null);
 
-  const departmentOptions = Array.from(
-    new Set(users.map(u => u.department).filter(Boolean))
+  const userDepartmentOptions = Array.from(
+    new Map(
+      users
+        .filter((u) => u.department_id != null && u.department)
+        .map((u) => [String(u.department_id), {
+          id: String(u.department_id),
+          name: u.department,
+        } satisfies DepartmentOption])
+    ).values()
   );
+  const departmentOptions = departments.length > 0 ? departments : userDepartmentOptions;
+
+  const fetchPendingMergeCount = async () => {
+    setIsMergeCountLoading(true);
+
+    try {
+      const res = await authFetch('/api/merge/candidates/count');
+      if (!res.ok) {
+        throw new Error('merge candidates count fetch failed');
+      }
+
+      const result = await res.json();
+      setPendingMergeCount(result.pending_count ?? 0);
+    } catch (err) {
+      console.error('merge candidates count error:', err);
+      setPendingMergeCount(0);
+    } finally {
+      setIsMergeCountLoading(false);
+    }
+  };
+
   useEffect(() => {
     const nextRange = getDefaultDateRange(period);
     setFromDate(nextRange.from);
@@ -121,25 +217,6 @@ export default function Dashboard() {
   }, [user, navigate]);
 
   useEffect(() => {
-    const fetchPendingMergeCount = async () => {
-      setIsMergeCountLoading(true);
-
-      try {
-        const res = await fetch('/api/merge/candidates/count');
-        if (!res.ok) {
-          throw new Error('merge candidates count fetch failed');
-        }
-
-        const result = await res.json();
-        setPendingMergeCount(result.pending_count ?? 0);
-      } catch (err) {
-        console.error('merge candidates count error:', err);
-        setPendingMergeCount(0);
-      } finally {
-        setIsMergeCountLoading(false);
-      }
-    };
-
     fetchPendingMergeCount();
   }, []);
   useEffect(() => {
@@ -148,14 +225,7 @@ export default function Dashboard() {
       setError('');
 
       try {
-        const usersRes = await fetch('/api/users');
-        if (!usersRes.ok) {
-          throw new Error('users fetch failed');
-        }
-
-        const usersData: User[] = await usersRes.json();
-        setUsers(usersData);
-
+        const totalStart = perfNow();
         const params = new URLSearchParams({
           period: appliedPeriod,
           granularity: appliedGranularity,
@@ -163,21 +233,71 @@ export default function Dashboard() {
           to: appliedToDate,
         });
 
-        if (appliedDept) params.set('department', appliedDept);
+        if (appliedDept) params.set('departmentId', appliedDept);
         if (appliedUser) params.set('userId', appliedUser);
 
-        const kpiRes = await fetch(`/api/kpi?${params.toString()}`);
-        if (!kpiRes.ok) {
+        const usersStart = perfNow();
+        const usersPromise = authFetch('/api/users').then(async (res) => ({
+          res,
+          data: await res.json(),
+          ms: perfNow() - usersStart,
+        }));
+        const departmentsPromise = authFetch('/api/departments').then(async (res) => ({
+          res,
+          data: await res.json(),
+        }));
+        const kpiStart = perfNow();
+        const kpiPromise = authFetch(`/api/kpi?${params.toString()}`).then(async (res) => ({
+          res,
+          data: await res.json(),
+          ms: perfNow() - kpiStart,
+        }));
+
+        const [usersResult, departmentsResult, kpiResult] = await Promise.all([
+          usersPromise,
+          departmentsPromise,
+          kpiPromise,
+        ]);
+
+        if (!usersResult.res.ok) {
+          throw new Error('users fetch failed');
+        }
+        if (!departmentsResult.res.ok) {
+          throw new Error('departments fetch failed');
+        }
+        if (!kpiResult.res.ok) {
           throw new Error('kpi fetch failed');
         }
 
-        const kpiData = await kpiRes.json();
+        const usersData: User[] = usersResult.data;
+        const departmentsData: DepartmentOption[] = (departmentsResult.data ?? []).map((department: any) => ({
+          id: String(department.id),
+          name: department.name,
+        }));
+        const kpiData = kpiResult.data;
+
+        setUsers(usersData);
+        setDepartments(departmentsData);
         setData(kpiData);
+
+        if (isPerfEnabled()) {
+          const totalMs = perfNow() - totalStart;
+          setPerfStats({
+            usersMs: usersResult.ms,
+            kpiMs: kpiResult.ms,
+            totalMs,
+          });
+          console.info(
+            `[perf] dashboard users=${usersResult.ms.toFixed(1)}ms kpi=${kpiResult.ms.toFixed(1)}ms total=${totalMs.toFixed(1)}ms`
+          );
+        }
       } catch (err) {
         console.error('dashboard fetch error:', err);
         setError('ダッシュボードの取得に失敗しました');
         setUsers([]);
+        setDepartments([]);
         setData(null);
+        setPerfStats(null);
       } finally {
         setIsLoading(false);
       }
@@ -226,30 +346,63 @@ export default function Dashboard() {
     return values;
   };
 
-  const parseCsvText = (text: string) => {
-    const normalized = text.replace(/^\uFEFF/, '');
-    const lines = normalized
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean);
-
-    if (lines.length < 2) {
-      return [];
+  const buildCsvRow = (headers: string[], line: string) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) {
+      return null;
     }
 
-    const headers = parseCsvLine(lines[0]);
+    const cells = parseCsvLine(trimmedLine);
+    const row = headers.reduce<Record<string, string>>((result, header, index) => {
+      result[header] = cells[index] ?? '';
+      return result;
+    }, {});
 
-    return lines
-      .slice(1)
-      .map(line => {
-        const cells = parseCsvLine(line);
-        return headers.reduce<Record<string, string>>((row, header, index) => {
-          row[header] = cells[index] ?? '';
-          return row;
-        }, {});
-      })
-      // 空行・無効行を除外（得意先コードが空の行は除外）
-      .filter(row => String(row['得意先コード'] ?? '').trim() !== '');
+    if (String(row['得意先コード'] ?? '').trim() === '') {
+      return null;
+    }
+
+    return row;
+  };
+
+  const uploadSalesChunk = async (
+    rows: Record<string, string>[],
+    importBatchId: string,
+    departmentId: string,
+    importedAt: string
+  ) => {
+    const uploadRes = await authFetch('/api/import/sales/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        rows,
+        import_batch_id: importBatchId,
+        department_id: Number(departmentId),
+        imported_at: importedAt,
+      }),
+    });
+
+    const uploadContentType = uploadRes.headers.get('content-type') ?? '';
+    const uploadResult = uploadContentType.includes('application/json')
+      ? await uploadRes.json()
+      : null;
+
+    if (!uploadRes.ok) {
+      const debugMessage = [
+        uploadResult?.error,
+        uploadResult?.message,
+        uploadResult?.details,
+        uploadResult?.code ? `code=${uploadResult.code}` : '',
+      ]
+        .filter(Boolean)
+        .join(' / ');
+
+      throw new Error(debugMessage || 'CSV取込に失敗しました。');
+    }
+
+    return uploadResult?.uploaded_count ?? rows.length;
   };
 
   const uploadSalesCsv = async () => {
@@ -257,53 +410,112 @@ export default function Dashboard() {
       setImportResultMessage('CSVファイルを選択してください。');
       return;
     }
+    if (!importDepartmentId) {
+      setImportResultMessage('取り込み部署を選択してください。');
+      return;
+    }
 
     setIsImportingCsv(true);
     setImportResultMessage('');
 
     try {
-      const csvText = await selectedCsvFile.text();
-      const rows = parseCsvText(csvText);
+      const importBatchId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const importedAt = new Date(importedAtInput).toISOString();
+      const reader = selectedCsvFile.stream().getReader();
+      const decoder = new TextDecoder('utf-8');
+      const uploadChunkSize = 500;
+      const pendingRows: Record<string, string>[] = [];
+      let headers: string[] | null = null;
+      let bufferedText = '';
+      let isFirstChunk = true;
+      let uploadedCount = 0;
+      let parsedRowCount = 0;
+      let uploadedBytes = 0;
 
-      console.log('CSV rows length:', rows.length);
-      console.log('CSV first rows:', rows.slice(0, 5));
+      const flushPendingRows = async () => {
+        if (pendingRows.length === 0) {
+          return;
+        }
 
-      if (rows.length === 0) {
+        const chunk = pendingRows.splice(0, pendingRows.length);
+        uploadedCount += await uploadSalesChunk(chunk, importBatchId, importDepartmentId, importedAt);
+        const progressRate = selectedCsvFile.size > 0
+          ? Math.min(100, (uploadedBytes / selectedCsvFile.size) * 100)
+          : 0;
+
+        setImportResultMessage(
+          `CSV取込中... ${uploadedCount.toLocaleString()}件送信済み (${progressRate.toFixed(1)}%)`
+        );
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          bufferedText += decoder.decode();
+          break;
+        }
+
+        uploadedBytes += value?.byteLength ?? 0;
+        bufferedText += decoder.decode(value, { stream: true });
+
+        if (isFirstChunk) {
+          bufferedText = bufferedText.replace(/^\uFEFF/, '');
+          isFirstChunk = false;
+        }
+
+        const { records, remainder } = extractCsvRecords(bufferedText);
+        bufferedText = remainder;
+
+        for (const rawLine of records) {
+          const trimmedLine = rawLine.trim();
+          if (!trimmedLine) continue;
+
+          if (!headers) {
+            headers = parseCsvLine(trimmedLine);
+            continue;
+          }
+
+          const row = buildCsvRow(headers, trimmedLine);
+          if (!row) continue;
+
+          pendingRows.push(row);
+          parsedRowCount += 1;
+
+          if (pendingRows.length >= uploadChunkSize) {
+            await flushPendingRows();
+          }
+        }
+      }
+
+      const trailingLine = bufferedText.trim();
+      if (trailingLine) {
+        if (!headers) {
+          headers = parseCsvLine(trailingLine);
+        } else {
+          const row = buildCsvRow(headers, trailingLine);
+          if (row) {
+            pendingRows.push(row);
+            parsedRowCount += 1;
+          }
+        }
+      }
+
+      if (!headers || parsedRowCount === 0) {
         throw new Error('CSVに取込対象の行がありません。');
       }
 
-      const importBatchId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      let uploadedCount = 0;
+      await flushPendingRows();
 
-      for (let i = 0; i < rows.length; i += 500) {
-        const chunk = rows.slice(i, i + 500);
-
-        const uploadRes = await fetch('/api/import/sales/upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ rows: chunk, import_batch_id: importBatchId }),
-        });
-
-        const uploadContentType = uploadRes.headers.get('content-type') ?? '';
-        const uploadResult = uploadContentType.includes('application/json')
-          ? await uploadRes.json()
-          : null;
-
-        if (!uploadRes.ok) {
-          throw new Error(uploadResult?.error ?? 'CSV取込に失敗しました。');
-        }
-
-        uploadedCount += uploadResult?.uploaded_count ?? chunk.length;
-      }
-
-      const finalizeRes = await fetch('/api/import/sales/finalize', {
+      const finalizeRes = await authFetch('/api/import/sales/finalize', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ import_batch_id: importBatchId }),
+        body: JSON.stringify({
+          import_batch_id: importBatchId,
+          department_id: Number(importDepartmentId),
+        }),
       });
 
       const finalizeContentType = finalizeRes.headers.get('content-type') ?? '';
@@ -315,11 +527,12 @@ export default function Dashboard() {
         throw new Error(finalizeResult?.error ?? '取込後の同期処理に失敗しました。');
       }
 
+      const importDepartmentName = departmentOptions.find((d) => d.id === importDepartmentId)?.name ?? importDepartmentId;
       setImportResultMessage(
-        `CSV取込と同期処理が完了しました。取込件数: ${uploadedCount}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
+        `CSV取込と同期処理が完了しました。部署: ${importDepartmentName} / 取り込み日時: ${importedAtInput.replace('T', ' ')} / 取込件数: ${uploadedCount}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
       );
       setSelectedCsvFile(null);
-      setPendingMergeCount(finalizeResult?.inserted_count ?? pendingMergeCount);
+      await fetchPendingMergeCount();
       setIsImportModalOpen(false);
     } catch (err: any) {
       console.error('sales csv import error:', err);
@@ -423,6 +636,11 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-8">
+        {perfStats && (
+          <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 shadow-sm">
+            users API: {perfStats.usersMs.toFixed(0)}ms / kpi API: {perfStats.kpiMs.toFixed(0)}ms / total: {perfStats.totalMs.toFixed(0)}ms
+          </div>
+        )}
         {importResultMessage && (
           <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 shadow-sm">
             {importResultMessage}
@@ -504,7 +722,7 @@ export default function Dashboard() {
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
                 <option value="">部署を選択</option>
                 {departmentOptions.map(d => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
             </div>
@@ -557,7 +775,7 @@ export default function Dashboard() {
             className="rounded-xl bg-white p-6 shadow-sm">
             <SectionTitle title="売上合計" color="#10b981" />
             <p className="text-4xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
-            <p className="mt-2 text-sm text-zinc-500">前期間比 +{data?.sales.change_rate ?? 0}%</p>
+            <p className="mt-2 text-sm text-zinc-500">前期間比 {formatChangeRate(data?.sales.change_rate)}%</p>
           </motion.div>
         </div>
 
@@ -656,6 +874,36 @@ export default function Dashboard() {
             <p className="mb-4 text-sm text-zinc-600">
               売上CSVを取り込んだ後、顧客同期・担当紐付け・マージ候補生成までまとめて実行します。
             </p>
+
+            <div className="mb-4 grid gap-4 sm:grid-cols-2">
+              <label className="block text-sm text-zinc-700">
+                <span className="mb-1 block font-medium">取り込み部署</span>
+                <select
+                  value={importDepartmentId}
+                  onChange={e => setImportDepartmentId(e.target.value)}
+                  disabled={isImportingCsv}
+                  className="block w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                >
+                  <option value="">部署を選択</option>
+                  {departmentOptions.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm text-zinc-700">
+                <span className="mb-1 block font-medium">取り込み日時</span>
+                <input
+                  type="datetime-local"
+                  value={importedAtInput}
+                  onChange={e => setImportedAtInput(e.target.value)}
+                  disabled={isImportingCsv}
+                  className="block w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
 
             <input
               type="file"

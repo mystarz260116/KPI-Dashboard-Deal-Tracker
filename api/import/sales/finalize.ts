@@ -1,52 +1,8 @@
 import { supabaseAdmin } from '../../../src/lib/supabaseAdmin.js';
 import { similarity } from '../../../src/lib/mergeUtils.js';
-
-async function syncCustomerExternalStaffMaps(customerCodes?: string[] | null) {
-  const { data: salesRows, error: salesRowsError } = await supabaseAdmin
-    .from('sales_import_rows')
-    .select('customer_code, external_staff_code')
-    .not('customer_code', 'is', null)
-    .not('external_staff_code', 'is', null);
-
-  if (salesRowsError) {
-    throw salesRowsError;
-  }
-
-  const filteredSalesRows = customerCodes?.length
-    ? (salesRows ?? []).filter((row: any) => customerCodes.includes(String(row.customer_code)))
-    : (salesRows ?? []);
-
-  const uniqueMapRows = Array.from(
-    new Map(
-      filteredSalesRows
-        .filter((row: any) => row.customer_code && row.external_staff_code)
-        .map((row: any) => [
-          `${String(row.customer_code)}::${String(row.external_staff_code)}`,
-          {
-            customer_code: String(row.customer_code),
-            external_staff_code: String(row.external_staff_code),
-          },
-        ])
-    ).values()
-  );
-
-  if (uniqueMapRows.length === 0) {
-    return { upserted_count: 0 };
-  }
-
-  const { error: upsertError } = await supabaseAdmin
-    .from('customer_external_staff_maps')
-    .upsert(uniqueMapRows, {
-      onConflict: 'customer_code,external_staff_code',
-      ignoreDuplicates: false,
-    });
-
-  if (upsertError) {
-    throw upsertError;
-  }
-
-  return { upserted_count: uniqueMapRows.length };
-}
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../../_lib/auth.js';
+import { parseDepartmentId, SALES_IMPORT_RAW_TABLE } from '../../_lib/regions.js';
+import { syncRegionalSalesImportArtifacts } from '../../_lib/salesImport.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -54,13 +10,15 @@ export default async function handler(req: any, res: any) {
   }
 
   const batchId = req.body?.import_batch_id ?? null;
+  const departmentId = parseDepartmentId(req.body?.department_id);
 
   try {
-    const { error: syncError } = await supabaseAdmin.rpc('sync_master_from_sales_import_raw');
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+    if (!requireDashboardAccess(profile, res)) return;
 
-    if (syncError) {
-      console.error('sales import finalize sync error:', syncError);
-      return res.status(500).json({ error: 'sales import finalize sync failed' });
+    if (!batchId || !departmentId) {
+      return res.status(400).json({ error: 'import_batch_id and department_id are required' });
     }
 
     const { data: prospects, error: prospectsError } = await supabaseAdmin
@@ -77,8 +35,9 @@ export default async function handler(req: any, res: any) {
 
     if (batchId) {
       const { data: batchRows, error: batchRowsError } = await supabaseAdmin
-        .from('sales_import_raw_rows')
+        .from(SALES_IMPORT_RAW_TABLE)
         .select('得意先コード')
+        .eq('department_id', departmentId)
         .eq('import_batch_id', batchId);
 
       if (batchRowsError) {
@@ -89,6 +48,20 @@ export default async function handler(req: any, res: any) {
       batchCustomerCodes = Array.from(
         new Set((batchRows ?? []).map((r: any) => String(r['得意先コード'])).filter(Boolean))
       );
+    }
+
+    let departmentSyncResult = {
+      customer_codes: [] as string[],
+      customers_upserted: 0,
+      sales_rows_upserted: 0,
+      customer_external_staff_maps_upserted: 0,
+    };
+
+    try {
+      departmentSyncResult = await syncRegionalSalesImportArtifacts(departmentId, batchId);
+    } catch (departmentSyncError) {
+      console.error('sales import finalize department sync error:', departmentSyncError);
+      return res.status(500).json({ error: 'department sales import sync failed' });
     }
 
     let customersQuery = supabaseAdmin
@@ -120,14 +93,6 @@ export default async function handler(req: any, res: any) {
         .filter((c: any) => c.decision === 'rejected')
         .map((c: any) => `${c.prospect_customer_id}::${c.customer_code}`)
     );
-
-    let customerExternalStaffMapResult;
-    try {
-      customerExternalStaffMapResult = await syncCustomerExternalStaffMaps(batchCustomerCodes);
-    } catch (customerExternalStaffMapsError) {
-      console.error('sales import finalize customer external staff maps error:', customerExternalStaffMapsError);
-      return res.status(500).json({ error: 'customer external staff maps sync failed' });
-    }
 
     const candidateRows: Array<{
       prospect_customer_id: string;
@@ -162,7 +127,11 @@ export default async function handler(req: any, res: any) {
         success: true,
         synced: true,
         inserted_count: 0,
-        customer_external_staff_maps_upserted: customerExternalStaffMapResult?.upserted_count ?? 0,
+        customer_external_staff_maps_upserted: departmentSyncResult.customer_external_staff_maps_upserted,
+        customer_external_staff_maps_upserted_department: departmentSyncResult.customer_external_staff_maps_upserted,
+        department_customers_upserted: departmentSyncResult.customers_upserted,
+        department_sales_rows_upserted: departmentSyncResult.sales_rows_upserted,
+        department_id: departmentId,
       });
     }
 
@@ -182,7 +151,11 @@ export default async function handler(req: any, res: any) {
       success: true,
       synced: true,
       inserted_count: candidateRows.length,
-      customer_external_staff_maps_upserted: customerExternalStaffMapResult?.upserted_count ?? 0,
+      customer_external_staff_maps_upserted: departmentSyncResult.customer_external_staff_maps_upserted,
+      customer_external_staff_maps_upserted_department: departmentSyncResult.customer_external_staff_maps_upserted,
+      department_customers_upserted: departmentSyncResult.customers_upserted,
+      department_sales_rows_upserted: departmentSyncResult.sales_rows_upserted,
+      department_id: departmentId,
     });
   } catch (error) {
     console.error('sales import finalize unexpected error:', error);

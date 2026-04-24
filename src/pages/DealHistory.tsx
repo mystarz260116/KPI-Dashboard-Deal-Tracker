@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, Building2, Search, Filter,
-  TrendingUp, CheckCircle, XCircle, MessageSquare, LayoutDashboard
+  TrendingUp, CheckCircle, XCircle, MessageSquare, LayoutDashboard, LogOut
 } from 'lucide-react';
 
 interface Deal {
@@ -17,6 +17,12 @@ interface Deal {
   amount?: number;
   notes?: string;
   nextAction?: string;
+  contactRole?: string;
+  decisionMakerContact?: 'yes' | 'no' | 'unknown';
+  proposalCategory?: string;
+  dealTemperature?: 'A' | 'B' | 'C' | 'D' | 'E';
+  nextActionType?: string;
+  nextActionDate?: string;
 }
 
 const ACTIVITY_LABELS: Record<Deal['activityType'], string> = {
@@ -35,8 +41,22 @@ const ACTIVITY_COLORS: Record<Deal['activityType'], string> = {
   lost:        'bg-red-100 text-red-700',
 };
 
+const DECISION_MAKER_LABELS: Record<NonNullable<Deal['decisionMakerContact']>, string> = {
+  yes: '決裁者接触あり',
+  no: '決裁者接触なし',
+  unknown: '決裁者不明',
+};
+
+const TEMPERATURE_LABELS: Record<NonNullable<Deal['dealTemperature']>, string> = {
+  A: 'A すぐ案件化',
+  B: 'B 見込みあり',
+  C: 'C 長期フォロー',
+  D: 'D 可能性低い',
+  E: 'E 失注・拒否',
+};
+
 export default function DealHistory() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,7 +70,7 @@ export default function DealHistory() {
 
       const { data, error } = await supabase
         .from('deals')
-        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, product_name, amount, notes, next_action, customers(name), prospect_customers(name)')
+        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, product_name, amount, notes, next_action, contact_role, decision_maker_contact, proposal_category, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
         .eq('user_id', user.id)
         .order('deal_date', { ascending: false })
         .order('created_at', { ascending: false });
@@ -73,6 +93,12 @@ export default function DealHistory() {
         amount: d.amount ?? undefined,
         notes: d.notes ?? undefined,
         nextAction: d.next_action ?? undefined,
+        contactRole: d.contact_role ?? undefined,
+        decisionMakerContact: d.decision_maker_contact ?? undefined,
+        proposalCategory: d.proposal_category ?? undefined,
+        dealTemperature: d.deal_temperature ?? undefined,
+        nextActionType: d.next_action_type ?? undefined,
+        nextActionDate: d.next_action_date ?? undefined,
       }));
 
       setDeals(results);
@@ -86,6 +112,11 @@ export default function DealHistory() {
     const matchType = filterType === 'all' || d.activityType === filterType;
     return matchSearch && matchType;
   });
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   return (
     <div className="min-h-screen bg-zinc-200 p-4 sm:p-8">
@@ -101,7 +132,15 @@ export default function DealHistory() {
             ダッシュボード
           </button>
           <h1 className="text-lg font-bold text-zinc-900">商談履歴</h1>
-          <div className="w-20" />
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-lg p-2 text-zinc-400 transition hover:bg-white hover:text-zinc-700"
+            aria-label="ログアウト"
+            title="ログアウト"
+          >
+            <LogOut className="h-5 w-5" />
+          </button>
         </div>
 
         {/* 検索・フィルター */}
@@ -169,6 +208,31 @@ export default function DealHistory() {
 
                 <p className="mb-2 text-xs text-zinc-400">{deal.date}</p>
 
+                {(deal.dealTemperature || deal.proposalCategory || deal.contactRole || deal.decisionMakerContact) && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {deal.dealTemperature && (
+                      <span className="rounded-full bg-purple-50 px-2 py-1 text-xs font-semibold text-purple-700">
+                        {TEMPERATURE_LABELS[deal.dealTemperature]}
+                      </span>
+                    )}
+                    {deal.proposalCategory && (
+                      <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        {deal.proposalCategory}
+                      </span>
+                    )}
+                    {deal.contactRole && (
+                      <span className="rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600">
+                        接触相手：{deal.contactRole}
+                      </span>
+                    )}
+                    {deal.decisionMakerContact && (
+                      <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+                        {DECISION_MAKER_LABELS[deal.decisionMakerContact]}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {deal.amount && (
                   <p className="mb-2 text-sm font-bold text-emerald-600">
                     ¥{deal.amount.toLocaleString()}
@@ -185,6 +249,13 @@ export default function DealHistory() {
                 {deal.nextAction && (
                   <div className="mt-2 rounded-lg bg-purple-50 px-3 py-2 text-xs text-purple-700">
                     次アクション：{deal.nextAction}
+                  </div>
+                )}
+
+                {!deal.nextAction && (deal.nextActionType || deal.nextActionDate) && (
+                  <div className="mt-2 rounded-lg bg-purple-50 px-3 py-2 text-xs text-purple-700">
+                    次アクション：{deal.nextActionType ?? '未設定'}
+                    {deal.nextActionDate ? `（${deal.nextActionDate}）` : ''}
                   </div>
                 )}
               </motion.div>

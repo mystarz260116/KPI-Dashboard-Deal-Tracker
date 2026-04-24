@@ -2,49 +2,9 @@
 
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 import { similarity } from '../../src/lib/mergeUtils.js';
-
-async function syncCustomerExternalStaffMaps() {
-  const { data: salesRows, error: salesRowsError } = await supabaseAdmin
-    .from('sales_import_rows')
-    .select('customer_code, external_staff_code')
-    .not('customer_code', 'is', null)
-    .not('external_staff_code', 'is', null);
-
-  if (salesRowsError) {
-    throw salesRowsError;
-  }
-
-  const uniqueMapRows = Array.from(
-    new Map(
-      (salesRows ?? [])
-        .filter((row: any) => row.customer_code && row.external_staff_code)
-        .map((row: any) => [
-          `${String(row.customer_code)}::${String(row.external_staff_code)}`,
-          {
-            customer_code: String(row.customer_code),
-            external_staff_code: String(row.external_staff_code),
-          },
-        ])
-    ).values()
-  );
-
-  if (uniqueMapRows.length === 0) {
-    return { upserted_count: 0 };
-  }
-
-  const { error: upsertError } = await supabaseAdmin
-    .from('customer_external_staff_maps')
-    .upsert(uniqueMapRows, {
-      onConflict: 'customer_code,external_staff_code',
-      ignoreDuplicates: false,
-    });
-
-  if (upsertError) {
-    throw upsertError;
-  }
-
-  return { upserted_count: uniqueMapRows.length };
-}
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../_lib/auth.js';
+import { parseDepartmentId } from '../_lib/regions.js';
+import { syncRegionalSalesImportArtifacts } from '../_lib/salesImport.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -52,19 +12,30 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { error: syncError } = await supabaseAdmin.rpc('sync_master_from_sales_import_raw');
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+    if (!requireDashboardAccess(profile, res)) return;
 
-    if (syncError) {
-      console.error('customers sync before merge generation error:', syncError);
-      return res.status(500).json({ error: 'customers sync before merge generation failed' });
+    const batchId = req.body?.import_batch_id ?? null;
+    const departmentId = parseDepartmentId(req.body?.department_id);
+
+    if (!batchId || !departmentId) {
+      return res.status(400).json({ error: 'import_batch_id and department_id are required' });
     }
 
-    let customerExternalStaffMapResult;
-    try {
-      customerExternalStaffMapResult = await syncCustomerExternalStaffMaps();
-    } catch (customerExternalStaffMapsError) {
-      console.error('sync+generate customer external staff maps error:', customerExternalStaffMapsError);
-      return res.status(500).json({ error: 'customer external staff maps sync failed' });
+    let departmentSyncResult = {
+      customers_upserted: 0,
+      sales_rows_upserted: 0,
+      customer_external_staff_maps_upserted: 0,
+    };
+
+    if (batchId && departmentId) {
+      try {
+        departmentSyncResult = await syncRegionalSalesImportArtifacts(departmentId, batchId);
+      } catch (departmentSyncError) {
+        console.error('sync+generate department sync error:', departmentSyncError);
+        return res.status(500).json({ error: 'department sales import sync failed' });
+      }
     }
 
     const { data: prospects, error: prospectsError } = await supabaseAdmin
@@ -116,7 +87,10 @@ export default async function handler(req: any, res: any) {
         success: true,
         synced: true,
         inserted_count: 0,
-        customer_external_staff_maps_upserted: customerExternalStaffMapResult?.upserted_count ?? 0,
+        customer_external_staff_maps_upserted: departmentSyncResult.customer_external_staff_maps_upserted,
+        customer_external_staff_maps_upserted_department: departmentSyncResult.customer_external_staff_maps_upserted,
+        department_customers_upserted: departmentSyncResult.customers_upserted,
+        department_sales_rows_upserted: departmentSyncResult.sales_rows_upserted,
       });
     }
 
@@ -136,7 +110,10 @@ export default async function handler(req: any, res: any) {
       success: true,
       synced: true,
       inserted_count: candidateRows.length,
-      customer_external_staff_maps_upserted: customerExternalStaffMapResult?.upserted_count ?? 0,
+      customer_external_staff_maps_upserted: departmentSyncResult.customer_external_staff_maps_upserted,
+      customer_external_staff_maps_upserted_department: departmentSyncResult.customer_external_staff_maps_upserted,
+      department_customers_upserted: departmentSyncResult.customers_upserted,
+      department_sales_rows_upserted: departmentSyncResult.sales_rows_upserted,
     });
   } catch (error) {
     console.error('sync+generate unexpected error:', error);

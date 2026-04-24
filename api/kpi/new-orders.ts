@@ -2,6 +2,8 @@
 
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 import { toDateString } from '../../src/lib/dateUtils.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../_lib/auth.js';
+import { fetchRegionalSalesRows } from '../_lib/regionalReads.js';
 
 type Granularity = 'all' | 'department' | 'individual';
 
@@ -11,8 +13,12 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+    if (!requireDashboardAccess(profile, res)) return;
+
     const granularity = (req.query.granularity as Granularity | undefined) ?? 'all';
-    const department = (req.query.department as string | undefined) ?? '';
+    const departmentIdParam = (req.query.departmentId as string | undefined) ?? '';
     const userId = (req.query.userId as string | undefined) ?? '';
     const fromParam = req.query.from as string | undefined;
     const toParam = req.query.to as string | undefined;
@@ -46,8 +52,9 @@ export default async function handler(req: any, res: any) {
     }));
 
     let filteredUsers = users;
-    if (granularity === 'department' && department) {
-      filteredUsers = filteredUsers.filter((u) => u.department === department);
+    const selectedDepartmentId = departmentIdParam ? Number(departmentIdParam) : null;
+    if (granularity === 'department' && selectedDepartmentId) {
+      filteredUsers = filteredUsers.filter((u) => u.department_id === selectedDepartmentId);
     }
     if (granularity === 'individual' && userId) {
       filteredUsers = filteredUsers.filter((u) => u.id === userId);
@@ -88,14 +95,15 @@ export default async function handler(req: any, res: any) {
       customerNameMap.set(c.code, c.name ?? c.code);
     });
 
-    const { data: salesRows, error: salesRowsError } = await supabaseAdmin
-      .from('sales_import_rows')
-      .select('customer_code, amount, delivery_date')
-      .gte('delivery_date', currentStart)
-      .lt('delivery_date', currentEnd)
-      .in('customer_code', mergedCustomerCodes.length > 0 ? mergedCustomerCodes : ['__none__']);
+    let salesRows: any[] = [];
 
-    if (salesRowsError) {
+    try {
+      salesRows = await fetchRegionalSalesRows({
+        startDate: currentStart,
+        endExclusiveDate: currentEnd,
+        customerCodes: mergedCustomerCodes.length > 0 ? mergedCustomerCodes : ['__none__'],
+      });
+    } catch (salesRowsError) {
       console.error('new-orders sales rows error:', salesRowsError);
       return res.status(500).json({ error: 'sales rows fetch failed' });
     }

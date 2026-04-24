@@ -1,5 +1,10 @@
 import { supabaseAdmin } from '../../../src/lib/supabaseAdmin.js';
 import crypto from 'crypto';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../../_lib/auth.js';
+import {
+  parseDepartmentId,
+  SALES_IMPORT_RAW_TABLE,
+} from '../../_lib/regions.js';
 
 // Type for incoming rows from the CSV parser on the client
 // We keep it flexible because CSV headers may vary
@@ -17,13 +22,12 @@ async function insertSalesImportRawRows(rows: RawSalesImportRow[]) {
 
   for (let index = 0; index < rows.length; index += chunkSize) {
     const chunk = rows.slice(index, index + chunkSize);
-
-    const { error } = await supabaseAdmin
-      .from('sales_import_raw_rows')
+    const insertResult = await supabaseAdmin
+      .from(SALES_IMPORT_RAW_TABLE)
       .insert(chunk);
 
-    if (error) {
-      throw error;
+    if (insertResult.error) {
+      throw insertResult.error;
     }
 
     insertedCount += chunk.length;
@@ -38,6 +42,10 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const profile = await requireAuthenticatedProfile(req, res);
+    if (!profile) return;
+    if (!requireDashboardAccess(profile, res)) return;
+
     const rows: RawSalesImportRow[] = Array.isArray(req.body?.rows)
       ? req.body.rows
       : [];
@@ -46,37 +54,52 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'rows are required' });
     }
 
+    const departmentId = parseDepartmentId(req.body?.department_id);
+    if (!departmentId) {
+      return res.status(400).json({ error: 'department_id is required' });
+    }
+
     const batchId = req.body?.import_batch_id ?? crypto.randomUUID();
+    const importedAt = req.body?.imported_at ?? new Date().toISOString();
 
     const rowsWithBatch = rows.map((r) => ({
       ...r,
+      department_id: departmentId,
       import_batch_id: batchId,
+      imported_at: importedAt,
     }));
 
-    // 1. Insert CSV rows into raw table
+    // Insert CSV rows into the raw table only.
+    // Downstream sync should run once in /api/import/sales/finalize
+    // after every chunk has been uploaded.
     let uploadResult;
     try {
       uploadResult = await insertSalesImportRawRows(rowsWithBatch);
     } catch (uploadError) {
       console.error('sales import upload error:', uploadError);
-      return res.status(500).json({ error: 'sales import raw upload failed' });
-    }
+      const errorObject = uploadError as {
+        message?: string;
+        details?: string;
+        hint?: string;
+        code?: string;
+      };
 
-    // 2. Sync customers from raw import rows
-    const { error: syncError } = await supabaseAdmin.rpc(
-      'sync_master_from_sales_import_raw'
-    );
-
-    if (syncError) {
-      console.error('sales import finalize sync error:', syncError);
-      return res.status(500).json({ error: 'sales import finalize sync failed' });
+      return res.status(500).json({
+        error: 'sales import raw upload failed',
+        message: errorObject?.message ?? null,
+        details: errorObject?.details ?? null,
+        hint: errorObject?.hint ?? null,
+        code: errorObject?.code ?? null,
+      });
     }
 
     return res.status(200).json({
       success: true,
       uploaded_count: uploadResult.inserted_count,
       import_batch_id: batchId,
-      finalized: true,
+      department_id: departmentId,
+      imported_at: importedAt,
+      finalized: false,
     });
   } catch (error) {
     console.error('sales upload unexpected error:', error);
