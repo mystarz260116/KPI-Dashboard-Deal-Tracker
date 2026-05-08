@@ -1,10 +1,10 @@
-import { supabaseAdmin } from '../../../src/lib/supabaseAdmin.js';
+import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import crypto from 'crypto';
-import { requireAuthenticatedProfile, requireDashboardAccess } from '../../_lib/auth.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import {
   parseDepartmentId,
   SALES_IMPORT_RAW_TABLE,
-} from '../../_lib/regions.js';
+} from '../../../api/_lib/regions.js';
 
 // Type for incoming rows from the CSV parser on the client
 // We keep it flexible because CSV headers may vary

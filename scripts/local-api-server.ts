@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -88,9 +88,45 @@ function createVercelLikeResponse(res: ServerResponse) {
   };
 }
 
+async function pathExists(filePath: string) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveHandler(apiPathname: string) {
   const relativeApiPath = apiPathname.replace(/^\/api\//, '');
-  const filePath = path.join(projectRoot, 'api', `${relativeApiPath}.ts`);
+  const exactPath = path.join(projectRoot, 'api', `${relativeApiPath}.ts`);
+  let filePath = exactPath;
+
+  if (!(await pathExists(exactPath))) {
+    const segments = relativeApiPath.split('/').filter(Boolean);
+    let matchedCatchAllPath: string | null = null;
+
+    for (let index = segments.length; index >= 1; index -= 1) {
+      const candidatePath = path.join(
+        projectRoot,
+        'api',
+        ...segments.slice(0, index),
+        '[[...path]].ts'
+      );
+
+      if (await pathExists(candidatePath)) {
+        matchedCatchAllPath = candidatePath;
+        break;
+      }
+    }
+
+    if (!matchedCatchAllPath) {
+      throw new Error(`API handler not found for ${apiPathname}`);
+    }
+
+    filePath = matchedCatchAllPath;
+  }
+
   const moduleUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}`;
   const mod = await import(moduleUrl);
   return mod.default;

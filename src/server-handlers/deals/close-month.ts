@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
-import { requireAuthenticatedProfile, requireDashboardAccess } from '../_lib/auth.js';
+import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 
 type DealRow = {
   id: string;

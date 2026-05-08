@@ -1,9 +1,9 @@
 
 
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
-import { toDateString } from '../../src/lib/dateUtils.js';
-import { requireAuthenticatedProfile, requireDashboardAccess } from '../_lib/auth.js';
-import { fetchRegionalSalesRows } from '../_lib/regionalReads.js';
+import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
+import { toDateString } from '../../lib/dateUtils.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
+import { fetchRegionalSalesRows } from '../../../api/_lib/regionalReads.js';
 
 type Granularity = 'all' | 'department' | 'individual';
 

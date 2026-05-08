@@ -1,10 +1,10 @@
 
 
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
-import { similarity } from '../../src/lib/mergeUtils.js';
-import { requireAuthenticatedProfile, requireDashboardAccess } from '../_lib/auth.js';
-import { parseDepartmentId } from '../_lib/regions.js';
-import { syncRegionalSalesImportArtifacts } from '../_lib/salesImport.js';
+import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
+import { similarity } from '../../lib/mergeUtils.js';
+import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
+import { parseDepartmentId } from '../../../api/_lib/regions.js';
+import { syncRegionalSalesImportArtifacts } from '../../../api/_lib/salesImport.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

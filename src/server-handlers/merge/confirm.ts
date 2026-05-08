@@ -1,5 +1,5 @@
-import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
-import { requireAuthenticatedProfile } from '../_lib/auth.js';
+import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
+import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
