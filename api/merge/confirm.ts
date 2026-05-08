@@ -66,6 +66,19 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'candidate reject update failed' });
     }
 
+    const { error: dealUpdateError } = await supabaseAdmin
+      .from('deals')
+      .update({
+        pipeline_stage: 'won',
+        activity_type: 'won',
+      })
+      .eq('prospect_customer_id', prospect_customer_id);
+
+    if (dealUpdateError) {
+      console.error('merge confirm deal update error:', dealUpdateError);
+      return res.status(500).json({ error: 'merged deal update failed' });
+    }
+
     return res.status(200).json({ success: true });
   } catch (error) {
     console.error('merge confirm unexpected error:', error);

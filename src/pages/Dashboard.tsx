@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import {
   PlusCircle, Filter, Calendar, Users,
-  TrendingUp, Target, LogOut, Download
+  TrendingUp, Target, LogOut, Download, Search
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import logoImg from '../assets/M.png';
@@ -611,6 +611,16 @@ export default function Dashboard() {
             <button onClick={() => navigate('/deals/history')}
               className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
               <TrendingUp className="h-4 w-4" />商談履歴
+            </button>
+
+            <button onClick={() => navigate('/deals/progress')}
+              className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+              <Users className="h-4 w-4" />進捗管理
+            </button>
+
+            <button onClick={() => navigate('/crm')}
+              className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+              <Search className="h-4 w-4" />CRM検索
             </button>
 
             <button onClick={() => navigate('/customer-merge')}

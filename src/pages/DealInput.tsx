@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { useState, FormEvent, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { toDateString } from '../lib/dateUtils';
 import { authFetch } from '../lib/authFetch';
@@ -17,10 +17,16 @@ interface Clinic {
   kind: 'customer' | 'prospect';
 }
 
+interface DealInputLocationState {
+  preselectedClinic?: Clinic;
+}
+
 type ContactRole = '院長' | '副院長' | '事務長・経営者' | '技工担当' | '衛生士・スタッフ' | '受付' | 'その他';
 type DecisionMakerContact = 'yes' | 'no' | 'unknown';
 type DealTemperature = 'A' | 'B' | 'C' | 'D' | 'E';
 type NextActionType = '見積提出' | 'サンプル持参' | '再訪問' | '電話フォロー' | 'メール・資料送付' | '院長面談設定' | '保留' | 'なし';
+type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'lost';
+type ExecutedActionType = '訪問' | '電話' | 'メール・資料送付';
 
 const PROPOSAL_CATEGORIES = [
   'CADCAM冠',
@@ -72,9 +78,29 @@ const NEXT_ACTION_OPTIONS: { value: NextActionType; rule: string }[] = [
   { value: 'なし', rule: '明確に追わない、または失注の場合' },
 ];
 
+const PIPELINE_STAGE_OPTIONS: { value: DealPipelineStage; label: string; rule: string }[] = [
+  { value: 'targeting', label: 'ターゲティング', rule: '候補先の選定や情報整理の段階。まだ本格接触前。' },
+  { value: 'visiting', label: '訪問中', rule: '初回訪問や継続接触を進めている段階。' },
+  { value: 'negotiating', label: '交渉中', rule: '提案・見積・サンプル・具体相談まで進んでいる段階。' },
+  { value: 'lost', label: '失注', rule: '今回は追わない、または失注として整理する段階。' },
+];
+
+const EXECUTED_ACTION_OPTIONS: { value: ExecutedActionType; rule: string }[] = [
+  { value: '訪問', rule: '対面訪問や面談を実施した場合' },
+  { value: '電話', rule: '電話で接触・提案・確認を行った場合' },
+  { value: 'メール・資料送付', rule: 'メール連絡や資料送付を主に行った場合' },
+];
+
+function pipelineStageToActivityType(stage: DealPipelineStage) {
+  if (stage === 'negotiating') return 'negotiating';
+  if (stage === 'lost') return 'lost';
+  return 'visit';
+}
+
 export default function DealInput() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [step, setStep] = useState<'clinic' | 'details' | 'success'>('clinic');
   const [searchQuery, setSearchQuery] = useState('');
@@ -86,9 +112,11 @@ export default function DealInput() {
   const [mergeCandidateCount, setMergeCandidateCount] = useState(0);
 
   const [date, setDate] = useState(() => toDateString(new Date()));
+  const [executedActionType, setExecutedActionType] = useState<ExecutedActionType>('訪問');
   const [contactRole, setContactRole] = useState<ContactRole>('院長');
   const [decisionMakerContact, setDecisionMakerContact] = useState<DecisionMakerContact>('unknown');
-  const [proposalCategory, setProposalCategory] = useState<(typeof PROPOSAL_CATEGORIES)[number]>('CADCAM冠');
+  const [pipelineStage, setPipelineStage] = useState<DealPipelineStage>('visiting');
+  const [proposalCategories, setProposalCategories] = useState<string[]>(['CADCAM冠']);
   const [specificProduct, setSpecificProduct] = useState('');
   const [dealTemperature, setDealTemperature] = useState<DealTemperature>('C');
   const [notes, setNotes] = useState('');
@@ -98,6 +126,7 @@ export default function DealInput() {
   const [error, setError] = useState('');
 
   const filteredClinics = clinics;
+  const locationState = location.state as DealInputLocationState | null;
 
   const fetchMergeCandidateCount = async () => {
   try {
@@ -183,6 +212,20 @@ export default function DealInput() {
     fetchClinics();
   }, [searchQuery, user?.id]);
 
+  useEffect(() => {
+    const preselectedClinic = locationState?.preselectedClinic;
+    if (!preselectedClinic) {
+      return;
+    }
+
+    setSelectedClinic(preselectedClinic);
+    setIsCreatingClinic(false);
+    setNewClinicName('');
+    setSearchQuery('');
+    setStep('details');
+    setError('');
+  }, [locationState]);
+
   const handleCreateClinic = async () => {
     const clinicName = newClinicName.trim();
     if (!clinicName || !user?.id) return;
@@ -235,15 +278,24 @@ export default function DealInput() {
       return;
     }
 
+    if (proposalCategories.length === 0) {
+      setError('提案カテゴリを1つ以上選択してください');
+      setIsSubmitting(false);
+      return;
+    }
+
     const payload = {
       user_id: user.id,
       customer_code: selectedClinic.kind === 'customer' ? selectedClinic.id : null,
       prospect_customer_id: selectedClinic.kind === 'prospect' ? selectedClinic.id : null,
       deal_date: date,
-      activity_type: 'visit',
+      activity_type: pipelineStageToActivityType(pipelineStage),
+      pipeline_stage: pipelineStage,
+      executed_action_type: executedActionType,
       contact_role: contactRole,
       decision_maker_contact: decisionMakerContact,
-      proposal_category: proposalCategory,
+      proposal_category: proposalCategories[0] ?? null,
+      proposal_categories: proposalCategories,
       product_name: specificProduct || null,
       deal_temperature: dealTemperature,
       next_action_type: nextActionType,
@@ -284,9 +336,11 @@ export default function DealInput() {
     setSelectedClinic(null);
     setSearchQuery('');
     setDate(toDateString(new Date()));
+    setExecutedActionType('訪問');
     setContactRole('院長');
     setDecisionMakerContact('unknown');
-    setProposalCategory('CADCAM冠');
+    setPipelineStage('visiting');
+    setProposalCategories(['CADCAM冠']);
     setSpecificProduct('');
     setDealTemperature('C');
     setNotes('');
@@ -303,6 +357,21 @@ export default function DealInput() {
     await logout();
     navigate('/login');
   };
+
+  const toggleProposalCategory = (category: string) => {
+    setProposalCategories(current =>
+      current.includes(category)
+        ? current.filter(item => item !== category)
+        : [...current, category]
+    );
+  };
+
+  useEffect(() => {
+    if (pipelineStage === 'lost') {
+      setNextActionType('なし');
+      setNextActionDate('');
+    }
+  }, [pipelineStage]);
 
   return (
     <div className="min-h-screen bg-zinc-200 p-4 sm:p-8">
@@ -484,11 +553,44 @@ export default function DealInput() {
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">選択中の医院</p>
-                    <p className="font-bold text-zinc-900">{selectedClinic.name}</p>
+                    <div className="flex items-center gap-3">
+                      <p className="font-bold text-zinc-900">{selectedClinic.name}</p>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/clinics/${selectedClinic.kind}/${encodeURIComponent(selectedClinic.id)}`)}
+                        className="text-xs font-semibold text-purple-600 hover:text-purple-700"
+                      >
+                        医院ページを見る
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-6">
+
+                  {/* 今回実行したアクション */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      今回実行したアクション <span className="text-red-500">*</span>
+                    </label>
+                    <div className="space-y-2">
+                      {EXECUTED_ACTION_OPTIONS.map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setExecutedActionType(option.value)}
+                          className={`w-full rounded-xl border p-3 text-left transition ${
+                            executedActionType === option.value
+                              ? 'border-purple-400 bg-purple-50 text-purple-700'
+                              : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="block text-sm font-bold">{option.value}</span>
+                          <span className="mt-1 block text-xs leading-relaxed">{option.rule}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
                   {/* 訪問日 */}
                   <div>
@@ -560,16 +662,28 @@ export default function DealInput() {
                     <label className="mb-2 block text-sm font-medium text-zinc-700">
                       提案カテゴリ <span className="text-red-500">*</span>
                     </label>
-                    <select
-                      required
-                      value={proposalCategory}
-                      onChange={e => setProposalCategory(e.target.value as (typeof PROPOSAL_CATEGORIES)[number])}
-                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
-                    >
-                      {PROPOSAL_CATEGORIES.map(category => (
-                        <option key={category} value={category}>{category}</option>
-                      ))}
-                    </select>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {PROPOSAL_CATEGORIES.map(category => {
+                        const selected = proposalCategories.includes(category);
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => toggleProposalCategory(category)}
+                            className={`rounded-xl border px-3 py-3 text-sm font-semibold transition ${
+                              selected
+                                ? 'border-purple-400 bg-purple-50 text-purple-700'
+                                : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                            }`}
+                          >
+                            {category}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                      複数選択可。今回の商談で提案した品目をすべて選んでください。
+                    </p>
                   </div>
 
                   {/* 具体商品 */}
@@ -608,6 +722,33 @@ export default function DealInput() {
                     </div>
                   </div>
 
+                  {/* 進捗 */}
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      進捗 <span className="text-red-500">*</span>
+                    </label>
+                    <div className="space-y-2">
+                      {PIPELINE_STAGE_OPTIONS.map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setPipelineStage(option.value)}
+                          className={`w-full rounded-xl border p-3 text-left transition ${
+                            pipelineStage === option.value
+                              ? 'border-purple-400 bg-purple-50 text-purple-700'
+                              : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100'
+                          }`}
+                        >
+                          <span className="block text-sm font-bold">{option.label}</span>
+                          <span className="mt-1 block text-xs leading-relaxed">{option.rule}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                      受注はここでは選べません。取引先マージが完了した時点で自動的に受注へ移動します。
+                    </p>
+                  </div>
+
                   {/* 内容・メモ */}
                   <div>
                     <label className="mb-2 block text-sm font-medium text-zinc-700">内容・メモ</label>
@@ -627,9 +768,13 @@ export default function DealInput() {
                       required
                       value={nextActionType}
                       onChange={e => setNextActionType(e.target.value as NextActionType)}
+                      disabled={pipelineStage === 'lost'}
                       className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
                     >
-                      {NEXT_ACTION_OPTIONS.map(action => (
+                      {(pipelineStage === 'lost'
+                        ? NEXT_ACTION_OPTIONS.filter(action => action.value === 'なし')
+                        : NEXT_ACTION_OPTIONS
+                      ).map(action => (
                         <option key={action.value} value={action.value}>{action.value}</option>
                       ))}
                     </select>

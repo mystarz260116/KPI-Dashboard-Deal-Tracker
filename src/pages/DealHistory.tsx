@@ -5,13 +5,16 @@ import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, Building2, Search, Filter,
-  TrendingUp, CheckCircle, XCircle, MessageSquare, LayoutDashboard, LogOut
+  TrendingUp, CheckCircle, XCircle, MessageSquare, LayoutDashboard, LogOut, Trash2
 } from 'lucide-react';
 
 interface Deal {
   id: string;
+  clinicId: string;
+  clinicKind: 'customer' | 'prospect';
   clinicName: string;
   activityType: 'visit' | 'proposal' | 'negotiating' | 'won' | 'lost';
+  executedActionType?: string;
   date: string;
   productName?: string;
   amount?: number;
@@ -20,6 +23,7 @@ interface Deal {
   contactRole?: string;
   decisionMakerContact?: 'yes' | 'no' | 'unknown';
   proposalCategory?: string;
+  proposalCategories?: string[];
   dealTemperature?: 'A' | 'B' | 'C' | 'D' | 'E';
   nextActionType?: string;
   nextActionDate?: string;
@@ -63,6 +67,7 @@ export default function DealHistory() {
   const [filterType, setFilterType] = useState<Deal['activityType'] | 'all'>('all');
   const [deals, setDeals] = useState<Deal[]>([]);
   const [error, setError] = useState('');
+  const [deletingDealId, setDeletingDealId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDeals = async () => {
@@ -70,7 +75,7 @@ export default function DealHistory() {
 
       const { data, error } = await supabase
         .from('deals')
-        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, product_name, amount, notes, next_action, contact_role, decision_maker_contact, proposal_category, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
+        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, product_name, amount, notes, next_action, contact_role, decision_maker_contact, proposal_category, proposal_categories, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
         .eq('user_id', user.id)
         .order('deal_date', { ascending: false })
         .order('created_at', { ascending: false });
@@ -86,8 +91,11 @@ export default function DealHistory() {
 
       const results: Deal[] = (data ?? []).map((d: any) => ({
         id: d.id,
+        clinicId: d.customer_code ?? d.prospect_customer_id,
+        clinicKind: d.customer_code ? 'customer' : 'prospect',
         clinicName: d.customers?.name ?? d.prospect_customers?.name ?? d.customer_code ?? d.prospect_customer_id,
         activityType: d.activity_type,
+        executedActionType: d.executed_action_type ?? undefined,
         date: d.deal_date,
         productName: d.product_name ?? undefined,
         amount: d.amount ?? undefined,
@@ -96,6 +104,7 @@ export default function DealHistory() {
         contactRole: d.contact_role ?? undefined,
         decisionMakerContact: d.decision_maker_contact ?? undefined,
         proposalCategory: d.proposal_category ?? undefined,
+        proposalCategories: Array.isArray(d.proposal_categories) ? d.proposal_categories : undefined,
         dealTemperature: d.deal_temperature ?? undefined,
         nextActionType: d.next_action_type ?? undefined,
         nextActionDate: d.next_action_date ?? undefined,
@@ -116,6 +125,36 @@ export default function DealHistory() {
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  const handleDeleteDeal = async (deal: Deal) => {
+    const shouldDelete = window.confirm(`「${deal.clinicName}」の商談履歴を削除しますか？`);
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingDealId(deal.id);
+    setError('');
+
+    try {
+      const { error: deleteError } = await supabase
+        .from('deals')
+        .delete()
+        .eq('id', deal.id);
+
+      if (deleteError) {
+        console.error('deal delete error:', deleteError);
+        setError('商談履歴の削除に失敗しました');
+        return;
+      }
+
+      setDeals((current) => current.filter((currentDeal) => currentDeal.id !== deal.id));
+    } catch (deleteUnexpectedError) {
+      console.error('deal delete unexpected error:', deleteUnexpectedError);
+      setError('商談履歴の削除に失敗しました');
+    } finally {
+      setDeletingDealId(null);
+    }
   };
 
   return (
@@ -199,27 +238,55 @@ export default function DealHistory() {
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Building2 className="h-4 w-4 text-zinc-400" />
-                    <span className="font-bold text-zinc-900">{deal.clinicName}</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/clinics/${deal.clinicKind}/${encodeURIComponent(deal.clinicId)}`)}
+                      className="font-bold text-zinc-900 hover:text-purple-600"
+                    >
+                      {deal.clinicName}
+                    </button>
                   </div>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ACTIVITY_COLORS[deal.activityType]}`}>
-                    {ACTIVITY_LABELS[deal.activityType]}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {deal.executedActionType && (
+                      <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                        {deal.executedActionType}
+                      </span>
+                    )}
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ACTIVITY_COLORS[deal.activityType]}`}>
+                      {ACTIVITY_LABELS[deal.activityType]}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDeal(deal)}
+                      disabled={deletingDealId === deal.id}
+                      className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                      aria-label="商談履歴を削除"
+                      title="商談履歴を削除"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <p className="mb-2 text-xs text-zinc-400">{deal.date}</p>
 
-                {(deal.dealTemperature || deal.proposalCategory || deal.contactRole || deal.decisionMakerContact) && (
+                {(deal.dealTemperature || deal.proposalCategory || deal.proposalCategories?.length || deal.contactRole || deal.decisionMakerContact) && (
                   <div className="mb-3 flex flex-wrap gap-2">
                     {deal.dealTemperature && (
                       <span className="rounded-full bg-purple-50 px-2 py-1 text-xs font-semibold text-purple-700">
                         {TEMPERATURE_LABELS[deal.dealTemperature]}
                       </span>
                     )}
-                    {deal.proposalCategory && (
-                      <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-                        {deal.proposalCategory}
+                    {(deal.proposalCategories?.length
+                      ? deal.proposalCategories
+                      : deal.proposalCategory
+                        ? [deal.proposalCategory]
+                        : []
+                    ).map(category => (
+                      <span key={category} className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        {category}
                       </span>
-                    )}
+                    ))}
                     {deal.contactRole && (
                       <span className="rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600">
                         接触相手：{deal.contactRole}
