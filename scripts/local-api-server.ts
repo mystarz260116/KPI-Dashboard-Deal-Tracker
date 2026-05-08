@@ -107,6 +107,18 @@ async function resolveHandler(apiPathname: string) {
     let matchedCatchAllPath: string | null = null;
 
     for (let index = segments.length; index >= 1; index -= 1) {
+      const requiredCatchAllPath = path.join(
+        projectRoot,
+        'api',
+        ...segments.slice(0, index),
+        '[...path].ts'
+      );
+
+      if (await pathExists(requiredCatchAllPath)) {
+        matchedCatchAllPath = requiredCatchAllPath;
+        break;
+      }
+
       const candidatePath = path.join(
         projectRoot,
         'api',
