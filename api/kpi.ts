@@ -10,9 +10,28 @@ import {
   fetchCustomerCodesByProfileId,
   fetchRegionalSalesTotal,
 } from './_lib/regionalReads.js';
+import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
 
 
 type Granularity = 'all' | 'department' | 'individual';
+
+function normalizeRoutePath(pathValue: string | string[] | undefined) {
+  if (Array.isArray(pathValue)) {
+    return pathValue.join('/');
+  }
+
+  return pathValue ?? '';
+}
+
+function getKpiRoute(req: any) {
+  const queryRoute = normalizeRoutePath(req.query?.path as string | string[] | undefined);
+  if (queryRoute) {
+    return queryRoute.replace(/^\/+|\/+$/g, '');
+  }
+
+  const pathname = new URL(req.url ?? '/api/kpi', 'http://localhost').pathname;
+  return pathname.replace(/^\/api\/kpi\/?/, '');
+}
 
 async function fetchSalesImportRowsTotal(
   startDate: string,
@@ -47,6 +66,12 @@ function getPreviousYearRange(start: Date, endExclusive: Date) {
 }
 
 export default async function handler(req: any, res: any) {
+  const route = getKpiRoute(req);
+
+  if (route === 'new-orders') {
+    return newOrdersHandler(req, res);
+  }
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

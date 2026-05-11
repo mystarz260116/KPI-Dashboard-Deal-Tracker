@@ -1,8 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import syncAndGenerateHandler from '../../src/server-handlers/customers/sync-and-generate-merge-candidates.js';
-import syncFromSalesImportHandler from '../../src/server-handlers/customers/sync-from-sales-import.js';
+import syncAndGenerateHandler from '../src/server-handlers/customers/sync-and-generate-merge-candidates.js';
+import syncFromSalesImportHandler from '../src/server-handlers/customers/sync-from-sales-import.js';
+
+function normalizeRoutePath(pathValue: string | string[] | undefined) {
+  if (Array.isArray(pathValue)) {
+    return pathValue.join('/');
+  }
+
+  return pathValue ?? '';
+}
 
 function getCustomersRoute(req: VercelRequest) {
+  const queryRoute = normalizeRoutePath(req.query?.path as string | string[] | undefined);
+  if (queryRoute) {
+    return queryRoute.replace(/^\/+|\/+$/g, '');
+  }
+
   const pathname = new URL(req.url ?? '/api/customers', 'http://localhost').pathname;
   return pathname.replace(/^\/api\/customers\/?/, '');
 }
