@@ -1,5 +1,5 @@
 const isBrowser = typeof window !== 'undefined';
-const enabled = isBrowser && import.meta.env.DEV;
+const enabled = isBrowser;
 
 export function perfMark(name: string) {
   if (!enabled) return;

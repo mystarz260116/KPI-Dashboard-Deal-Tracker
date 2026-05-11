@@ -27,6 +27,16 @@ interface DepartmentOption {
   name: string;
 }
 
+interface PerfStats {
+  usersMs: number;
+  usersStatus: number;
+  departmentsMs: number;
+  departmentsStatus: number;
+  kpiMs: number;
+  kpiStatus: number;
+  totalMs: number;
+}
+
 const COLORS = ['#6366f1', '#10b981'];
 
 interface SectionTitleProps { title: string; color: string; }
@@ -169,7 +179,11 @@ export default function Dashboard() {
   const [importedAtInput, setImportedAtInput] = useState(() => formatImportDatetimeInput(new Date()));
   const [perfStats, setPerfStats] = useState<{
     usersMs: number;
+    usersStatus: number;
+    departmentsMs: number;
+    departmentsStatus: number;
     kpiMs: number;
+    kpiStatus: number;
     totalMs: number;
   } | null>(null);
 
@@ -226,6 +240,29 @@ export default function Dashboard() {
 
       try {
         const totalStart = perfNow();
+        const readPayload = async (res: Response) => {
+          const contentType = res.headers.get('content-type') ?? '';
+
+          if (contentType.includes('application/json')) {
+            return await res.json();
+          }
+
+          return await res.text();
+        };
+
+        const fetchWithTiming = async (url: string) => {
+          const start = perfNow();
+          const res = await authFetch(url);
+          const payload = await readPayload(res);
+
+          return {
+            res,
+            data: payload,
+            ms: perfNow() - start,
+            contentType: res.headers.get('content-type') ?? '',
+          };
+        };
+
         const params = new URLSearchParams({
           period: appliedPeriod,
           granularity: appliedGranularity,
@@ -236,28 +273,34 @@ export default function Dashboard() {
         if (appliedDept) params.set('departmentId', appliedDept);
         if (appliedUser) params.set('userId', appliedUser);
 
-        const usersStart = perfNow();
-        const usersPromise = authFetch('/api/users').then(async (res) => ({
-          res,
-          data: await res.json(),
-          ms: perfNow() - usersStart,
-        }));
-        const departmentsPromise = authFetch('/api/departments').then(async (res) => ({
-          res,
-          data: await res.json(),
-        }));
-        const kpiStart = perfNow();
-        const kpiPromise = authFetch(`/api/kpi?${params.toString()}`).then(async (res) => ({
-          res,
-          data: await res.json(),
-          ms: perfNow() - kpiStart,
-        }));
+        const usersPromise = fetchWithTiming('/api/users');
+        const departmentsPromise = fetchWithTiming('/api/departments');
+        const kpiPromise = fetchWithTiming(`/api/kpi?${params.toString()}`);
 
         const [usersResult, departmentsResult, kpiResult] = await Promise.all([
           usersPromise,
           departmentsPromise,
           kpiPromise,
         ]);
+
+        const totalMs = perfNow() - totalStart;
+
+        if (isPerfEnabled()) {
+          const nextPerfStats: PerfStats = {
+            usersMs: usersResult.ms,
+            usersStatus: usersResult.res.status,
+            departmentsMs: departmentsResult.ms,
+            departmentsStatus: departmentsResult.res.status,
+            kpiMs: kpiResult.ms,
+            kpiStatus: kpiResult.res.status,
+            totalMs,
+          };
+
+          setPerfStats(nextPerfStats);
+          console.info(
+            `[perf] dashboard users=${usersResult.ms.toFixed(1)}ms (${usersResult.res.status}) departments=${departmentsResult.ms.toFixed(1)}ms (${departmentsResult.res.status}) kpi=${kpiResult.ms.toFixed(1)}ms (${kpiResult.res.status}) total=${totalMs.toFixed(1)}ms`
+          );
+        }
 
         if (!usersResult.res.ok) {
           throw new Error('users fetch failed');
@@ -279,25 +322,12 @@ export default function Dashboard() {
         setUsers(usersData);
         setDepartments(departmentsData);
         setData(kpiData);
-
-        if (isPerfEnabled()) {
-          const totalMs = perfNow() - totalStart;
-          setPerfStats({
-            usersMs: usersResult.ms,
-            kpiMs: kpiResult.ms,
-            totalMs,
-          });
-          console.info(
-            `[perf] dashboard users=${usersResult.ms.toFixed(1)}ms kpi=${kpiResult.ms.toFixed(1)}ms total=${totalMs.toFixed(1)}ms`
-          );
-        }
       } catch (err) {
         console.error('dashboard fetch error:', err);
         setError('ダッシュボードの取得に失敗しました');
         setUsers([]);
         setDepartments([]);
         setData(null);
-        setPerfStats(null);
       } finally {
         setIsLoading(false);
       }
@@ -648,7 +678,7 @@ export default function Dashboard() {
       <main className="mx-auto max-w-7xl px-6 py-8">
         {perfStats && (
           <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 shadow-sm">
-            users API: {perfStats.usersMs.toFixed(0)}ms / kpi API: {perfStats.kpiMs.toFixed(0)}ms / total: {perfStats.totalMs.toFixed(0)}ms
+            users API: {perfStats.usersMs.toFixed(0)}ms ({perfStats.usersStatus}) / departments API: {perfStats.departmentsMs.toFixed(0)}ms ({perfStats.departmentsStatus}) / kpi API: {perfStats.kpiMs.toFixed(0)}ms ({perfStats.kpiStatus}) / total: {perfStats.totalMs.toFixed(0)}ms
           </div>
         )}
         {importResultMessage && (
