@@ -1,11 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import candidatesHandler from '../../src/server-handlers/merge/candidates.js';
-import candidatesCountHandler from '../../src/server-handlers/merge/candidates-count.js';
-import confirmHandler from '../../src/server-handlers/merge/confirm.js';
-import generateCandidatesHandler from '../../src/server-handlers/merge/generate-candidates.js';
-import rejectHandler from '../../src/server-handlers/merge/reject.js';
+import candidatesHandler from '../src/server-handlers/merge/candidates.js';
+import candidatesCountHandler from '../src/server-handlers/merge/candidates-count.js';
+import confirmHandler from '../src/server-handlers/merge/confirm.js';
+import generateCandidatesHandler from '../src/server-handlers/merge/generate-candidates.js';
+import rejectHandler from '../src/server-handlers/merge/reject.js';
+
+function normalizeRoutePath(pathValue: string | string[] | undefined) {
+  if (Array.isArray(pathValue)) {
+    return pathValue.join('/');
+  }
+
+  return pathValue ?? '';
+}
 
 function getMergeRoute(req: VercelRequest) {
+  const queryRoute = normalizeRoutePath(req.query?.path as string | string[] | undefined);
+  if (queryRoute) {
+    return queryRoute.replace(/^\/+|\/+$/g, '');
+  }
+
   const pathname = new URL(req.url ?? '/api/merge', 'http://localhost').pathname;
   return pathname.replace(/^\/api\/merge\/?/, '');
 }

@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/api/deals/(.*)", "destination": "/api/deals?path=$1" },
+    { "source": "/api/merge/(.*)", "destination": "/api/merge?path=$1" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/@vite/(.*)", "destination": "/@vite/$1" },
     { "source": "/@react-refresh", "destination": "/@react-refresh" },

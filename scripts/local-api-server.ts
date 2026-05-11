@@ -104,6 +104,20 @@ async function resolveHandler(apiPathname: string) {
 
   if (!(await pathExists(exactPath))) {
     const segments = relativeApiPath.split('/').filter(Boolean);
+
+    if (segments.length > 1) {
+      const topLevelPath = path.join(projectRoot, 'api', `${segments[0]}.ts`);
+      if (await pathExists(topLevelPath)) {
+        filePath = topLevelPath;
+      }
+    }
+
+    if (filePath !== exactPath) {
+      const moduleUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}`;
+      const mod = await import(moduleUrl);
+      return mod.default;
+    }
+
     let matchedCatchAllPath: string | null = null;
 
     for (let index = segments.length; index >= 1; index -= 1) {
