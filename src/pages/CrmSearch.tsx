@@ -31,6 +31,8 @@ interface DealSummaryRow {
 export default function CrmSearch() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const homePath = user?.can_view_dashboard ? '/dashboard' : '/deals/new';
+  const homeLabel = user?.can_view_dashboard ? 'ダッシュボード' : '商談入力';
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SearchFilter>('all');
@@ -205,11 +207,11 @@ export default function CrmSearch() {
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 flex items-center justify-between">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(homePath)}
             className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
           >
             <ArrowLeft className="mr-1 h-4 w-4" />
-            ダッシュボード
+            {homeLabel}
           </button>
           <h1 className="text-lg font-bold text-zinc-900">CRM検索</h1>
           <button

@@ -2,7 +2,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
-import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth.js';
+import { requireAuthenticatedProfile } from './_lib/auth.js';
 
 export default async function handler(_req: VercelRequest, res: VercelResponse) {
   if (_req.method !== 'GET') {
@@ -12,7 +12,6 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
   try {
     const profile = await requireAuthenticatedProfile(_req, res);
     if (!profile) return;
-    if (!requireDashboardAccess(profile, res)) return;
 
     const { data, error } = await supabaseAdmin
       .from('profiles')

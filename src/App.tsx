@@ -27,12 +27,13 @@ function AuthRedirect({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const homePath = isMobile || !user?.can_view_dashboard ? '/deals/new' : '/dashboard';
 
   useEffect(() => {
     if (!isLoading && user) {
-      navigate(isMobile ? '/deals/new' : '/dashboard');
+      navigate(homePath);
     }
-  }, [user, isLoading, navigate, isMobile]);
+  }, [user, isLoading, navigate, homePath]);
 
   if (isLoading) return (
     <div className="flex h-screen items-center justify-center">

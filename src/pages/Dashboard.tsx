@@ -625,7 +625,7 @@ export default function Dashboard() {
 
             <button onClick={() => navigate('/customer-merge')}
               className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100">
-              <Target className="h-4 w-4" />取引先マージ
+              <Target className="h-4 w-4" />受注確認
               {!isMergeCountLoading && pendingMergeCount > 0 && (
                 <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
                   {pendingMergeCount}
@@ -663,7 +663,7 @@ export default function Dashboard() {
             className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm"
           >
             <div>
-              未対応の取引先マージ候補が <span className="font-bold">{pendingMergeCount}件</span> あります。
+              未対応の受注確認候補が <span className="font-bold">{pendingMergeCount}件</span> あります。
             </div>
             <button
               onClick={() => navigate('/customer-merge')}

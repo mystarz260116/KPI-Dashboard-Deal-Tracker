@@ -32,7 +32,7 @@ export async function fetchRegionalSalesRows(filters: SalesRowFilters) {
 }
 
 export async function fetchRegionalSalesTotal(filters: SalesRowFilters) {
-  const { data, error } = await supabaseAdmin.rpc('sum_sales_import_rows_amount', {
+  const { data, error } = await supabaseAdmin.rpc('sum_sales_import_raw_rows_amount', {
     p_start_date: filters.startDate,
     p_end_date: filters.endExclusiveDate,
     p_customer_codes: filters.customerCodes && filters.customerCodes.length > 0

@@ -80,8 +80,14 @@ export default function Signup() {
         return;
       }
 
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('can_view_dashboard')
+        .eq('id', signInData.user.id)
+        .single();
+
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      navigate(isMobile ? '/deals/new' : '/dashboard');
+      navigate(isMobile || !profileData?.can_view_dashboard ? '/deals/new' : '/dashboard');
     } catch (err) {
       setError('サーバーとの通信に失敗しました');
     } finally {

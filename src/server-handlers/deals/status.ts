@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
-import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
+import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 
 const ALLOWED_PIPELINE_STAGES = new Set(['targeting', 'visiting', 'negotiating', 'lost']);
 
@@ -35,7 +35,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const profile = await requireAuthenticatedProfile(req, res);
     if (!profile) return;
-    if (!requireDashboardAccess(profile, res)) return;
 
     const dealId = String(req.body?.deal_id ?? '').trim();
     const pipelineStage = String(req.body?.pipeline_stage ?? '').trim();
@@ -47,13 +46,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: sourceDeal, error: sourceDealError } = await supabaseAdmin
       .from('deals')
-      .select('id, deal_date, customer_code, prospect_customer_id')
+      .select('id, user_id, deal_date, customer_code, prospect_customer_id')
       .eq('id', dealId)
       .single();
 
     if (sourceDealError || !sourceDeal) {
       console.error('deal status source fetch error:', sourceDealError);
       return res.status(404).json({ error: 'deal not found' });
+    }
+
+    const canEditDeal = profile.role === 'admin' || sourceDeal.user_id === profile.id;
+    if (!canEditDeal) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     const boardMonthStart = `${boardMonth}-01`;

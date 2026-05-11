@@ -179,7 +179,7 @@ export default async function handler(req: any, res: any) {
 
     const { data: currentDeals, error: currentDealsError } = await supabaseAdmin
       .from('deals')
-      .select('id, user_id, customer_code, prospect_customer_id, deal_date, activity_type, amount, created_at, customers(name), prospect_customers(name)')
+      .select('id, user_id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, amount, created_at, customers(name), prospect_customers(name)')
       .gte('deal_date', currentStart)
       .lt('deal_date', currentEnd);
 
@@ -224,7 +224,7 @@ export default async function handler(req: any, res: any) {
 
     let budgetsQuery = supabaseAdmin
       .from('budgets')
-      .select('user_id, department_id, target_year_month, target_amount')
+      .select('user_id, external_staff_code, department_id, target_year_month, target_amount')
       .in('target_year_month', targetYearMonths);
 
     if (granularity === 'department' && allowedDepartmentIds.length > 0) {
@@ -306,7 +306,11 @@ export default async function handler(req: any, res: any) {
       const user = users.find((u) => u.id === d.user_id);
       if (!user) return;
 
-      if (d.activity_type === 'visit') {
+      const isVisitAction = d.executed_action_type
+        ? d.executed_action_type === '訪問'
+        : d.activity_type === 'visit';
+
+      if (isVisitAction) {
         visitRankingMap.set(user.name, (visitRankingMap.get(user.name) ?? 0) + 1);
       }
     });

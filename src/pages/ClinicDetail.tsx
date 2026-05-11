@@ -104,7 +104,6 @@ export default function ClinicDetail() {
         const dealsQuery = supabase
           .from('deals')
           .select('id, deal_date, notes, next_action, next_action_date, next_action_type, contact_role, decision_maker_contact, deal_temperature, proposal_category, proposal_categories, product_name, created_at')
-          .eq('user_id', user.id)
           .order('deal_date', { ascending: false })
           .order('created_at', { ascending: false });
 

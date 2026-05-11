@@ -71,7 +71,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .from('prospect_customers')
         .select('id, name, status, merged_customer_code, created_at')
         .eq('id', clinicId)
-        .eq('created_by', profile.id)
         .single();
 
       if (error || !data) {

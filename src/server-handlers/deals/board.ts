@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
-import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
+import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 
 type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'won' | 'lost';
 type DealLifecycle = 'all' | 'new' | 'existing';
@@ -221,7 +221,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const profile = await requireAuthenticatedProfile(req, res);
     if (!profile) return;
-    if (!requireDashboardAccess(profile, res)) return;
 
     const month = parseMonth(req.query.month);
     const { start, end } = getMonthRange(month);

@@ -91,7 +91,7 @@ export default function CustomerMerge() {
       <header className="sticky top-0 z-10 flex flex-col gap-3 border-b border-zinc-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div className="flex min-w-0 items-center gap-2">
           <GitMerge className="h-5 w-5 text-indigo-600" />
-          <h1 className="truncate text-base font-bold text-zinc-800 sm:text-lg">取引先マージ</h1>
+          <h1 className="truncate text-base font-bold text-zinc-800 sm:text-lg">受注確認</h1>
           {candidates.length > 0 && (
             <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-bold text-white">
               {candidates.length}
@@ -132,7 +132,7 @@ export default function CustomerMerge() {
             className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center shadow-sm sm:py-20"
           >
             <CheckCircle className="mb-4 h-12 w-12 text-emerald-500" />
-            <p className="text-lg font-semibold text-zinc-700">マージ候補はありません</p>
+            <p className="text-lg font-semibold text-zinc-700">受注確認候補はありません</p>
             <p className="mt-1 text-sm text-zinc-400">CSV取込後に同期処理を実行してください</p>
           </motion.div>
         )}
@@ -180,7 +180,7 @@ export default function CustomerMerge() {
                             ) : (
                               <GitMerge className="h-3.5 w-3.5" />
                             )}
-                            マージ
+                            受注確認
                           </button>
 
                           <button
@@ -236,14 +236,14 @@ export default function CustomerMerge() {
                         onClick={() => handleMerge(c.prospect_customer_id, c.customer_code)}
                         disabled={merging === c.prospect_customer_id || rejecting === c.prospect_customer_id}
                         className="flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                      >
-                        {merging === c.prospect_customer_id ? (
-                          <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                        ) : (
-                          <GitMerge className="h-3.5 w-3.5" />
-                        )}
-                        マージ
-                      </button>
+                          >
+                            {merging === c.prospect_customer_id ? (
+                              <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                            ) : (
+                              <GitMerge className="h-3.5 w-3.5" />
+                            )}
+                            受注確認
+                          </button>
 
                       <button
                         onClick={() => handleReject(c.prospect_customer_id, c.customer_code)}

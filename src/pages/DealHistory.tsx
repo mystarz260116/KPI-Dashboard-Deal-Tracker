@@ -4,8 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import {
-  ArrowLeft, Building2, Search, Filter,
-  TrendingUp, CheckCircle, XCircle, MessageSquare, LayoutDashboard, LogOut, Trash2
+  ArrowLeft, Building2, Search, CalendarDays, ChevronLeft, ChevronRight,
+  MessageSquare, LayoutDashboard, LogOut, Trash2
 } from 'lucide-react';
 
 interface Deal {
@@ -59,12 +59,39 @@ const TEMPERATURE_LABELS: Record<NonNullable<Deal['dealTemperature']>, string> =
   E: 'E 失注・拒否',
 };
 
+function getCurrentMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(value: string) {
+  const [year, month] = value.split('-');
+  return `${year}年${Number(month)}月`;
+}
+
+function shiftMonth(value: string, diff: number) {
+  const [year, month] = value.split('-').map(Number);
+  const date = new Date(year, month - 1 + diff, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getMonthRange(value: string) {
+  const [year, month] = value.split('-').map(Number);
+  const start = `${value}-01`;
+  const nextMonth = new Date(year, month, 1);
+  const endExclusive = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+  return { start, endExclusive };
+}
+
 export default function DealHistory() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const homePath = user?.can_view_dashboard ? '/dashboard' : '/deals/new';
+  const homeLabel = user?.can_view_dashboard ? 'ダッシュボード' : '商談入力';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<Deal['activityType'] | 'all'>('all');
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [error, setError] = useState('');
   const [deletingDealId, setDeletingDealId] = useState<string | null>(null);
@@ -73,12 +100,19 @@ export default function DealHistory() {
     const fetchDeals = async () => {
       if (!user?.id) return;
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('deals')
         .select('id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, product_name, amount, notes, next_action, contact_role, decision_maker_contact, proposal_category, proposal_categories, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
-        .eq('user_id', user.id)
+        .gte('deal_date', getMonthRange(selectedMonth).start)
+        .lt('deal_date', getMonthRange(selectedMonth).endExclusive)
         .order('deal_date', { ascending: false })
         .order('created_at', { ascending: false });
+
+      if (user.role !== 'admin') {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error('deal history fetch error:', error);
@@ -114,7 +148,7 @@ export default function DealHistory() {
     };
 
     fetchDeals();
-  }, [user?.id]);
+  }, [selectedMonth, user?.id, user?.role]);
 
   const filtered = deals.filter(d => {
     const matchSearch = searchQuery === '' || d.clinicName.includes(searchQuery);
@@ -164,11 +198,11 @@ export default function DealHistory() {
         {/* ヘッダー */}
         <div className="mb-6 flex items-center justify-between">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(homePath)}
             className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
           >
             <ArrowLeft className="mr-1 h-4 w-4" />
-            ダッシュボード
+            {homeLabel}
           </button>
           <h1 className="text-lg font-bold text-zinc-900">商談履歴</h1>
           <button
@@ -184,6 +218,37 @@ export default function DealHistory() {
 
         {/* 検索・フィルター */}
         <div className="mb-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm border border-zinc-200">
+          <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((current) => shiftMonth(current, -1))}
+              className="rounded-lg p-2 text-zinc-500 transition hover:bg-white hover:text-zinc-900"
+              aria-label="前月へ"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">対象月</p>
+              <p className="text-sm font-semibold text-zinc-900">{formatMonthLabel(selectedMonth)}</p>
+            </div>
+            <label className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-zinc-600 shadow-sm">
+              <CalendarDays className="h-4 w-4 text-zinc-400" />
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="bg-transparent text-sm text-zinc-700 outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((current) => shiftMonth(current, 1))}
+              className="rounded-lg p-2 text-zinc-500 transition hover:bg-white hover:text-zinc-900"
+              aria-label="翌月へ"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
             <input
@@ -339,10 +404,10 @@ export default function DealHistory() {
             新しい商談を入力する
           </button>
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(homePath)}
             className="flex w-full items-center justify-center rounded-xl border border-zinc-200 bg-white py-4 font-bold text-zinc-600 transition hover:bg-zinc-50"
           >
-            <LayoutDashboard className="mr-2 h-5 w-5" />ダッシュボードへ
+            <LayoutDashboard className="mr-2 h-5 w-5" />{homeLabel}へ
           </button>
         </div>
 

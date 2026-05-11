@@ -52,7 +52,7 @@ const COLUMNS: Array<{ key: DealPipelineStage; title: string; accent: string; bg
   { key: 'targeting', title: 'ターゲティング', accent: '#8b5cf6', bg: 'bg-violet-50', hint: '候補先の選定・情報整理段階', editable: true },
   { key: 'visiting', title: '訪問中', accent: '#f59e0b', bg: 'bg-amber-50', hint: '初回訪問や継続接触を進めている段階', editable: true },
   { key: 'negotiating', title: '交渉中', accent: '#06b6d4', bg: 'bg-cyan-50', hint: '提案・見積・具体相談が進んでいる段階', editable: true },
-  { key: 'won', title: '受注', accent: '#10b981', bg: 'bg-emerald-50', hint: '取引先マージ完了後に自動で移動', editable: false },
+  { key: 'won', title: '受注', accent: '#10b981', bg: 'bg-emerald-50', hint: '受注確認完了後に自動で移動', editable: false },
   { key: 'lost', title: '失注', accent: '#ef4444', bg: 'bg-rose-50', hint: '見送り・失注。担当者が手動で更新', editable: true },
 ];
 
@@ -75,6 +75,9 @@ function formatMonthLabel(value: string) {
 export default function DealProgressDashboard() {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
+  const homePath = user?.can_view_dashboard ? '/dashboard' : '/deals/new';
+  const homeLabel = user?.can_view_dashboard ? 'ダッシュボード' : '商談入力';
+  const isRestrictedUser = Boolean(user && user.role !== 'admin' && !user.can_view_dashboard);
 
   const [month, setMonth] = useState(currentMonth());
   const [lifecycle, setLifecycle] = useState<DealLifecycle>('all');
@@ -89,6 +92,7 @@ export default function DealProgressDashboard() {
   const [isClosingMonth, setIsClosingMonth] = useState(false);
   const [draggingDealId, setDraggingDealId] = useState<string | null>(null);
   const [updatingDealId, setUpdatingDealId] = useState<string | null>(null);
+  const [didInitializeUserFilter, setDidInitializeUserFilter] = useState(false);
 
   useEffect(() => {
     const loadFilters = async () => {
@@ -117,6 +121,18 @@ export default function DealProgressDashboard() {
 
     loadFilters();
   }, []);
+
+  useEffect(() => {
+    if (!didInitializeUserFilter && isRestrictedUser && user?.id) {
+      setSelectedUserId(user.id);
+      setDidInitializeUserFilter(true);
+      return;
+    }
+
+    if (!didInitializeUserFilter && !isRestrictedUser) {
+      setDidInitializeUserFilter(true);
+    }
+  }, [didInitializeUserFilter, isRestrictedUser, user?.id]);
 
   useEffect(() => {
     const loadDeals = async () => {
@@ -177,6 +193,12 @@ export default function DealProgressDashboard() {
     existingCount: deals.filter((deal) => deal.lifecycle === 'existing').length,
   }), [deals]);
 
+  const canEditDeal = (deal: BoardDeal) => (
+    !isClosed
+    && deal.pipeline_stage !== 'won'
+    && (user?.role === 'admin' || deal.user_id === user?.id)
+  );
+
   const handleLogout = async () => {
     await logout();
     navigate('/login');
@@ -188,7 +210,7 @@ export default function DealProgressDashboard() {
     }
 
     const targetDeal = deals.find((deal) => deal.id === draggingDealId);
-    if (!targetDeal || targetDeal.pipeline_stage === nextStatus) {
+    if (!targetDeal || targetDeal.pipeline_stage === nextStatus || !canEditDeal(targetDeal)) {
       setDraggingDealId(null);
       return;
     }
@@ -216,11 +238,16 @@ export default function DealProgressDashboard() {
       });
 
       if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error('forbidden');
+        }
         throw new Error('deal status update failed');
       }
     } catch (updateError) {
       console.error('progress dashboard deal status error:', updateError);
-      setError('ステータス更新に失敗しました');
+      setError(updateError instanceof Error && updateError.message === 'forbidden'
+        ? '他担当の商談ステータスは変更できません'
+        : 'ステータス更新に失敗しました');
       setDeals((current) => current.map((deal) => (
         deal.id === targetDeal.id
           ? { ...deal, pipeline_stage: previousStatus }
@@ -267,11 +294,11 @@ export default function DealProgressDashboard() {
       <div className="mx-auto max-w-[1500px]">
         <div className="mb-6 flex items-center justify-between">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(homePath)}
             className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
           >
             <ArrowLeft className="mr-1 h-4 w-4" />
-            ダッシュボード
+            {homeLabel}
           </button>
           <h1 className="flex items-center gap-2 text-lg font-bold text-zinc-900">
             <LayoutDashboard className="h-5 w-5 text-purple-600" />
@@ -445,9 +472,9 @@ export default function DealProgressDashboard() {
                         <motion.div
                           key={deal.id}
                           layout
-                          draggable={!isClosed && deal.pipeline_stage !== 'won'}
+                          draggable={canEditDeal(deal)}
                           onDragStart={() => {
-                            if (!isClosed && deal.pipeline_stage !== 'won') {
+                            if (canEditDeal(deal)) {
                               setDraggingDealId(deal.id);
                             }
                           }}
@@ -484,6 +511,11 @@ export default function DealProgressDashboard() {
                             {deal.pipeline_stage === 'won' && (
                               <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
                                 自動受注
+                              </span>
+                            )}
+                            {!canEditDeal(deal) && (
+                              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
+                                閲覧のみ
                               </span>
                             )}
                             {categories.slice(0, 2).map((category) => (

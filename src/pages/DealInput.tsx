@@ -101,6 +101,7 @@ export default function DealInput() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const canViewDashboard = user?.can_view_dashboard ?? false;
 
   const [step, setStep] = useState<'clinic' | 'details' | 'success'>('clinic');
   const [searchQuery, setSearchQuery] = useState('');
@@ -373,6 +374,12 @@ export default function DealInput() {
     }
   }, [pipelineStage]);
 
+  const shortcutButtons = [
+    { label: '案件の進捗管理', path: '/deals/progress' },
+    { label: 'CRM検索', path: '/crm' },
+    { label: '商談履歴', path: '/deals/history' },
+  ];
+
   return (
     <div className="min-h-screen bg-zinc-200 p-4 sm:p-8">
       <div className="mx-auto max-w-xl">
@@ -380,13 +387,27 @@ export default function DealInput() {
         {/* ヘッダー */}
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => step === 'details' ? setStep('clinic') : navigate('/dashboard')}
-              className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
-            >
-              <ArrowLeft className="mr-1 h-4 w-4" />
-              {step === 'details' ? '医院選択に戻る' : 'ダッシュボード'}
-            </button>
+            {step === 'details' ? (
+              <button
+                onClick={() => setStep('clinic')}
+                className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
+              >
+                <ArrowLeft className="mr-1 h-4 w-4" />
+                医院選択に戻る
+              </button>
+            ) : canViewDashboard ? (
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="flex items-center text-sm font-medium text-zinc-500 hover:text-zinc-900"
+              >
+                <ArrowLeft className="mr-1 h-4 w-4" />
+                ダッシュボード
+              </button>
+            ) : (
+              <div className="flex items-center text-sm font-medium text-zinc-500">
+                商談入力
+              </div>
+            )}
 
             <button
               type="button"
@@ -394,7 +415,7 @@ export default function DealInput() {
               className="inline-flex items-center justify-center rounded-lg bg-linear-to-r from-purple-500 to-pink-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:opacity-90"
             >
               <GitMerge className="mr-1.5 h-4 w-4" />
-              マージ
+              受注確認
               {mergeCandidateCount > 0 && (
                 <span className="ml-2 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] leading-none text-white">
                   {mergeCandidateCount}
@@ -420,6 +441,24 @@ export default function DealInput() {
           </div>
         </div>
 
+        {!canViewDashboard && (
+          <div className="mb-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <p className="mb-3 text-sm font-bold text-zinc-900">メニュー</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {shortcutButtons.map((item) => (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={() => navigate(item.path)}
+                  className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-white hover:border-purple-300 hover:text-purple-700"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {mergeCandidateCount > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
@@ -432,9 +471,9 @@ export default function DealInput() {
                   <BellRing className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-zinc-900">取引先マージの確認が必要です</p>
+                  <p className="text-sm font-bold text-zinc-900">受注確認が必要です</p>
                   <p className="mt-1 text-sm text-zinc-600">
-                    未確認のマージ候補が
+                    未確認の受注確認候補が
                     <span className="mx-1 font-bold text-amber-600">{mergeCandidateCount}件</span>
                     あります。
                   </p>
@@ -444,11 +483,11 @@ export default function DealInput() {
               <button
                 type="button"
                 onClick={() => navigate('/customer-merge')}
-                className="inline-flex items-center justify-center rounded-xl bg-linear-to-r from-purple-500 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-md transition hover:opacity-90"
-              >
-                <GitMerge className="mr-2 h-4 w-4" />
-                マージを確認
-              </button>
+              className="inline-flex items-center justify-center rounded-xl bg-linear-to-r from-purple-500 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-md transition hover:opacity-90"
+            >
+              <GitMerge className="mr-2 h-4 w-4" />
+              受注確認へ
+            </button>
             </div>
           </motion.div>
         )}
@@ -745,7 +784,7 @@ export default function DealInput() {
                       ))}
                     </div>
                     <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                      受注はここでは選べません。取引先マージが完了した時点で自動的に受注へ移動します。
+                      受注はここでは選べません。受注確認が完了した時点で自動的に受注へ移動します。
                     </p>
                   </div>
 
@@ -834,10 +873,25 @@ export default function DealInput() {
                   className="flex w-full items-center justify-center rounded-xl bg-linear-to-r from-purple-500 to-pink-500 py-4 font-bold text-white shadow-md transition hover:opacity-90">
                   続けて入力する
                 </button>
-                <button onClick={() => navigate('/dashboard')}
-                  className="flex w-full items-center justify-center rounded-xl bg-white border border-zinc-200 py-4 font-bold text-zinc-600 transition hover:bg-zinc-50">
-                  <LayoutDashboard className="mr-2 h-5 w-5" />ダッシュボードへ
-                </button>
+                {canViewDashboard ? (
+                  <button onClick={() => navigate('/dashboard')}
+                    className="flex w-full items-center justify-center rounded-xl bg-white border border-zinc-200 py-4 font-bold text-zinc-600 transition hover:bg-zinc-50">
+                    <LayoutDashboard className="mr-2 h-5 w-5" />ダッシュボードへ
+                  </button>
+                ) : (
+                  <div className="grid gap-3">
+                    {shortcutButtons.map((item) => (
+                      <button
+                        key={item.path}
+                        type="button"
+                        onClick={() => navigate(item.path)}
+                        className="flex w-full items-center justify-center rounded-xl bg-white border border-zinc-200 py-4 font-bold text-zinc-600 transition hover:bg-zinc-50"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
