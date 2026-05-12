@@ -414,7 +414,7 @@ export default function ClinicDetail() {
                     </div>
                   </div>
                   <div className="rounded-xl bg-zinc-50 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">最新温度感</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">最新商談温度</p>
                     <p className="mt-2 text-sm font-semibold text-zinc-800">
                       {latestDeal?.dealTemperature ? TEMPERATURE_LABELS[latestDeal.dealTemperature] : '未登録'}
                     </p>

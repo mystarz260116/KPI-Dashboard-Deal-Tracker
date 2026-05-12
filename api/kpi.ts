@@ -8,9 +8,11 @@ import {
 import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth.js';
 import {
   fetchCustomerCodesByProfileId,
+  fetchRegionalSalesRows,
   fetchRegionalSalesTotal,
 } from './_lib/regionalReads.js';
 import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
+import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performance.js';
 
 
 type Granularity = 'all' | 'department' | 'individual';
@@ -70,6 +72,10 @@ export default async function handler(req: any, res: any) {
 
   if (route === 'new-orders') {
     return newOrdersHandler(req, res);
+  }
+
+  if (route === 'sales-performance') {
+    return salesPerformanceHandler(req, res);
   }
 
   if (req.method !== 'GET') {
@@ -279,10 +285,11 @@ export default async function handler(req: any, res: any) {
 
     let sharedSalesTotal = 0;
     let sharedPreviousSalesTotal = 0;
+    let scopedSalesRows: any[] = [];
     const salesFilterCodes = granularity === 'individual' ? allowedCustomerCodes : undefined;
 
     try {
-      [sharedSalesTotal, sharedPreviousSalesTotal] = await Promise.all([
+      [sharedSalesTotal, sharedPreviousSalesTotal, scopedSalesRows] = await Promise.all([
         fetchSalesImportRowsTotal(
           currentStart,
           currentEnd,
@@ -295,6 +302,12 @@ export default async function handler(req: any, res: any) {
           salesFilterCodes,
           selectedSalesDepartmentId ?? undefined
         ),
+        fetchRegionalSalesRows({
+          startDate: currentStart,
+          endExclusiveDate: currentEnd,
+          customerCodes: salesFilterCodes ? Array.from(salesFilterCodes) : undefined,
+          departmentId: selectedSalesDepartmentId ?? undefined,
+        }),
       ]);
     } catch (salesImportRowsError) {
       console.error('kpi sales import rows error:', salesImportRowsError);
@@ -326,6 +339,43 @@ export default async function handler(req: any, res: any) {
 
     const visitRankingMap = new Map<string, number>();
     const wonRankingMap = new Map<string, number>();
+    const salesRankingMap = new Map<string, number>();
+    const budgetByUserMap = new Map<string, number>();
+
+    const scopedProfiles = users.filter((u) => allowedUserIds.has(u.id));
+    const profileIdsByDepartment = new Map<number, string[]>();
+    scopedProfiles.forEach((u) => {
+      if (!u.department_id) return;
+      const current = profileIdsByDepartment.get(u.department_id) ?? [];
+      current.push(u.id);
+      profileIdsByDepartment.set(u.department_id, current);
+    });
+
+    const profileStaffCodeMap = new Map<string, string>();
+    for (const [departmentId, profileIds] of profileIdsByDepartment.entries()) {
+      const { data: profileStaffMapsData, error: profileStaffMapsError } = await supabaseAdmin
+        .from('profile_external_staff_maps')
+        .select('profile_id, external_staff_code')
+        .eq('department_id', departmentId)
+        .in('profile_id', profileIds);
+
+      if (profileStaffMapsError) {
+        console.error('kpi profile external staff maps error:', profileStaffMapsError);
+        return res.status(500).json({ error: 'profile external staff maps fetch failed' });
+      }
+
+      (profileStaffMapsData ?? []).forEach((row: any) => {
+        if (row.profile_id && row.external_staff_code) {
+          profileStaffCodeMap.set(String(row.external_staff_code), String(row.profile_id));
+        }
+      });
+    }
+
+    scopedBudgets.forEach((b: any) => {
+      const amount = Number(b.target_amount ?? 0);
+      if (!Number.isFinite(amount) || !b.user_id) return;
+      budgetByUserMap.set(String(b.user_id), (budgetByUserMap.get(String(b.user_id)) ?? 0) + amount);
+    });
 
     scopedCurrentDeals.forEach((d: any) => {
       const user = users.find((u) => u.id === d.user_id);
@@ -347,6 +397,20 @@ export default async function handler(req: any, res: any) {
       wonRankingMap.set(user.name, (wonRankingMap.get(user.name) ?? 0) + 1);
     });
 
+    scopedSalesRows.forEach((row: any) => {
+      const staffCode = row.external_staff_code ? String(row.external_staff_code) : '';
+      const profileId = staffCode ? profileStaffCodeMap.get(staffCode) : null;
+      if (!profileId || !allowedUserIds.has(profileId)) return;
+
+      const user = users.find((u) => u.id === profileId);
+      if (!user) return;
+
+      const amount = Number(row.amount ?? 0);
+      if (!Number.isFinite(amount)) return;
+
+      salesRankingMap.set(user.name, (salesRankingMap.get(user.name) ?? 0) + amount);
+    });
+
     const visit_ranking = Array.from(visitRankingMap.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
@@ -356,6 +420,23 @@ export default async function handler(req: any, res: any) {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
+
+    const sales_ranking = Array.from(salesRankingMap.entries())
+      .map(([name, sales]) => ({ name, sales: Math.round(sales) }))
+      .sort((a, b) => b.sales - a.sales)
+      .slice(0, 10);
+
+    const performance_ranking = filteredUsers
+      .map((user) => ({
+        user_id: user.id,
+        name: user.name,
+        sales: Math.round(salesRankingMap.get(user.name) ?? 0),
+        budget: Math.round(budgetByUserMap.get(user.id) ?? 0),
+        visits: visitRankingMap.get(user.name) ?? 0,
+        visit_goal: null,
+        won_count: wonRankingMap.get(user.name) ?? 0,
+      }))
+      .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
 
     const new_orders = scopedMergedProspectsInPeriod
       .slice()
@@ -382,12 +463,15 @@ export default async function handler(req: any, res: any) {
         prev_sales: sharedPreviousSalesTotal,
         change_rate: changeRate,
       },
+      performance_ranking,
+      sales_ranking,
       visit_ranking,
       won_ranking,
       conversion_rate: conversionRate,
       new_prospects_count: newProspectsCount,
       merged_new_orders_count: mergedProspectsCount,
       avg_order_value: avgOrderValue,
+      product_department_sales: [],
       new_orders,
     });
   } catch (error) {

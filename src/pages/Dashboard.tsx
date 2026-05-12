@@ -6,11 +6,8 @@ import { toDateString } from '../lib/dateUtils';
 import { authFetch } from '../lib/authFetch';
 import { isPerfEnabled, perfNow } from '../lib/perf';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from 'recharts';
-import {
   PlusCircle, Filter, Calendar, Users,
-  TrendingUp, Target, LogOut, Download, Search
+  TrendingUp, Target, LogOut, Search
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import logoImg from '../assets/M.png';
@@ -37,7 +34,13 @@ interface PerfStats {
   totalMs: number;
 }
 
-const COLORS = ['#6366f1', '#10b981'];
+interface ProductDepartmentPanelItem {
+  key: string;
+  label: string;
+  sales?: number;
+  share?: number;
+  change_rate?: number | null;
+}
 
 interface SectionTitleProps { title: string; color: string; }
 function SectionTitle({ title, color }: SectionTitleProps) {
@@ -46,6 +49,30 @@ function SectionTitle({ title, color }: SectionTitleProps) {
       {title}
     </h2>
   );
+}
+
+interface SectionGroupTitleProps {
+  title: string;
+  description: string;
+}
+
+function SectionGroupTitle({ title, description }: SectionGroupTitleProps) {
+  return (
+    <div className="mb-4">
+      <h2 className="text-xl font-bold text-zinc-900">{title}</h2>
+      <p className="mt-1 text-sm text-zinc-500">{description}</p>
+    </div>
+  );
+}
+
+interface PerformanceRankingItem {
+  user_id: string;
+  name: string;
+  sales: number;
+  budget: number;
+  visits: number;
+  visit_goal: number | null;
+  won_count: number;
 }
 
 function formatDateInput(date: Date) {
@@ -198,6 +225,8 @@ export default function Dashboard() {
     ).values()
   );
   const departmentOptions = departments.length > 0 ? departments : userDepartmentOptions;
+  const productDepartmentSales: ProductDepartmentPanelItem[] = data?.product_department_sales ?? [];
+  const performanceRanking: PerformanceRankingItem[] = data?.performance_ranking ?? [];
 
   const fetchPendingMergeCount = async () => {
     setIsMergeCountLoading(true);
@@ -577,26 +606,6 @@ export default function Dashboard() {
     navigate('/login');
   };
 
-  const handleDownload = () => {
-    // Demo CSV – replace with window.open('/api/export/deals', '_blank') in production
-    const headers = ['案件名','担当者','部署','金額','ステータス','日付'];
-    const rows = [
-      ['案件A','権藤','東京営業','1200000','受注','2026-03-01'],
-      ['案件B','寺町','高槻営業','800000','提案中','2026-03-02'],
-      ['案件C','浦上','東京営業','500000','受注','2026-03-03'],
-      ['案件D','山田','高槻営業','300000','失注','2026-03-04'],
-      ['案件E','小山','北浜営業','400000','提案中','2026-03-05'],
-    ];
-    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'deals_demo.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -619,42 +628,45 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-zinc-200">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-6 py-4">
-        <div className="mx-auto flex max-w-7xl items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-4 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <img src={logoImg} alt="Mystarz" className="h-8 w-auto object-contain" />
-            <h1 className="text-xl font-bold text-zinc-900">KPI ダッシュボード</h1>
+            <h1 className="text-xl font-bold text-zinc-900 xl:whitespace-nowrap">売上管理ダッシュボード</h1>
           </div>
-          <div className="flex items-center gap-4">
-            <button onClick={handleDownload}
-              className="flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
-              <Download className="h-4 w-4" />CSV出力
-            </button>
+
+          <div className="flex flex-col gap-3 xl:items-end">
+            <div className="flex flex-wrap gap-2">
             <button onClick={() => {
               setIsImportModalOpen(true);
               setImportResultMessage('');
             }}
-              className="flex items-center gap-1 rounded-lg border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50">
+              className="inline-flex items-center gap-1 rounded-xl border border-indigo-300 px-3 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-50 whitespace-nowrap">
               <PlusCircle className="h-4 w-4" />CSV取込
             </button>
 
             <button onClick={() => navigate('/deals/history')}
-              className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
               <TrendingUp className="h-4 w-4" />商談履歴
             </button>
 
             <button onClick={() => navigate('/deals/progress')}
-              className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
               <Users className="h-4 w-4" />進捗管理
             </button>
 
+            <button onClick={() => navigate('/sales-performance')}
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              <TrendingUp className="h-4 w-4" />営業パフォーマンス
+            </button>
+
             <button onClick={() => navigate('/crm')}
-              className="flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
               <Search className="h-4 w-4" />CRM検索
             </button>
 
             <button onClick={() => navigate('/customer-merge')}
-              className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100">
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 whitespace-nowrap">
               <Target className="h-4 w-4" />受注確認
               {!isMergeCountLoading && pendingMergeCount > 0 && (
                 <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
@@ -662,15 +674,18 @@ export default function Dashboard() {
                 </span>
               )}
             </button>
+            </div>
 
-            <button onClick={() => navigate('/deals/new')}
-              className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-              <PlusCircle className="h-4 w-4" />新規案件入力
-            </button>
-            <span className="text-sm text-zinc-600">{user?.name ?? 'ゲスト'}</span>
-            <button onClick={handleLogout} className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100">
-              <LogOut className="h-5 w-5" />
-            </button>
+            <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+              <button onClick={() => navigate('/deals/new')}
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 whitespace-nowrap">
+                <PlusCircle className="h-4 w-4" />新規案件入力
+              </button>
+              <span className="max-w-[160px] truncate text-sm text-zinc-600">{user?.name ?? 'ゲスト'}</span>
+              <button onClick={handleLogout} className="rounded-xl p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700">
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -796,104 +811,140 @@ export default function Dashboard() {
             {error}
           </div>
         )}
-        {/* Row 1: 予算達成率 + 売上合計 */}
-        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+        <section className="mb-8">
+          <SectionGroupTitle title="売上サマリー" description="まず売上の着地と予算差分を確認しやすい並びに変えています。" />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+              className="rounded-xl bg-white p-6 shadow-sm">
+              <SectionTitle title="売上合計" color="#10b981" />
+              <p className="text-4xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
+              <p className="mt-2 text-sm text-zinc-500">前期間比 {formatChangeRate(data?.sales.change_rate)}%</p>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+              className="rounded-xl bg-white p-6 shadow-sm">
+              <SectionTitle title="予算達成率" color="#6366f1" />
+              <p className="text-4xl font-bold text-indigo-600">{data?.budget.achievement_rate ?? 0}%</p>
+              <p className="mt-2 text-sm text-zinc-500">
+                売上：¥{(data?.budget.sales ?? 0).toLocaleString()} ／ 予算：¥{(data?.budget.budget ?? 0).toLocaleString()}
+              </p>
+              <div className="mt-4 h-3 w-full rounded-full bg-zinc-100">
+                <div className="h-3 rounded-full bg-indigo-500"
+                  style={{ width: `${Math.min(data?.budget.achievement_rate ?? 0, 100)}%` }} />
+              </div>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+              className="rounded-xl bg-white p-6 shadow-sm">
+              <SectionTitle title="受注単価 / 医院" color="#ec4899" />
+              <p className="text-4xl font-bold text-pink-500">¥{(data?.avg_order_value ?? 0).toLocaleString()}</p>
+              <p className="mt-2 text-sm text-zinc-500">
+                新規取引先売上 ÷ 新規取引先数
+              </p>
+            </motion.div>
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <SectionGroupTitle title="商品部門別" description="商品部門別の売上パネルを置く受け皿です。具体的な集計ロジックはあとから差し込めます。" />
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
             className="rounded-xl bg-white p-6 shadow-sm">
-            <SectionTitle title="予算達成率" color="#6366f1" />
-            <p className="text-4xl font-bold text-indigo-600">{data?.budget.achievement_rate ?? 0}%</p>
-            <p className="mt-2 text-sm text-zinc-500">
-              売上：¥{(data?.budget.sales ?? 0).toLocaleString()} ／ 予算：¥{(data?.budget.budget ?? 0).toLocaleString()}
-            </p>
-            <div className="mt-4 h-3 w-full rounded-full bg-zinc-100">
-              <div className="h-3 rounded-full bg-indigo-500"
-                style={{ width: `${Math.min(data?.budget.achievement_rate ?? 0, 100)}%` }} />
+            <SectionTitle title="商品部門別売上" color="#14b8a6" />
+            {productDepartmentSales.length > 0 ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {productDepartmentSales.map((item) => (
+                  <div key={item.key} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                    <p className="text-sm font-semibold text-zinc-500">{item.label}</p>
+                    <p className="mt-2 text-3xl font-bold text-zinc-900">¥{(item.sales ?? 0).toLocaleString()}</p>
+                    <div className="mt-3 flex items-center justify-between text-sm text-zinc-500">
+                      <span>構成比 {(item.share ?? 0).toFixed(1)}%</span>
+                      <span>前期間比 {formatChangeRate(item.change_rate)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-5 py-8 text-sm text-zinc-500">
+                商品部門別の集計ロジック待ちです。ここは「部門名 / 売上 / 構成比 / 前期間比」を並べる前提で、先にパネルだけ整えています。
+              </div>
+            )}
+          </motion.div>
+        </section>
+
+        <section className="mb-8">
+          <SectionGroupTitle title="担当別売上" description="担当者ごとの売上と受注の偏りを見比べられる並びにしています。" />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
+            className="mb-6 rounded-xl bg-white p-5 shadow-sm">
+            <SectionTitle title="営業担当別売上ランキング" color="#0f766e" />
+            <div className="space-y-3">
+              {performanceRanking.length > 0 ? performanceRanking.map((item, index) => {
+                return (
+                  <div key={item.user_id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-[56px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_100px] md:items-center">
+                      <div className="text-sm font-semibold text-zinc-400">#{index + 1}</div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-lg font-bold text-zinc-900">{item.name}</p>
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-zinc-500">売上 / 予算</p>
+                        <p className="truncate text-base font-bold text-teal-700">
+                          ¥{item.sales.toLocaleString()}
+                          <span className="ml-2 text-xs font-medium text-zinc-500">
+                            / ¥{item.budget.toLocaleString()}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-zinc-500">訪問数 / 訪問目標</p>
+                        <p className="truncate text-base font-bold text-indigo-700">
+                          {item.visits.toLocaleString()}件
+                          <span className="ml-2 text-xs font-medium text-zinc-500">
+                            / {item.visit_goal != null ? `${item.visit_goal.toLocaleString()}件` : '未設定'}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="text-left md:text-right">
+                        <p className="text-[11px] font-semibold text-zinc-500">新規受注</p>
+                        <p className="text-base font-bold text-emerald-700">{item.won_count.toLocaleString()}件</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }) : (
+                <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-5 py-8 text-sm text-zinc-500">
+                  対象データがありません。
+                </div>
+              )}
             </div>
           </motion.div>
 
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.7 }}
             className="rounded-xl bg-white p-6 shadow-sm">
-            <SectionTitle title="売上合計" color="#10b981" />
-            <p className="text-4xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
-            <p className="mt-2 text-sm text-zinc-500">前期間比 {formatChangeRate(data?.sales.change_rate)}%</p>
-          </motion.div>
-        </div>
-
-        {/* Row 2: 開拓転換率 + 受注単価 */}
-        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-            className="rounded-xl bg-white p-6 shadow-sm">
-            <SectionTitle title="開拓転換率" color="#f59e0b" />
-            <p className="text-4xl font-bold text-amber-500">{data?.conversion_rate ?? 0}%</p>
-            <p className="mt-2 text-sm text-zinc-500">
-              期間内新規作成取引先のうち、新規受注に至った割合
-            </p>
-          </motion.div>
-
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
-            className="rounded-xl bg-white p-6 shadow-sm">
-            <SectionTitle title="受注単価 / 医院" color="#ec4899" />
-            <p className="text-4xl font-bold text-pink-500">¥{(data?.avg_order_value ?? 0).toLocaleString()}</p>
-            <p className="mt-2 text-sm text-zinc-500">
-              新規取引先売上 ÷ 新規取引先数
-            </p>
-          </motion.div>
-        </div>
-
-        {/* Row 3: ランキング2つ */}
-        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
-            className="rounded-xl bg-white p-6 shadow-sm">
-            <SectionTitle title="営業別訪問数ランキング" color="#6366f1" />
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={data?.visit_ranking ?? []} layout="vertical" margin={{ left: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" />
-                <YAxis type="category" dataKey="name" width={48} />
-                <Tooltip />
-                <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </motion.div>
-
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6 }}
-            className="rounded-xl bg-white p-6 shadow-sm">
-            <SectionTitle title="営業別新規受注数ランキング" color="#10b981" />
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={data?.won_ranking ?? []} layout="vertical" margin={{ left: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" />
-                <YAxis type="category" dataKey="name" width={48} />
-                <Tooltip />
-                <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </motion.div>
-        </div>
-
-        {/* Row 4: 新規受注先一覧 */}
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.7 }}
-          className="rounded-xl bg-white p-6 shadow-sm">
-          <SectionTitle title="新規受注先一覧" color="#8b5cf6" />
-          <div className="overflow-auto max-h-64">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-200 text-left text-zinc-500">
-                  <th className="pb-2 font-medium">医院名</th>
-                  <th className="pb-2 font-medium">営業担当</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.new_orders ?? []).map((o: any, i: number) => (
-                  <tr key={i} className="border-b border-zinc-100 hover:bg-zinc-50">
-                    <td className="py-2 text-indigo-600 font-medium">{o.clinic}</td>
-                    <td className="py-2 text-zinc-700">{o.sales}</td>
+            <SectionTitle title="新規受注先一覧" color="#8b5cf6" />
+            <div className="overflow-auto max-h-64">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-left text-zinc-500">
+                    <th className="pb-2 font-medium">医院名</th>
+                    <th className="pb-2 font-medium">営業担当</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </motion.div>
+                </thead>
+                <tbody>
+                  {(data?.new_orders ?? []).map((o: any, i: number) => (
+                    <tr key={i} className="border-b border-zinc-100 hover:bg-zinc-50">
+                      <td className="py-2 font-medium text-indigo-600">{o.clinic}</td>
+                      <td className="py-2 text-zinc-700">{o.sales}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        </section>
       </main>
     {/* Import Modal */}
       {isImportModalOpen && (

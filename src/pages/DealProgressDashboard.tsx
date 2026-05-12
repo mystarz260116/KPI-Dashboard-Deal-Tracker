@@ -48,6 +48,15 @@ type DepartmentOption = {
   name: string;
 };
 
+type TemperatureTone = {
+  label: string;
+  shortLabel: string;
+  chipClassName: string;
+  cardClassName: string;
+  glowClassName: string;
+  priority: number;
+};
+
 const COLUMNS: Array<{ key: DealPipelineStage; title: string; accent: string; bg: string; hint: string; editable: boolean }> = [
   { key: 'targeting', title: 'ターゲティング', accent: '#8b5cf6', bg: 'bg-violet-50', hint: '候補先の選定・情報整理段階', editable: true },
   { key: 'visiting', title: '訪問中', accent: '#f59e0b', bg: 'bg-amber-50', hint: '初回訪問や継続接触を進めている段階', editable: true },
@@ -55,6 +64,114 @@ const COLUMNS: Array<{ key: DealPipelineStage; title: string; accent: string; bg
   { key: 'won', title: '受注', accent: '#10b981', bg: 'bg-emerald-50', hint: '受注確認完了後に自動で移動', editable: false },
   { key: 'lost', title: '失注', accent: '#ef4444', bg: 'bg-rose-50', hint: '見送り・失注。担当者が手動で更新', editable: true },
 ];
+
+const TEMPERATURE_TONES: Record<string, TemperatureTone> = {
+  A: {
+    label: 'A すぐ案件化',
+    shortLabel: 'A',
+    chipClassName: 'bg-violet-600 text-white',
+    cardClassName: 'border-violet-200 bg-violet-50/70',
+    glowClassName: 'from-violet-500 via-fuchsia-500 to-transparent',
+    priority: 0,
+  },
+  'A すぐ案件化': {
+    label: 'A すぐ案件化',
+    shortLabel: 'A',
+    chipClassName: 'bg-violet-600 text-white',
+    cardClassName: 'border-violet-200 bg-violet-50/70',
+    glowClassName: 'from-violet-500 via-fuchsia-500 to-transparent',
+    priority: 0,
+  },
+  B: {
+    label: 'B 見込みあり',
+    shortLabel: 'B',
+    chipClassName: 'bg-sky-600 text-white',
+    cardClassName: 'border-sky-200 bg-sky-50/70',
+    glowClassName: 'from-sky-500 via-cyan-400 to-transparent',
+    priority: 1,
+  },
+  'B 見込みあり': {
+    label: 'B 見込みあり',
+    shortLabel: 'B',
+    chipClassName: 'bg-sky-600 text-white',
+    cardClassName: 'border-sky-200 bg-sky-50/70',
+    glowClassName: 'from-sky-500 via-cyan-400 to-transparent',
+    priority: 1,
+  },
+  C: {
+    label: 'C 長期フォロー',
+    shortLabel: 'C',
+    chipClassName: 'bg-zinc-100 text-zinc-600',
+    cardClassName: 'border-zinc-200 bg-white',
+    glowClassName: 'from-zinc-200 via-zinc-100 to-transparent',
+    priority: 2,
+  },
+  'C 長期フォロー': {
+    label: 'C 長期フォロー',
+    shortLabel: 'C',
+    chipClassName: 'bg-zinc-100 text-zinc-600',
+    cardClassName: 'border-zinc-200 bg-white',
+    glowClassName: 'from-zinc-200 via-zinc-100 to-transparent',
+    priority: 2,
+  },
+  D: {
+    label: 'D 可能性低い',
+    shortLabel: 'D',
+    chipClassName: 'bg-amber-50 text-amber-300',
+    cardClassName: 'border-amber-50/40 bg-white',
+    glowClassName: 'from-amber-50 via-transparent to-transparent',
+    priority: 3,
+  },
+  'D 可能性低い': {
+    label: 'D 可能性低い',
+    shortLabel: 'D',
+    chipClassName: 'bg-amber-50 text-amber-300',
+    cardClassName: 'border-amber-50/40 bg-white',
+    glowClassName: 'from-amber-50 via-transparent to-transparent',
+    priority: 3,
+  },
+  E: {
+    label: 'E 失注・拒否',
+    shortLabel: 'E',
+    chipClassName: 'bg-rose-100 text-rose-700',
+    cardClassName: 'border-rose-100 bg-white',
+    glowClassName: 'from-rose-200 via-rose-100 to-transparent',
+    priority: 4,
+  },
+  'E 失注・拒否': {
+    label: 'E 失注・拒否',
+    shortLabel: 'E',
+    chipClassName: 'bg-rose-100 text-rose-700',
+    cardClassName: 'border-rose-100 bg-white',
+    glowClassName: 'from-rose-200 via-rose-100 to-transparent',
+    priority: 4,
+  },
+  'E 失注・拒否 ': {
+    label: 'E 失注・拒否',
+    shortLabel: 'E',
+    chipClassName: 'bg-rose-100 text-rose-700',
+    cardClassName: 'border-rose-100 bg-white',
+    glowClassName: 'from-rose-200 via-rose-100 to-transparent',
+    priority: 4,
+  },
+};
+
+const DEFAULT_TEMPERATURE_TONE: TemperatureTone = {
+  label: '商談温度未設定',
+  shortLabel: '未設定',
+  chipClassName: 'bg-zinc-200 text-zinc-700',
+  cardClassName: 'border-zinc-200 bg-white',
+  glowClassName: 'from-zinc-300 via-zinc-200 to-transparent',
+  priority: 99,
+};
+
+const TEMPERATURE_FILTER_OPTIONS = [
+  { value: 'A', label: 'A' },
+  { value: 'B', label: 'B' },
+  { value: 'C', label: 'C' },
+  { value: 'D', label: 'D' },
+  { value: 'E', label: 'E' },
+] as const;
 
 function currentMonth() {
   const now = new Date();
@@ -72,6 +189,26 @@ function formatMonthLabel(value: string) {
   return `${year}年${Number(month)}月`;
 }
 
+function getTemperatureTone(temperature: string | null) {
+  if (!temperature) {
+    return DEFAULT_TEMPERATURE_TONE;
+  }
+
+  return TEMPERATURE_TONES[temperature] ?? DEFAULT_TEMPERATURE_TONE;
+}
+
+function buildNextActionLabel(deal: BoardDeal) {
+  if (!deal.next_action) {
+    return '次アクション未設定';
+  }
+
+  if (!deal.next_action_date) {
+    return deal.next_action;
+  }
+
+  return `${deal.next_action} · ${deal.next_action_date}`;
+}
+
 export default function DealProgressDashboard() {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
@@ -83,6 +220,7 @@ export default function DealProgressDashboard() {
   const [lifecycle, setLifecycle] = useState<DealLifecycle>('all');
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedDepartmentId, setSelectedDepartmentId] = useState('');
+  const [selectedTemperatures, setSelectedTemperatures] = useState<string[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [deals, setDeals] = useState<BoardDeal[]>([]);
@@ -174,9 +312,35 @@ export default function DealProgressDashboard() {
     loadDeals();
   }, [month, lifecycle, selectedUserId, selectedDepartmentId]);
 
+  const filteredDeals = useMemo(() => (
+    deals.filter((deal) => {
+      if (selectedTemperatures.length === 0) {
+        return true;
+      }
+
+      const rawTemperature = (deal.deal_temperature ?? '').trim();
+      if (!rawTemperature) {
+        return false;
+      }
+
+      const normalizedTemperature = rawTemperature.charAt(0);
+      return selectedTemperatures.includes(normalizedTemperature);
+    })
+  ), [deals, selectedTemperatures]);
+
   const groupedDeals = useMemo(() => (
     COLUMNS.reduce<Record<DealPipelineStage, BoardDeal[]>>((acc, column) => {
-      acc[column.key] = deals.filter((deal) => deal.pipeline_stage === column.key);
+      acc[column.key] = filteredDeals
+        .filter((deal) => deal.pipeline_stage === column.key)
+        .sort((left, right) => {
+          const leftTone = getTemperatureTone(left.deal_temperature);
+          const rightTone = getTemperatureTone(right.deal_temperature);
+          if (leftTone.priority !== rightTone.priority) {
+            return leftTone.priority - rightTone.priority;
+          }
+
+          return new Date(right.deal_date).getTime() - new Date(left.deal_date).getTime();
+        });
       return acc;
     }, {
       targeting: [],
@@ -185,13 +349,13 @@ export default function DealProgressDashboard() {
       won: [],
       lost: [],
     })
-  ), [deals]);
+  ), [filteredDeals]);
 
   const summary = useMemo(() => ({
-    total: deals.length,
-    newCount: deals.filter((deal) => deal.lifecycle === 'new').length,
-    existingCount: deals.filter((deal) => deal.lifecycle === 'existing').length,
-  }), [deals]);
+    total: filteredDeals.length,
+    newCount: filteredDeals.filter((deal) => deal.lifecycle === 'new').length,
+    existingCount: filteredDeals.filter((deal) => deal.lifecycle === 'existing').length,
+  }), [filteredDeals]);
 
   const canEditDeal = (deal: BoardDeal) => (
     !isClosed
@@ -202,6 +366,14 @@ export default function DealProgressDashboard() {
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  const toggleTemperatureFilter = (temperature: string) => {
+    setSelectedTemperatures((current) => (
+      current.includes(temperature)
+        ? current.filter((value) => value !== temperature)
+        : [...current, temperature]
+    ));
   };
 
   const handleDrop = async (nextStatus: EditableDealPipelineStage) => {
@@ -390,7 +562,29 @@ export default function DealProgressDashboard() {
                       {department.name}
                     </option>
                   ))}
-                </select>
+                  </select>
+                </div>
+
+              <div className="flex flex-wrap gap-2 rounded-2xl bg-zinc-50 p-2">
+                {TEMPERATURE_FILTER_OPTIONS.map((option) => {
+                  const isActive = selectedTemperatures.includes(option.value);
+                  const tone = getTemperatureTone(option.value);
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleTemperatureFilter(option.value)}
+                      className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+                        isActive
+                          ? tone.chipClassName
+                          : 'bg-white text-zinc-500 hover:text-zinc-800'
+                      }`}
+                    >
+                      商談温度 {option.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -464,9 +658,19 @@ export default function DealProgressDashboard() {
                     groupedDeals[column.key].map((deal) => {
                       const categories = deal.proposal_categories.length > 0
                         ? deal.proposal_categories
-                        : deal.proposal_category
-                          ? [deal.proposal_category]
-                          : [];
+                          : deal.proposal_category
+                            ? [deal.proposal_category]
+                            : [];
+                      const temperatureTone = getTemperatureTone(deal.deal_temperature);
+                      const nextActionLabel = buildNextActionLabel(deal);
+                      const metaBadges = [
+                        deal.contact_role ? `接触: ${deal.contact_role}` : null,
+                        deal.decision_maker_contact === 'yes'
+                          ? '決裁者接触あり'
+                          : deal.decision_maker_contact === 'no'
+                            ? '決裁者未接触'
+                            : null,
+                      ].filter(Boolean);
 
                       return (
                         <motion.div
@@ -484,54 +688,89 @@ export default function DealProgressDashboard() {
                               navigate(`/clinics/${deal.clinic_kind}/${encodeURIComponent(deal.clinic_id)}`);
                             }
                           }}
-                          className={`rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5 ${
+                          className={`relative overflow-hidden rounded-2xl border p-4 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md ${
+                            temperatureTone.cardClassName
+                          } ${
                             updatingDealId === deal.id ? 'opacity-60' : ''
                           }`}
                         >
+                          <div className={`pointer-events-none absolute inset-x-0 top-0 h-1 bg-linear-to-r ${temperatureTone.glowClassName}`} />
+
                           <div className="mb-3 flex items-start justify-between gap-3">
-                            <div className="text-left font-bold text-zinc-900 hover:text-purple-600">
-                              {deal.clinic_name}
+                            <div className="min-w-0">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${temperatureTone.chipClassName}`}>
+                                  {temperatureTone.label}
+                                </span>
+                                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                  deal.lifecycle === 'new'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-sky-50 text-sky-700'
+                                }`}>
+                                  {deal.lifecycle === 'new' ? '新規' : '既存'}
+                                </span>
+                                {deal.is_carried_over && (
+                                  <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
+                                    前月繰越
+                                  </span>
+                                )}
+                                {deal.pipeline_stage === 'won' && (
+                                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                                    自動受注
+                                  </span>
+                                )}
+                                {!canEditDeal(deal) && (
+                                  <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
+                                    閲覧のみ
+                                  </span>
+                                )}
+                              </div>
+                              <div className="truncate text-left text-base font-bold text-zinc-900 hover:text-purple-600">
+                                {deal.clinic_name}
+                              </div>
+                              <p className="mt-1 text-xs font-medium text-zinc-500">
+                                {deal.user_name || '担当者未設定'} · {deal.deal_date}
+                              </p>
                             </div>
                             <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
                           </div>
 
                           <div className="mb-3 flex flex-wrap gap-2">
-                            <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                              deal.lifecycle === 'new'
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : 'bg-sky-50 text-sky-700'
-                            }`}>
-                              {deal.lifecycle === 'new' ? '新規' : '既存'}
-                            </span>
-                            {deal.is_carried_over && (
-                              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
-                                前月繰越
-                              </span>
-                            )}
-                            {deal.pipeline_stage === 'won' && (
-                              <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
-                                自動受注
-                              </span>
-                            )}
-                            {!canEditDeal(deal) && (
-                              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
-                                閲覧のみ
-                              </span>
-                            )}
                             {categories.slice(0, 2).map((category) => (
                               <span key={category} className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
                                 {category}
                               </span>
                             ))}
+                            {categories.length > 2 && (
+                              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-600">
+                                +{categories.length - 2}
+                              </span>
+                            )}
                           </div>
 
                           <div className="space-y-2 text-sm text-zinc-600">
-                            <p className="font-medium text-zinc-800">{deal.user_name || '担当者未設定'}</p>
-                            <p>{deal.deal_date}</p>
-                            {deal.product_name && <p>具体商品: {deal.product_name}</p>}
-                            {deal.next_action && <p>次回: {deal.next_action}</p>}
+                            <div className="rounded-xl bg-white/80 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
+                                Next
+                              </p>
+                              <p className="mt-1 font-semibold text-zinc-800">{nextActionLabel}</p>
+                            </div>
+
+                            {metaBadges.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {metaBadges.map((badge) => (
+                                  <span
+                                    key={badge}
+                                    className="rounded-full bg-white/85 px-2 py-1 text-[11px] font-medium text-zinc-600"
+                                  >
+                                    {badge}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
                             {deal.notes && (
-                              <p className="line-clamp-3 text-zinc-500">
+                              <p className="line-clamp-2 text-xs leading-5 text-zinc-500">
                                 {deal.notes}
                               </p>
                             )}
