@@ -17,6 +17,30 @@ import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performanc
 
 type Granularity = 'all' | 'department' | 'individual';
 
+function expandBudgetYearMonthFormats(yearMonths: string[]) {
+  const variants = new Set<string>();
+
+  yearMonths.forEach((value) => {
+    const normalized = String(value).trim();
+    if (!normalized) return;
+
+    variants.add(normalized);
+
+    const [year, monthRaw] = normalized.split('-');
+    const monthNumber = Number.parseInt(monthRaw ?? '', 10);
+
+    if (year && Number.isFinite(monthNumber)) {
+      const paddedMonth = String(monthNumber).padStart(2, '0');
+      variants.add(`${year}/${monthNumber}`);
+      variants.add(`${year}/${paddedMonth}`);
+      variants.add(`${year}-${monthNumber}`);
+      variants.add(`${year}-${paddedMonth}`);
+    }
+  });
+
+  return Array.from(variants);
+}
+
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
   if (Array.isArray(pathValue)) {
     return pathValue.join('/');
@@ -125,6 +149,7 @@ export default async function handler(req: any, res: any) {
     const endForBudget = new Date(end);
     endForBudget.setDate(endForBudget.getDate() - 1);
     const targetYearMonths = getYearMonthsBetween(start, endForBudget);
+    const budgetMonthKeys = expandBudgetYearMonthFormats(targetYearMonths);
 
     const { data: profilesData, error: profilesError } = await supabaseAdmin
       .from('profiles')
@@ -256,7 +281,7 @@ export default async function handler(req: any, res: any) {
     let budgetsQuery = supabaseAdmin
       .from('budgets')
       .select('user_id, external_staff_code, department_id, target_year_month, target_amount')
-      .in('target_year_month', targetYearMonths);
+      .in('target_year_month', budgetMonthKeys);
 
     if (granularity === 'department' && allowedDepartmentIds.length > 0) {
       budgetsQuery = budgetsQuery.in('department_id', allowedDepartmentIds);
@@ -457,6 +482,7 @@ export default async function handler(req: any, res: any) {
         budget: budgetTotal,
         achievement_rate: achievementRate,
         target_year_months: targetYearMonths,
+        budget_month_keys: budgetMonthKeys,
       },
       sales: {
         sales: sharedSalesTotal,

@@ -813,7 +813,7 @@ export default function Dashboard() {
         )}
         <section className="mb-8">
           <SectionGroupTitle title="売上サマリー" description="まず売上の着地と予算差分を確認しやすい並びに変えています。" />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
               className="rounded-xl bg-white p-6 shadow-sm">
               <SectionTitle title="売上合計" color="#10b981" />
@@ -832,15 +832,6 @@ export default function Dashboard() {
                 <div className="h-3 rounded-full bg-indigo-500"
                   style={{ width: `${Math.min(data?.budget.achievement_rate ?? 0, 100)}%` }} />
               </div>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-              className="rounded-xl bg-white p-6 shadow-sm">
-              <SectionTitle title="受注単価 / 医院" color="#ec4899" />
-              <p className="text-4xl font-bold text-pink-500">¥{(data?.avg_order_value ?? 0).toLocaleString()}</p>
-              <p className="mt-2 text-sm text-zinc-500">
-                新規取引先売上 ÷ 新規取引先数
-              </p>
             </motion.div>
           </div>
         </section>
