@@ -34,6 +34,13 @@ interface PerfStats {
   totalMs: number;
 }
 
+interface ImportMonthClosureItem {
+  target_year_month: string;
+  closed_at: string | null;
+  closed_by: string | null;
+  closed_by_name: string;
+}
+
 interface ProductDepartmentPanelItem {
   key: string;
   label: string;
@@ -86,6 +93,24 @@ function formatImportDatetimeInput(date: Date) {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function formatYearMonthInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function normalizeCsvHeader(header: string) {
+  return header.replace(/^\uFEFF/, '').trim();
+}
+
+function canonicalizeCsvHeader(header: string) {
+  const normalized = normalizeCsvHeader(header);
+  if (normalized.replace(/\s+/g, '') === '得意先コード') {
+    return '得意先コード';
+  }
+  return normalized;
 }
 
 function extractCsvRecords(text: string) {
@@ -203,7 +228,15 @@ export default function Dashboard() {
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [importResultMessage, setImportResultMessage] = useState('');
   const [importDepartmentId, setImportDepartmentId] = useState('');
+  const [importClosureMonth, setImportClosureMonth] = useState(() => formatYearMonthInput(new Date()));
   const [importedAtInput, setImportedAtInput] = useState(() => formatImportDatetimeInput(new Date()));
+  const [isMonthClosureLoading, setIsMonthClosureLoading] = useState(false);
+  const [isMonthClosureUpdating, setIsMonthClosureUpdating] = useState(false);
+  const [importMonthClosed, setImportMonthClosed] = useState(false);
+  const [importMonthClosedAt, setImportMonthClosedAt] = useState<string | null>(null);
+  const [importMonthClosedByName, setImportMonthClosedByName] = useState('');
+  const [recentImportClosedMonths, setRecentImportClosedMonths] = useState<ImportMonthClosureItem[]>([]);
+  const [importMonthMessage, setImportMonthMessage] = useState('');
   const [perfStats, setPerfStats] = useState<{
     usersMs: number;
     usersStatus: number;
@@ -232,7 +265,9 @@ export default function Dashboard() {
     setIsMergeCountLoading(true);
 
     try {
-      const res = await authFetch('/api/merge/candidates/count');
+      const res = await authFetch(`/api/merge/candidates/count?ts=${Date.now()}`, {
+        cache: 'no-store',
+      });
       if (!res.ok) {
         throw new Error('merge candidates count fetch failed');
       }
@@ -244,6 +279,93 @@ export default function Dashboard() {
       setPendingMergeCount(0);
     } finally {
       setIsMergeCountLoading(false);
+    }
+  };
+
+  const fetchImportMonthClosureStatus = async (departmentId: string, targetYearMonth: string) => {
+    if (!departmentId || !targetYearMonth) {
+      setImportMonthClosed(false);
+      setImportMonthClosedAt(null);
+      setImportMonthClosedByName('');
+      setRecentImportClosedMonths([]);
+      return;
+    }
+
+    setIsMonthClosureLoading(true);
+    setImportMonthMessage('');
+
+    try {
+      const params = new URLSearchParams({
+        department_id: departmentId,
+        target_year_month: targetYearMonth,
+      });
+
+      const res = await authFetch(`/api/import/sales/month-closures?${params.toString()}`, {
+        cache: 'no-store',
+      });
+
+      const contentType = res.headers.get('content-type') ?? '';
+      const payload = contentType.includes('application/json')
+        ? await res.json()
+        : null;
+
+      if (!res.ok) {
+        throw new Error(payload?.error ?? '月締め状態の取得に失敗しました。');
+      }
+
+      setImportMonthClosed(Boolean(payload?.is_closed));
+      setImportMonthClosedAt(payload?.closed_at ?? null);
+      setImportMonthClosedByName(payload?.closed_by_name ?? '');
+      setRecentImportClosedMonths(payload?.recent_closed_months ?? []);
+    } catch (err: any) {
+      console.error('sales import month closure status error:', err);
+      setImportMonthClosed(false);
+      setImportMonthClosedAt(null);
+      setImportMonthClosedByName('');
+      setRecentImportClosedMonths([]);
+      setImportMonthMessage(err?.message ?? '月締め状態の取得に失敗しました。');
+    } finally {
+      setIsMonthClosureLoading(false);
+    }
+  };
+
+  const toggleImportMonthClosure = async () => {
+    if (!importDepartmentId || !importClosureMonth) {
+      setImportMonthMessage('部署と対象月を選択してください。');
+      return;
+    }
+
+    setIsMonthClosureUpdating(true);
+    setImportMonthMessage('');
+
+    try {
+      const res = await authFetch('/api/import/sales/close-month', {
+        method: importMonthClosed ? 'DELETE' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          department_id: Number(importDepartmentId),
+          target_year_month: importClosureMonth,
+        }),
+      });
+
+      const contentType = res.headers.get('content-type') ?? '';
+      const payload = contentType.includes('application/json')
+        ? await res.json()
+        : null;
+
+      if (!res.ok) {
+        throw new Error(payload?.error ?? (importMonthClosed ? '締め解除に失敗しました。' : '月締めに失敗しました。'));
+      }
+
+      setImportMonthMessage(importMonthClosed ? '月締めを解除しました。' : '月締めを実行しました。');
+      await fetchImportMonthClosureStatus(importDepartmentId, importClosureMonth);
+    } catch (err: any) {
+      console.error('sales import month closure update error:', err);
+      setImportMonthMessage(err?.message ?? (importMonthClosed ? '締め解除に失敗しました。' : '月締めに失敗しました。'));
+    } finally {
+      setIsMonthClosureUpdating(false);
     }
   };
 
@@ -262,6 +384,23 @@ export default function Dashboard() {
   useEffect(() => {
     fetchPendingMergeCount();
   }, []);
+
+  useEffect(() => {
+    if (!isImportModalOpen) {
+      return;
+    }
+
+    if (!importDepartmentId || !importClosureMonth) {
+      setImportMonthClosed(false);
+      setImportMonthClosedAt(null);
+      setImportMonthClosedByName('');
+      setRecentImportClosedMonths([]);
+      return;
+    }
+
+    void fetchImportMonthClosureStatus(importDepartmentId, importClosureMonth);
+  }, [isImportModalOpen, importDepartmentId, importClosureMonth]);
+
   useEffect(() => {
     const fetchDashboardData = async () => {
       setIsLoading(true);
@@ -405,6 +544,62 @@ export default function Dashboard() {
     return values;
   };
 
+  const parseCsvRows = (text: string) => {
+    const normalizedText = text.replace(/^\uFEFF/, '');
+    const { records, remainder } = extractCsvRecords(normalizedText);
+    const completeRecords = [...records];
+    const trailingLine = remainder.trim();
+
+    if (trailingLine) {
+      completeRecords.push(trailingLine);
+    }
+
+    if (completeRecords.length === 0) {
+      return {
+        headers: null as string[] | null,
+        rows: [] as Record<string, string>[],
+      };
+    }
+
+    const rawHeaders = parseCsvLine(completeRecords[0]).map(canonicalizeCsvHeader);
+    const rows = completeRecords
+      .slice(1)
+      .map((line) => buildCsvRow(rawHeaders, line))
+      .filter((row): row is Record<string, string> => Boolean(row));
+
+    return {
+      headers: rawHeaders,
+      rows,
+    };
+  };
+
+  const decodeCsvFile = async (file: File) => {
+    const buffer = await file.arrayBuffer();
+    const utf8Text = new TextDecoder('utf-8').decode(buffer);
+    const utf8Parsed = parseCsvRows(utf8Text);
+
+    if (utf8Parsed.rows.length > 0) {
+      return utf8Parsed;
+    }
+
+    const utf8HasTargetHeader = (utf8Parsed.headers ?? []).includes('得意先コード');
+    if (utf8HasTargetHeader) {
+      return utf8Parsed;
+    }
+
+    try {
+      const shiftJisText = new TextDecoder('shift-jis').decode(buffer);
+      const shiftJisParsed = parseCsvRows(shiftJisText);
+      if (shiftJisParsed.rows.length > 0 || (shiftJisParsed.headers ?? []).includes('得意先コード')) {
+        return shiftJisParsed;
+      }
+    } catch (decodeError) {
+      console.warn('shift-jis decode fallback failed:', decodeError);
+    }
+
+    return utf8Parsed;
+  };
+
   const buildCsvRow = (headers: string[], line: string) => {
     const trimmedLine = line.trim();
     if (!trimmedLine) {
@@ -480,26 +675,19 @@ export default function Dashboard() {
     try {
       const importBatchId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const importedAt = new Date(importedAtInput).toISOString();
-      const reader = selectedCsvFile.stream().getReader();
-      const decoder = new TextDecoder('utf-8');
       const uploadChunkSize = 500;
-      const pendingRows: Record<string, string>[] = [];
-      let headers: string[] | null = null;
-      let bufferedText = '';
-      let isFirstChunk = true;
       let uploadedCount = 0;
-      let parsedRowCount = 0;
-      let uploadedBytes = 0;
+      const { headers, rows } = await decodeCsvFile(selectedCsvFile);
+      const parsedRowCount = rows.length;
 
-      const flushPendingRows = async () => {
-        if (pendingRows.length === 0) {
+      const flushPendingRows = async (chunk: Record<string, string>[]) => {
+        if (chunk.length === 0) {
           return;
         }
 
-        const chunk = pendingRows.splice(0, pendingRows.length);
         uploadedCount += await uploadSalesChunk(chunk, importBatchId, importDepartmentId, importedAt);
-        const progressRate = selectedCsvFile.size > 0
-          ? Math.min(100, (uploadedBytes / selectedCsvFile.size) * 100)
+        const progressRate = parsedRowCount > 0
+          ? Math.min(100, (uploadedCount / parsedRowCount) * 100)
           : 0;
 
         setImportResultMessage(
@@ -507,64 +695,14 @@ export default function Dashboard() {
         );
       };
 
-      while (true) {
-        const { value, done } = await reader.read();
-
-        if (done) {
-          bufferedText += decoder.decode();
-          break;
-        }
-
-        uploadedBytes += value?.byteLength ?? 0;
-        bufferedText += decoder.decode(value, { stream: true });
-
-        if (isFirstChunk) {
-          bufferedText = bufferedText.replace(/^\uFEFF/, '');
-          isFirstChunk = false;
-        }
-
-        const { records, remainder } = extractCsvRecords(bufferedText);
-        bufferedText = remainder;
-
-        for (const rawLine of records) {
-          const trimmedLine = rawLine.trim();
-          if (!trimmedLine) continue;
-
-          if (!headers) {
-            headers = parseCsvLine(trimmedLine);
-            continue;
-          }
-
-          const row = buildCsvRow(headers, trimmedLine);
-          if (!row) continue;
-
-          pendingRows.push(row);
-          parsedRowCount += 1;
-
-          if (pendingRows.length >= uploadChunkSize) {
-            await flushPendingRows();
-          }
-        }
-      }
-
-      const trailingLine = bufferedText.trim();
-      if (trailingLine) {
-        if (!headers) {
-          headers = parseCsvLine(trailingLine);
-        } else {
-          const row = buildCsvRow(headers, trailingLine);
-          if (row) {
-            pendingRows.push(row);
-            parsedRowCount += 1;
-          }
-        }
-      }
-
       if (!headers || parsedRowCount === 0) {
         throw new Error('CSVに取込対象の行がありません。');
       }
 
-      await flushPendingRows();
+      for (let index = 0; index < rows.length; index += uploadChunkSize) {
+        const chunk = rows.slice(index, index + uploadChunkSize);
+        await flushPendingRows(chunk);
+      }
 
       const finalizeRes = await authFetch('/api/import/sales/finalize', {
         method: 'POST',
@@ -587,8 +725,11 @@ export default function Dashboard() {
       }
 
       const importDepartmentName = departmentOptions.find((d) => d.id === importDepartmentId)?.name ?? importDepartmentId;
+      const replacedMonths = Array.isArray(finalizeResult?.replaced_months)
+        ? finalizeResult.replaced_months.join(', ')
+        : '';
       setImportResultMessage(
-        `CSV取込と同期処理が完了しました。部署: ${importDepartmentName} / 取り込み日時: ${importedAtInput.replace('T', ' ')} / 取込件数: ${uploadedCount}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
+        `CSV取込と同期処理が完了しました。部署: ${importDepartmentName} / 取り込み日時: ${importedAtInput.replace('T', ' ')} / 対象月: ${replacedMonths || '判定不可'} / 取込件数: ${uploadedCount}件 / 置換raw件数: ${finalizeResult?.deleted_raw_rows ?? 0}件 / 置換売上件数: ${finalizeResult?.deleted_sales_rows ?? 0}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
       );
       setSelectedCsvFile(null);
       await fetchPendingMergeCount();
@@ -985,6 +1126,71 @@ export default function Dashboard() {
                   className="block w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
                 />
               </label>
+
+              <label className="block text-sm text-zinc-700">
+                <span className="mb-1 block font-medium">月締め管理対象月</span>
+                <input
+                  type="month"
+                  value={importClosureMonth}
+                  onChange={e => setImportClosureMonth(e.target.value)}
+                  disabled={isImportingCsv || isMonthClosureUpdating}
+                  className="block w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+
+            <div className="mb-4 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-zinc-800">月次締め</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    未締め月は、その月の既存CSV売上を削除して今回の取込内容で上書きします。
+                  </p>
+                  <p className="mt-2 text-sm">
+                    状態:
+                    <span className={`ml-2 rounded-full px-2.5 py-1 text-xs font-bold ${importMonthClosed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {isMonthClosureLoading ? '確認中...' : importMonthClosed ? '締め済み' : '未締め'}
+                    </span>
+                  </p>
+                  {importMonthClosedAt && (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      締め日時: {importMonthClosedAt.replace('T', ' ').slice(0, 16)}
+                      {importMonthClosedByName ? ` / ${importMonthClosedByName}` : ''}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={toggleImportMonthClosure}
+                  disabled={!importDepartmentId || !importClosureMonth || isMonthClosureLoading || isMonthClosureUpdating || isImportingCsv}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 ${importMonthClosed ? 'bg-zinc-600 hover:bg-zinc-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                >
+                  {isMonthClosureUpdating ? '更新中...' : importMonthClosed ? '締め解除' : '月次締め'}
+                </button>
+              </div>
+
+              {importMonthMessage && (
+                <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                  {importMonthMessage}
+                </div>
+              )}
+
+              {recentImportClosedMonths.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-2 text-xs font-medium text-zinc-500">最近の締め月</p>
+                  <div className="flex flex-wrap gap-2">
+                    {recentImportClosedMonths.slice(0, 6).map((row) => (
+                      <span
+                        key={`${row.target_year_month}-${row.closed_at ?? 'open'}`}
+                        className="rounded-full bg-white px-2.5 py-1 text-xs text-zinc-600 ring-1 ring-zinc-200"
+                      >
+                        {row.target_year_month}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <input

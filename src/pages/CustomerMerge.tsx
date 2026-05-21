@@ -15,22 +15,89 @@ interface MergeCandidate {
 }
 
 export default function CustomerMerge() {
-  const { logout } = useAuth();
+  const { user, logout, isLoading: isAuthLoading } = useAuth();
   const [candidates, setCandidates] = useState<MergeCandidate[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [merging, setMerging] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  async function loadPendingCount() {
+    const res = await authFetch(`/api/merge/candidates/count?ts=${Date.now()}`, {
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      let message = '受注確認候補件数の取得に失敗しました';
+      try {
+        const payload = await res.json();
+        if (typeof payload?.error === 'string' && payload.error) {
+          message = payload.error;
+        }
+      } catch {
+        const text = await res.text().catch(() => '');
+        if (text) {
+          message = text;
+        }
+      }
+      throw new Error(message);
+    }
+
+    const data = await res.json();
+    const count = typeof data?.pending_count === 'number' ? data.pending_count : 0;
+    setPendingCount(count);
+    return count;
+  }
+
   async function loadCandidates() {
     try {
-      const res = await authFetch('/api/merge/candidates');
-      if (!res.ok) throw new Error();
-      const data = await res.json();
+      setError('');
+      const count = await loadPendingCount();
+
+      const fetchCandidates = async () => authFetch(`/api/merge/candidates?ts=${Date.now()}`, {
+        cache: 'no-store',
+      });
+
+      let res = await fetchCandidates();
+      if (!res.ok) {
+        let message = '受注確認候補の取得に失敗しました';
+        try {
+          const payload = await res.json();
+          if (typeof payload?.error === 'string' && payload.error) {
+            message = payload.error;
+          }
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text) {
+            message = text;
+          }
+        }
+        throw new Error(message);
+      }
+      let data = await res.json();
+
+      // 件数APIでは候補ありなのに一覧が空なら、一度だけ再取得して揺れを吸収する
+      if (count > 0 && Array.isArray(data) && data.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        res = await fetchCandidates();
+        if (!res.ok) {
+          throw new Error('受注確認候補一覧の再取得に失敗しました');
+        }
+        data = await res.json();
+      }
+
+      if (count > 0 && Array.isArray(data) && data.length === 0) {
+        throw new Error(`受注確認候補は ${count} 件ありますが、一覧の取得結果が空でした`);
+      }
+
       setCandidates(data ?? []);
-    } catch {
-      console.error('failed to load merge candidates');
+    } catch (fetchError) {
+      console.error('failed to load merge candidates', fetchError);
       setCandidates([]);
+      setPendingCount(0);
+      setError(fetchError instanceof Error ? fetchError.message : '受注確認候補の取得に失敗しました');
     }
   }
 
@@ -68,16 +135,27 @@ export default function CustomerMerge() {
 
   useEffect(() => {
     async function init() {
+      if (isAuthLoading) {
+        return;
+      }
+
+      if (!user?.id) {
+        setCandidates([]);
+        setLoading(false);
+        setError('ログイン情報の確認中に候補を取得できませんでした。ページを再読み込みしてください。');
+        return;
+      }
+
       setLoading(true);
       await loadCandidates();
       setLoading(false);
     }
     init();
-  }, []);
+  }, [isAuthLoading, user?.id]);
 
   function getScoreColor(score: number) {
     if (score >= 0.9) return 'text-emerald-600 bg-emerald-50';
-    if (score >= 0.7) return 'text-amber-600 bg-amber-50';
+    if (score >= 0.8) return 'text-amber-600 bg-amber-50';
     return 'text-red-500 bg-red-50';
   }
 
@@ -92,9 +170,9 @@ export default function CustomerMerge() {
         <div className="flex min-w-0 items-center gap-2">
           <GitMerge className="h-5 w-5 text-indigo-600" />
           <h1 className="truncate text-base font-bold text-zinc-800 sm:text-lg">受注確認</h1>
-          {candidates.length > 0 && (
+          {pendingCount > 0 && (
             <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-bold text-white">
-              {candidates.length}
+              {pendingCount}
             </span>
           )}
         </div>
@@ -132,8 +210,29 @@ export default function CustomerMerge() {
             className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center shadow-sm sm:py-20"
           >
             <CheckCircle className="mb-4 h-12 w-12 text-emerald-500" />
-            <p className="text-lg font-semibold text-zinc-700">受注確認候補はありません</p>
-            <p className="mt-1 text-sm text-zinc-400">CSV取込後に同期処理を実行してください</p>
+            <p className="text-lg font-semibold text-zinc-700">
+              {error ? '受注確認候補を取得できませんでした' : '受注確認候補はありません'}
+            </p>
+            <p className="mt-1 text-sm text-zinc-400">
+              {error || 'CSV取込後に同期処理を実行してください'}
+            </p>
+            {!error && pendingCount > 0 && (
+              <p className="mt-2 text-sm font-medium text-amber-600">
+                候補件数は {pendingCount} 件あります。再読み込みしてください。
+              </p>
+            )}
+            {error && (
+              <button
+                type="button"
+                onClick={() => {
+                  setLoading(true);
+                  void loadCandidates().finally(() => setLoading(false));
+                }}
+                className="mt-5 rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+              >
+                再読み込み
+              </button>
+            )}
           </motion.div>
         )}
 

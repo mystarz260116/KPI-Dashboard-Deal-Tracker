@@ -3,6 +3,12 @@ import { similarity } from '../../lib/mergeUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { parseDepartmentId, SALES_IMPORT_RAW_TABLE } from '../../../api/_lib/regions.js';
 import { syncRegionalSalesImportArtifacts } from '../../../api/_lib/salesImport.js';
+import {
+  discardImportBatch,
+  getBatchTargetMonths,
+  getClosedMonths,
+  replaceOpenMonthSalesData,
+} from '../../../api/_lib/salesImportMonthClosures.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -19,6 +25,32 @@ export default async function handler(req: any, res: any) {
 
     if (!batchId || !departmentId) {
       return res.status(400).json({ error: 'import_batch_id and department_id are required' });
+    }
+
+    const targetYearMonths = await getBatchTargetMonths(departmentId, batchId);
+    if (targetYearMonths.length === 0) {
+      return res.status(400).json({ error: '取込バッチに対象月のデータがありません。' });
+    }
+
+    const closedMonths = await getClosedMonths(departmentId, targetYearMonths);
+    if (closedMonths.length > 0) {
+      await discardImportBatch(departmentId, batchId);
+      return res.status(409).json({
+        error: `締め済みの月が含まれているため取込できません: ${closedMonths.map((row: any) => row.target_year_month).join(', ')}`,
+        closed_months: closedMonths.map((row: any) => row.target_year_month),
+      });
+    }
+
+    let replacedMonthResult = {
+      deletedRawRows: 0,
+      deletedSalesRows: 0,
+    };
+
+    try {
+      replacedMonthResult = await replaceOpenMonthSalesData(departmentId, batchId, targetYearMonths);
+    } catch (replaceError) {
+      console.error('sales import finalize replace open month data error:', replaceError);
+      return res.status(500).json({ error: 'month replacement failed' });
     }
 
     const { data: prospects, error: prospectsError } = await supabaseAdmin
@@ -107,7 +139,7 @@ export default async function handler(req: any, res: any) {
 
       (customers ?? []).forEach((customer: any) => {
         const score = similarity(prospectName, customer.name ?? '');
-        if (score < 0.6) return;
+        if (score < 0.8) return;
 
         const pairKey = `${prospect.id}::${customer.code}`;
         if (rejectedPairs.has(pairKey)) return;
@@ -127,6 +159,9 @@ export default async function handler(req: any, res: any) {
         success: true,
         synced: true,
         inserted_count: 0,
+        replaced_months: targetYearMonths,
+        deleted_raw_rows: replacedMonthResult.deletedRawRows,
+        deleted_sales_rows: replacedMonthResult.deletedSalesRows,
         customer_external_staff_maps_upserted: departmentSyncResult.customer_external_staff_maps_upserted,
         customer_external_staff_maps_upserted_department: departmentSyncResult.customer_external_staff_maps_upserted,
         department_customers_upserted: departmentSyncResult.customers_upserted,
@@ -151,6 +186,9 @@ export default async function handler(req: any, res: any) {
       success: true,
       synced: true,
       inserted_count: candidateRows.length,
+      replaced_months: targetYearMonths,
+      deleted_raw_rows: replacedMonthResult.deletedRawRows,
+      deleted_sales_rows: replacedMonthResult.deletedSalesRows,
       customer_external_staff_maps_upserted: departmentSyncResult.customer_external_staff_maps_upserted,
       customer_external_staff_maps_upserted_department: departmentSyncResult.customer_external_staff_maps_upserted,
       department_customers_upserted: departmentSyncResult.customers_upserted,

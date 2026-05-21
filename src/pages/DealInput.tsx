@@ -131,7 +131,9 @@ export default function DealInput() {
 
   const fetchMergeCandidateCount = async () => {
   try {
-    const res = await authFetch('/api/merge/candidates/count');
+    const res = await authFetch(`/api/merge/candidates/count?ts=${Date.now()}`, {
+      cache: 'no-store',
+    });
     if (!res.ok) {
       setMergeCandidateCount(0);
       return;

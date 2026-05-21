@@ -1,0 +1,3 @@
+-- Historical placeholder migration.
+-- This version exists in the remote migration history, so we keep a no-op file
+-- locally to align the migration directory before applying newer migrations.

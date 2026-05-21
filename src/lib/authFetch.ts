@@ -8,7 +8,7 @@ supabase.auth.onAuthStateChange((_event, session) => {
 });
 
 async function getAccessToken() {
-  if (cachedAccessToken !== undefined) {
+  if (cachedAccessToken) {
     return cachedAccessToken;
   }
 

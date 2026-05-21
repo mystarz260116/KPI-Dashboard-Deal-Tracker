@@ -31,10 +31,14 @@ function expandBudgetYearMonthFormats(yearMonths: string[]) {
 
     if (year && Number.isFinite(monthNumber)) {
       const paddedMonth = String(monthNumber).padStart(2, '0');
+      const shortMonth = new Date(Number(year), monthNumber - 1, 1).toLocaleString('en-US', { month: 'short' });
+      const shortYear = year.slice(-2);
       variants.add(`${year}/${monthNumber}`);
       variants.add(`${year}/${paddedMonth}`);
       variants.add(`${year}-${monthNumber}`);
       variants.add(`${year}-${paddedMonth}`);
+      variants.add(`${shortMonth}-${shortYear}`);
+      variants.add(`${shortMonth}-${year}`);
     }
   });
 
@@ -278,19 +282,30 @@ export default async function handler(req: any, res: any) {
       console.error('kpi merged sales error:', e);
     }
 
-    let budgetsQuery = supabaseAdmin
-      .from('budgets')
-      .select('user_id, external_staff_code, department_id, target_year_month, target_amount')
-      .in('target_year_month', budgetMonthKeys);
+    const buildBudgetsQuery = (selectClause: string) => {
+      let query = supabaseAdmin
+        .from('budgets')
+        .select(selectClause)
+        .in('target_year_month', budgetMonthKeys);
 
-    if (granularity === 'department' && allowedDepartmentIds.length > 0) {
-      budgetsQuery = budgetsQuery.in('department_id', allowedDepartmentIds);
-    }
-    if (granularity === 'individual' && userId) {
-      budgetsQuery = budgetsQuery.eq('user_id', userId);
+      if (granularity === 'department' && allowedDepartmentIds.length > 0) {
+        query = query.in('department_id', allowedDepartmentIds);
+      }
+      if (granularity === 'individual' && userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      return query;
+    };
+
+    let budgetsResult = await buildBudgetsQuery('user_id, external_staff_code, department_id, target_year_month, target_amount, "KPI"');
+
+    if (budgetsResult.error && String(budgetsResult.error.message ?? '').includes('KPI')) {
+      console.warn('kpi budgets fallback: KPI column not available yet, retrying without KPI');
+      budgetsResult = await buildBudgetsQuery('user_id, external_staff_code, department_id, target_year_month, target_amount');
     }
 
-    const { data: budgetsData, error: budgetsError } = await budgetsQuery;
+    const { data: budgetsData, error: budgetsError } = budgetsResult;
 
     if (budgetsError) {
       console.error('kpi budgets error:', budgetsError);
@@ -366,6 +381,7 @@ export default async function handler(req: any, res: any) {
     const wonRankingMap = new Map<string, number>();
     const salesRankingMap = new Map<string, number>();
     const budgetByUserMap = new Map<string, number>();
+    const visitGoalByUserMap = new Map<string, number>();
 
     const scopedProfiles = users.filter((u) => allowedUserIds.has(u.id));
     const profileIdsByDepartment = new Map<number, string[]>();
@@ -400,6 +416,14 @@ export default async function handler(req: any, res: any) {
       const amount = Number(b.target_amount ?? 0);
       if (!Number.isFinite(amount) || !b.user_id) return;
       budgetByUserMap.set(String(b.user_id), (budgetByUserMap.get(String(b.user_id)) ?? 0) + amount);
+
+      const visitGoal = Number(b.KPI ?? 0);
+      if (Number.isFinite(visitGoal) && visitGoal > 0) {
+        visitGoalByUserMap.set(
+          String(b.user_id),
+          (visitGoalByUserMap.get(String(b.user_id)) ?? 0) + visitGoal
+        );
+      }
     });
 
     scopedCurrentDeals.forEach((d: any) => {
@@ -458,7 +482,7 @@ export default async function handler(req: any, res: any) {
         sales: Math.round(salesRankingMap.get(user.name) ?? 0),
         budget: Math.round(budgetByUserMap.get(user.id) ?? 0),
         visits: visitRankingMap.get(user.name) ?? 0,
-        visit_goal: null,
+        visit_goal: visitGoalByUserMap.get(user.id) ?? null,
         won_count: wonRankingMap.get(user.name) ?? 0,
       }))
       .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));

@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import finalizeHandler from '../src/server-handlers/import-sales/finalize.js';
+import closeMonthHandler from '../src/server-handlers/import-sales/close-month.js';
+import monthClosuresHandler from '../src/server-handlers/import-sales/month-closures.js';
 import uploadHandler from '../src/server-handlers/import-sales/upload.js';
 
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
@@ -29,6 +31,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (route === 'sales/finalize') {
     return finalizeHandler(req, res);
+  }
+
+  if (route === 'sales/close-month') {
+    return closeMonthHandler(req, res);
+  }
+
+  if (route === 'sales/month-closures') {
+    return monthClosuresHandler(req, res);
   }
 
   return res.status(404).json({ error: 'Not found' });
