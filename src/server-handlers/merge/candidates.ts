@@ -24,7 +24,7 @@ export default async function handler(req: any, res: any) {
         customers(name)
       `)
       .eq('decision', 'pending')
-      .gte('match_score', 0.8)
+      .gte('match_score', 0.95)
       .order('match_score', { ascending: false });
 
     if (error) {

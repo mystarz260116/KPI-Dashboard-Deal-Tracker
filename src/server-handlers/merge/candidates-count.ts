@@ -16,7 +16,7 @@ export default async function handler(req: any, res: any) {
       .from('customer_merge_candidates')
       .select('prospect_customer_id', { count: 'exact', head: true })
       .eq('decision', 'pending')
-      .gte('match_score', 0.8);
+      .gte('match_score', 0.95);
 
     if (error) {
       console.error('merge candidates count error:', error);

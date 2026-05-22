@@ -70,7 +70,7 @@ export default async function handler(req: any, res: any) {
 
       (customers ?? []).forEach((customer: any) => {
         const score = similarity(prospectName, customer.name ?? '');
-        if (score < 0.8) return;
+        if (score < 0.95) return;
 
         candidateRows.push({
           prospect_customer_id: prospect.id,
