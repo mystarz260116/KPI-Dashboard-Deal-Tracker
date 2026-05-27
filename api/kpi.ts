@@ -7,7 +7,6 @@ import {
 } from '../src/lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth.js';
 import {
-  fetchCustomerCodesByProfileId,
   fetchRegionalSalesRows,
   fetchRegionalSalesTotal,
 } from './_lib/regionalReads.js';
@@ -61,28 +60,6 @@ function getKpiRoute(req: any) {
 
   const pathname = new URL(req.url ?? '/api/kpi', 'http://localhost').pathname;
   return pathname.replace(/^\/api\/kpi\/?/, '');
-}
-
-async function fetchSalesImportRowsTotal(
-  startDate: string,
-  endExclusiveDate: string,
-  allowedCustomerCodes?: Set<string>,
-  departmentId?: number
-) {
-  const customerCodes = allowedCustomerCodes
-    ? Array.from(allowedCustomerCodes)
-    : null;
-
-  if (customerCodes && customerCodes.length === 0) {
-    return 0;
-  }
-
-  return fetchRegionalSalesTotal({
-    startDate,
-    endExclusiveDate,
-    customerCodes: customerCodes ?? undefined,
-    departmentId,
-  });
 }
 
 function getPreviousYearRange(start: Date, endExclusive: Date) {
@@ -188,12 +165,6 @@ export default async function handler(req: any, res: any) {
 
     const allowedUserIds = new Set(filteredUsers.map((u) => u.id));
     const allowedDepartmentIds = Array.from(new Set(filteredUsers.map((u) => u.department_id).filter(Boolean)));
-    const selectedSalesDepartmentId = granularity === 'department' && selectedDepartment
-      ? selectedDepartment
-      : granularity === 'individual'
-        ? users.find((u) => u.id === userId)?.department_id ?? null
-        : null;
-
     const { data: createdProspects, error: createdProspectsError } = await supabaseAdmin
       .from('prospect_customers')
       .select('id, status, merged_customer_code, merged_at, created_by, created_at')
@@ -216,25 +187,6 @@ export default async function handler(req: any, res: any) {
     if (mergedProspectsInPeriodError) {
       console.error('kpi merged prospects error:', mergedProspectsInPeriodError);
       return res.status(500).json({ error: 'merged prospects fetch failed' });
-    }
-
-    let allowedCustomerCodes = new Set<string>();
-
-    if (granularity === 'individual') {
-      const selectedUserRow = users.find((u) => u.id === userId);
-      let customerCodes: string[] = [];
-
-      try {
-        customerCodes = await fetchCustomerCodesByProfileId(
-          userId,
-          selectedUserRow?.department_id ?? null
-        );
-      } catch (customerCodesError) {
-        console.error('kpi customer codes by profile error:', customerCodesError);
-        return res.status(500).json({ error: 'customer codes fetch failed' });
-      }
-
-      allowedCustomerCodes = new Set(customerCodes);
     }
 
     const { data: currentDeals, error: currentDealsError } = await supabaseAdmin
@@ -323,30 +275,18 @@ export default async function handler(req: any, res: any) {
       return allowedUserIds.has(b.user_id);
     });
 
-    let sharedSalesTotal = 0;
-    let sharedPreviousSalesTotal = 0;
-    let scopedSalesRows: any[] = [];
-    const salesFilterCodes = granularity === 'individual' ? allowedCustomerCodes : undefined;
+    let currentSalesRows: any[] = [];
+    let previousSalesRows: any[] = [];
 
     try {
-      [sharedSalesTotal, sharedPreviousSalesTotal, scopedSalesRows] = await Promise.all([
-        fetchSalesImportRowsTotal(
-          currentStart,
-          currentEnd,
-          salesFilterCodes,
-          selectedSalesDepartmentId ?? undefined
-        ),
-        fetchSalesImportRowsTotal(
-          previousStart,
-          previousEnd,
-          salesFilterCodes,
-          selectedSalesDepartmentId ?? undefined
-        ),
+      [currentSalesRows, previousSalesRows] = await Promise.all([
         fetchRegionalSalesRows({
           startDate: currentStart,
           endExclusiveDate: currentEnd,
-          customerCodes: salesFilterCodes ? Array.from(salesFilterCodes) : undefined,
-          departmentId: selectedSalesDepartmentId ?? undefined,
+        }),
+        fetchRegionalSalesRows({
+          startDate: previousStart,
+          endExclusiveDate: previousEnd,
         }),
       ]);
     } catch (salesImportRowsError) {
@@ -358,13 +298,6 @@ export default async function handler(req: any, res: any) {
       const amount = Number(b.target_amount ?? 0);
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0);
-
-    const achievementRate = budgetTotal > 0 ? Number(((sharedSalesTotal / budgetTotal) * 100).toFixed(1)) : 0;
-    const changeRate = sharedPreviousSalesTotal > 0
-      ? Number((((sharedSalesTotal - sharedPreviousSalesTotal) / sharedPreviousSalesTotal) * 100).toFixed(1))
-      : sharedSalesTotal > 0
-        ? null
-        : 0;
 
     const newProspectsCount = scopedCreatedProspects.length;
     const mergedProspectsCount = scopedCreatedProspects.filter((p: any) =>
@@ -382,6 +315,7 @@ export default async function handler(req: any, res: any) {
     const salesRankingMap = new Map<string, number>();
     const budgetByUserMap = new Map<string, number>();
     const visitGoalByUserMap = new Map<string, number>();
+    const userById = new Map(users.map((user) => [user.id, user]));
 
     const scopedProfiles = users.filter((u) => allowedUserIds.has(u.id));
     const profileIdsByDepartment = new Map<number, string[]>();
@@ -393,6 +327,8 @@ export default async function handler(req: any, res: any) {
     });
 
     const profileStaffCodeMap = new Map<string, string>();
+    const scopedCodeOwners = new Map<string, Set<string>>();
+
     for (const [departmentId, profileIds] of profileIdsByDepartment.entries()) {
       const { data: profileStaffMapsData, error: profileStaffMapsError } = await supabaseAdmin
         .from('profile_external_staff_maps')
@@ -407,10 +343,38 @@ export default async function handler(req: any, res: any) {
 
       (profileStaffMapsData ?? []).forEach((row: any) => {
         if (row.profile_id && row.external_staff_code) {
-          profileStaffCodeMap.set(String(row.external_staff_code), String(row.profile_id));
+          const code = String(row.external_staff_code);
+          profileStaffCodeMap.set(
+            `${departmentId}|${code}`,
+            String(row.profile_id)
+          );
+
+          const owners = scopedCodeOwners.get(code) ?? new Set<string>();
+          owners.add(String(row.profile_id));
+          scopedCodeOwners.set(code, owners);
         }
       });
     }
+
+    const uniqueScopedCodeMap = new Map<string, string>();
+    scopedCodeOwners.forEach((owners, code) => {
+      if (owners.size === 1) {
+        uniqueScopedCodeMap.set(code, Array.from(owners)[0]);
+      }
+    });
+
+    const resolveSalesRowProfileId = (row: any) => {
+      const staffCode = row.external_staff_code ? String(row.external_staff_code) : '';
+      if (!staffCode) return null;
+
+      const departmentKey = `${row.department_id}|${staffCode}`;
+      const exactProfileId = profileStaffCodeMap.get(departmentKey);
+      if (exactProfileId) {
+        return exactProfileId;
+      }
+
+      return uniqueScopedCodeMap.get(staffCode) ?? null;
+    };
 
     scopedBudgets.forEach((b: any) => {
       const amount = Number(b.target_amount ?? 0);
@@ -427,7 +391,7 @@ export default async function handler(req: any, res: any) {
     });
 
     scopedCurrentDeals.forEach((d: any) => {
-      const user = users.find((u) => u.id === d.user_id);
+      const user = userById.get(d.user_id);
       if (!user) return;
 
       const isVisitAction = d.executed_action_type
@@ -435,43 +399,72 @@ export default async function handler(req: any, res: any) {
         : d.activity_type === 'visit';
 
       if (isVisitAction) {
-        visitRankingMap.set(user.name, (visitRankingMap.get(user.name) ?? 0) + 1);
+        visitRankingMap.set(user.id, (visitRankingMap.get(user.id) ?? 0) + 1);
       }
     });
 
     scopedMergedProspectsInPeriod.forEach((p: any) => {
-      const user = users.find((u) => u.id === p.created_by);
+      const user = userById.get(p.created_by);
       if (!user) return;
 
-      wonRankingMap.set(user.name, (wonRankingMap.get(user.name) ?? 0) + 1);
+      wonRankingMap.set(user.id, (wonRankingMap.get(user.id) ?? 0) + 1);
     });
 
-    scopedSalesRows.forEach((row: any) => {
-      const staffCode = row.external_staff_code ? String(row.external_staff_code) : '';
-      const profileId = staffCode ? profileStaffCodeMap.get(staffCode) : null;
+    currentSalesRows.forEach((row: any) => {
+      const profileId = resolveSalesRowProfileId(row);
       if (!profileId || !allowedUserIds.has(profileId)) return;
 
-      const user = users.find((u) => u.id === profileId);
+      const user = userById.get(profileId);
       if (!user) return;
 
       const amount = Number(row.amount ?? 0);
       if (!Number.isFinite(amount)) return;
 
-      salesRankingMap.set(user.name, (salesRankingMap.get(user.name) ?? 0) + amount);
+      salesRankingMap.set(user.id, (salesRankingMap.get(user.id) ?? 0) + amount);
     });
 
+    const sumSalesRows = (rows: any[], options?: { scoped?: boolean }) =>
+      rows.reduce((sum: number, row: any) => {
+        const amount = Number(row.amount ?? 0);
+        if (!Number.isFinite(amount)) return sum;
+
+        if (!options?.scoped) {
+          return sum + amount;
+        }
+
+        const profileId = resolveSalesRowProfileId(row);
+        if (!profileId || !allowedUserIds.has(profileId)) {
+          return sum;
+        }
+
+        return sum + amount;
+      }, 0);
+
+    const useScopedSales = granularity !== 'all';
+    const sharedSalesTotal = sumSalesRows(currentSalesRows, { scoped: useScopedSales });
+    const sharedPreviousSalesTotal = sumSalesRows(previousSalesRows, { scoped: useScopedSales });
+    const achievementRate = budgetTotal > 0 ? Number(((sharedSalesTotal / budgetTotal) * 100).toFixed(1)) : 0;
+    const changeRate = sharedPreviousSalesTotal > 0
+      ? Number((((sharedSalesTotal - sharedPreviousSalesTotal) / sharedPreviousSalesTotal) * 100).toFixed(1))
+      : sharedSalesTotal > 0
+        ? null
+        : 0;
+
     const visit_ranking = Array.from(visitRankingMap.entries())
-      .map(([name, count]) => ({ name, count }))
+      .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
+      .filter((item) => item.name)
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
     const won_ranking = Array.from(wonRankingMap.entries())
-      .map(([name, count]) => ({ name, count }))
+      .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
+      .filter((item) => item.name)
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
     const sales_ranking = Array.from(salesRankingMap.entries())
-      .map(([name, sales]) => ({ name, sales: Math.round(sales) }))
+      .map(([userId, sales]) => ({ name: userById.get(userId)?.name ?? '', sales: Math.round(sales) }))
+      .filter((item) => item.name)
       .sort((a, b) => b.sales - a.sales)
       .slice(0, 10);
 
@@ -479,11 +472,11 @@ export default async function handler(req: any, res: any) {
       .map((user) => ({
         user_id: user.id,
         name: user.name,
-        sales: Math.round(salesRankingMap.get(user.name) ?? 0),
+        sales: Math.round(salesRankingMap.get(user.id) ?? 0),
         budget: Math.round(budgetByUserMap.get(user.id) ?? 0),
-        visits: visitRankingMap.get(user.name) ?? 0,
+        visits: visitRankingMap.get(user.id) ?? 0,
         visit_goal: visitGoalByUserMap.get(user.id) ?? null,
-        won_count: wonRankingMap.get(user.name) ?? 0,
+        won_count: wonRankingMap.get(user.id) ?? 0,
       }))
       .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
 

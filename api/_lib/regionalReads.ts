@@ -8,27 +8,43 @@ type SalesRowFilters = {
 };
 
 export async function fetchRegionalSalesRows(filters: SalesRowFilters) {
-  let query = supabaseAdmin
-    .from('sales_import_rows')
-    .select('department_id, customer_code, amount, delivery_date, external_staff_code')
-    .gte('delivery_date', filters.startDate)
-    .lt('delivery_date', filters.endExclusiveDate);
+  const pageSize = 1000;
+  const allRows: any[] = [];
+  let from = 0;
 
-  if (filters.departmentId) {
-    query = query.eq('department_id', filters.departmentId);
+  while (true) {
+    let query = supabaseAdmin
+      .from('sales_import_rows')
+      .select('department_id, customer_code, amount, delivery_date, external_staff_code')
+      .gte('delivery_date', filters.startDate)
+      .lt('delivery_date', filters.endExclusiveDate)
+      .range(from, from + pageSize - 1);
+
+    if (filters.departmentId) {
+      query = query.eq('department_id', filters.departmentId);
+    }
+
+    if (filters.customerCodes && filters.customerCodes.length > 0) {
+      query = query.in('customer_code', filters.customerCodes);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    const batch = data ?? [];
+    allRows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
   }
 
-  if (filters.customerCodes && filters.customerCodes.length > 0) {
-    query = query.in('customer_code', filters.customerCodes);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw error;
-  }
-
-  return data ?? [];
+  return allRows;
 }
 
 export async function fetchRegionalSalesTotal(filters: SalesRowFilters) {

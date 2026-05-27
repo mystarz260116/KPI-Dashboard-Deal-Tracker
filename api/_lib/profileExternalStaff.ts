@@ -27,7 +27,6 @@ export async function syncRegionalProfileExternalStaffMaps(
   options?: { threshold?: number }
 ) {
   const threshold = options?.threshold ?? 0.4;
-
   const [profilesResult, staffsResult] = await Promise.all([
     supabaseAdmin
       .from('profiles')
