@@ -327,6 +327,22 @@ export default function DealProgressDashboard() {
       return selectedTemperatures.includes(normalizedTemperature);
     })
   ), [deals, selectedTemperatures]);
+  const sortedDepartments = useMemo(
+    () => [...departments].sort((a, b) => a.name.localeCompare(b.name, 'ja')),
+    [departments]
+  );
+  const scopedUsers = useMemo(
+    () => (
+      selectedDepartmentId
+        ? users.filter((entry) => String(entry.department_id ?? '') === selectedDepartmentId)
+        : users
+    ),
+    [selectedDepartmentId, users]
+  );
+  const sortedScopedUsers = useMemo(
+    () => [...scopedUsers].sort((a, b) => a.name.localeCompare(b.name, 'ja')),
+    [scopedUsers]
+  );
 
   const groupedDeals = useMemo(() => (
     COLUMNS.reduce<Record<DealPipelineStage, BoardDeal[]>>((acc, column) => {
@@ -533,7 +549,7 @@ export default function DealProgressDashboard() {
                 ))}
               </div>
 
-              <div className="flex min-w-[220px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
+              <div className="flex min-w-[240px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
                 <Users className="h-4 w-4 text-zinc-400" />
                 <select
                   value={selectedUserId}
@@ -541,15 +557,15 @@ export default function DealProgressDashboard() {
                   className="w-full bg-transparent text-sm font-medium text-zinc-700 outline-none"
                 >
                   <option value="">担当者すべて</option>
-                  {users.map((user) => (
+                  {sortedScopedUsers.map((user) => (
                     <option key={user.id} value={user.id}>
-                      {user.name}
+                      {user.name}（{user.department ?? ''}）
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="flex min-w-[220px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
+              <div className="flex min-w-[240px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
                 <Users className="h-4 w-4 text-zinc-400" />
                 <select
                   value={selectedDepartmentId}
@@ -557,7 +573,7 @@ export default function DealProgressDashboard() {
                   className="w-full bg-transparent text-sm font-medium text-zinc-700 outline-none"
                 >
                   <option value="">部署すべて</option>
-                  {departments.map((department) => (
+                  {sortedDepartments.map((department) => (
                     <option key={department.id} value={department.id}>
                       {department.name}
                     </option>

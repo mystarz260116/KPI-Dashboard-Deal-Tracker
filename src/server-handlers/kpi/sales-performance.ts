@@ -27,8 +27,17 @@ type ProfileRow = {
   id: string;
   name: string;
   department_id: number | null;
+  last_login_at?: string | null;
+  login_count?: number | null;
   departments?: { name?: string | null } | null;
 };
+type LoginEventRow = {
+  user_id: string;
+};
+type DealPageViewRow = {
+  viewer_user_id: string;
+};
+const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 
 function parseDepartmentId(value: unknown) {
   const raw = String(value ?? '').trim();
@@ -128,7 +137,7 @@ export default async function handler(req: any, res: any) {
 
     const { data: profilesData, error: profilesError } = await supabaseAdmin
       .from('profiles')
-      .select('id, name, department_id, departments(name)')
+      .select('id, name, department_id, last_login_at, login_count, departments(name)')
       .order('name', { ascending: true });
 
     if (profilesError) {
@@ -136,7 +145,9 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'sales performance profiles fetch failed' });
     }
 
-    const users = (profilesData ?? []) as ProfileRow[];
+    const users = ((profilesData ?? []) as ProfileRow[]).filter(
+      (row) => !EXCLUDED_DASHBOARD_DEPARTMENTS.has(row.departments?.name ?? '')
+    );
     const filteredUsers = users.filter((row) => {
       if (departmentId !== null && row.department_id !== departmentId) {
         return false;
@@ -150,6 +161,40 @@ export default async function handler(req: any, res: any) {
     });
 
     const allowedUserIds = new Set(filteredUsers.map((row) => row.id));
+    const allowedUserIdList = Array.from(allowedUserIds);
+
+    let loginEventsData: LoginEventRow[] = [];
+    let dealPageViewsData: DealPageViewRow[] = [];
+
+    if (allowedUserIdList.length > 0) {
+      const [loginEventsResult, dealPageViewsResult] = await Promise.all([
+        supabaseAdmin
+          .from('login_events')
+          .select('user_id')
+          .gte('logged_in_at', from)
+          .lt('logged_in_at', toExclusive)
+          .in('user_id', allowedUserIdList),
+        supabaseAdmin
+          .from('deal_page_views')
+          .select('viewer_user_id')
+          .gte('viewed_at', from)
+          .lt('viewed_at', toExclusive)
+          .in('viewer_user_id', allowedUserIdList),
+      ]);
+
+      if (loginEventsResult.error) {
+        console.error('sales performance login events error:', loginEventsResult.error);
+        return res.status(500).json({ error: 'sales performance login events fetch failed' });
+      }
+
+      if (dealPageViewsResult.error) {
+        console.error('sales performance deal page views error:', dealPageViewsResult.error);
+        return res.status(500).json({ error: 'sales performance deal page views fetch failed' });
+      }
+
+      loginEventsData = (loginEventsResult.data ?? []) as LoginEventRow[];
+      dealPageViewsData = (dealPageViewsResult.data ?? []) as DealPageViewRow[];
+    }
 
     let dealsQuery = supabaseAdmin
       .from('deals')
@@ -349,6 +394,25 @@ export default async function handler(req: any, res: any) {
       count,
     }));
 
+    const loginCountMap = new Map<string, number>();
+    for (const row of loginEventsData) {
+      loginCountMap.set(row.user_id, (loginCountMap.get(row.user_id) ?? 0) + 1);
+    }
+
+    const dealViewCountMap = new Map<string, number>();
+    for (const row of dealPageViewsData) {
+      dealViewCountMap.set(row.viewer_user_id, (dealViewCountMap.get(row.viewer_user_id) ?? 0) + 1);
+    }
+
+    const usageMembers = filteredUsers.map((row) => ({
+      user_id: row.id,
+      name: row.name ?? '未設定',
+      department: row.departments?.name ?? '',
+      last_login_at: row.last_login_at ?? null,
+      login_count: loginCountMap.get(row.id) ?? 0,
+      deal_view_count: dealViewCountMap.get(row.id) ?? 0,
+    }));
+
     return res.status(200).json({
       period,
       from,
@@ -364,6 +428,7 @@ export default async function handler(req: any, res: any) {
         upcoming_next_actions: upcomingNextActions,
       },
       rankings,
+      usage_members: usageMembers,
       temperature_portfolio: temperaturePortfolio,
       phase_distribution: phaseDistribution,
       action_distribution: actionDistribution,

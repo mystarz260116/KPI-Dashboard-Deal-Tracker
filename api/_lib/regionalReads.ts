@@ -15,7 +15,7 @@ export async function fetchRegionalSalesRows(filters: SalesRowFilters) {
   while (true) {
     let query = supabaseAdmin
       .from('sales_import_rows')
-      .select('department_id, customer_code, amount, delivery_date, external_staff_code')
+      .select('department_id, customer_code, amount, delivery_date, external_staff_code, normalized_product_code, normalized_product_name')
       .gte('delivery_date', filters.startDate)
       .lt('delivery_date', filters.endExclusiveDate)
       .range(from, from + pageSize - 1);

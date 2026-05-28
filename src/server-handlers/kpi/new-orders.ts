@@ -6,6 +6,7 @@ import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../ap
 import { fetchRegionalSalesRows } from '../../../api/_lib/regionalReads.js';
 
 type Granularity = 'all' | 'department' | 'individual';
+const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -44,12 +45,14 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'profiles fetch failed' });
     }
 
-    const users = (profilesData ?? []).map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      department_id: p.department_id,
-      department: p.departments?.name ?? '',
-    }));
+    const users = (profilesData ?? [])
+      .map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        department_id: p.department_id,
+        department: p.departments?.name ?? '',
+      }))
+      .filter((user) => !EXCLUDED_DASHBOARD_DEPARTMENTS.has(user.department));
 
     let filteredUsers = users;
     const selectedDepartmentId = departmentIdParam ? Number(departmentIdParam) : null;

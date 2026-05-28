@@ -15,6 +15,9 @@ import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performanc
 
 
 type Granularity = 'all' | 'department' | 'individual';
+const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
+const HEAD_OFFICE_SALES_NAME = '本社売上';
+const UNCLASSIFIED_PRODUCT_LABEL = '未分類';
 
 function expandBudgetYearMonthFormats(yearMonths: string[]) {
   const variants = new Set<string>();
@@ -142,12 +145,14 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'kpi profiles fetch failed' });
     }
 
-    const users = (profilesData ?? []).map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      department_id: p.department_id,
-      department: p.departments?.name ?? '',
-    }));
+    const users = (profilesData ?? [])
+      .map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        department_id: p.department_id,
+        department: p.departments?.name ?? '',
+      }))
+      .filter((user) => !EXCLUDED_DASHBOARD_DEPARTMENTS.has(user.department));
 
     let filteredUsers = users;
     const selectedDepartment = departmentIdParam
@@ -294,6 +299,27 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'sales import rows fetch failed' });
     }
 
+    const salesRowDepartmentIds = Array.from(new Set(
+      [...currentSalesRows, ...previousSalesRows]
+        .map((row: any) => Number(row.department_id))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    ));
+
+    let productCategoryMasters: any[] = [];
+    if (salesRowDepartmentIds.length > 0) {
+      const { data: productCategoryMastersData, error: productCategoryMastersError } = await supabaseAdmin
+        .from('product_category_masters')
+        .select('department_id, normalized_product_code, normalized_product_name, proposal_category, major_category')
+        .in('department_id', salesRowDepartmentIds);
+
+      if (productCategoryMastersError) {
+        console.error('kpi product category masters error:', productCategoryMastersError);
+        return res.status(500).json({ error: 'product category masters fetch failed' });
+      }
+
+      productCategoryMasters = productCategoryMastersData ?? [];
+    }
+
     const budgetTotal = scopedBudgets.reduce((sum: number, b: any) => {
       const amount = Number(b.target_amount ?? 0);
       return sum + (Number.isFinite(amount) ? amount : 0);
@@ -316,10 +342,13 @@ export default async function handler(req: any, res: any) {
     const budgetByUserMap = new Map<string, number>();
     const visitGoalByUserMap = new Map<string, number>();
     const userById = new Map(users.map((user) => [user.id, user]));
+    const headOfficeSalesUserId = users.find(
+      (user) => user.name === HEAD_OFFICE_SALES_NAME || user.department === HEAD_OFFICE_SALES_NAME
+    )?.id ?? null;
 
-    const scopedProfiles = users.filter((u) => allowedUserIds.has(u.id));
+    const mappableUsers = users.filter((u) => u.id !== headOfficeSalesUserId);
     const profileIdsByDepartment = new Map<number, string[]>();
-    scopedProfiles.forEach((u) => {
+    mappableUsers.forEach((u) => {
       if (!u.department_id) return;
       const current = profileIdsByDepartment.get(u.department_id) ?? [];
       current.push(u.id);
@@ -365,7 +394,7 @@ export default async function handler(req: any, res: any) {
 
     const resolveSalesRowProfileId = (row: any) => {
       const staffCode = row.external_staff_code ? String(row.external_staff_code) : '';
-      if (!staffCode) return null;
+      if (!staffCode) return headOfficeSalesUserId;
 
       const departmentKey = `${row.department_id}|${staffCode}`;
       const exactProfileId = profileStaffCodeMap.get(departmentKey);
@@ -373,7 +402,7 @@ export default async function handler(req: any, res: any) {
         return exactProfileId;
       }
 
-      return uniqueScopedCodeMap.get(staffCode) ?? null;
+      return uniqueScopedCodeMap.get(staffCode) ?? headOfficeSalesUserId;
     };
 
     scopedBudgets.forEach((b: any) => {
@@ -410,45 +439,129 @@ export default async function handler(req: any, res: any) {
       wonRankingMap.set(user.id, (wonRankingMap.get(user.id) ?? 0) + 1);
     });
 
-    currentSalesRows.forEach((row: any) => {
-      const profileId = resolveSalesRowProfileId(row);
-      if (!profileId || !allowedUserIds.has(profileId)) return;
+    const buildSalesByUserMap = (rows: any[], options?: { includeHeadOffice?: boolean }) => {
+      const result = new Map<string, number>();
 
-      const user = userById.get(profileId);
-      if (!user) return;
-
-      const amount = Number(row.amount ?? 0);
-      if (!Number.isFinite(amount)) return;
-
-      salesRankingMap.set(user.id, (salesRankingMap.get(user.id) ?? 0) + amount);
-    });
-
-    const sumSalesRows = (rows: any[], options?: { scoped?: boolean }) =>
-      rows.reduce((sum: number, row: any) => {
-        const amount = Number(row.amount ?? 0);
-        if (!Number.isFinite(amount)) return sum;
-
-        if (!options?.scoped) {
-          return sum + amount;
-        }
-
+      rows.forEach((row: any) => {
         const profileId = resolveSalesRowProfileId(row);
         if (!profileId || !allowedUserIds.has(profileId)) {
-          return sum;
+          return;
         }
 
+        if (!options?.includeHeadOffice && profileId === headOfficeSalesUserId) {
+          return;
+        }
+
+        const user = userById.get(profileId);
+        if (!user) return;
+
+        const amount = Number(row.amount ?? 0);
+        if (!Number.isFinite(amount)) return;
+
+        result.set(user.id, (result.get(user.id) ?? 0) + amount);
+      });
+
+      return result;
+    };
+
+    const currentSalesAllMap = buildSalesByUserMap(currentSalesRows, { includeHeadOffice: true });
+    const previousSalesAllMap = buildSalesByUserMap(previousSalesRows, { includeHeadOffice: true });
+    const previousSalesRankingMap = buildSalesByUserMap(previousSalesRows);
+    buildSalesByUserMap(currentSalesRows).forEach((amount, userId) => {
+      salesRankingMap.set(userId, amount);
+    });
+
+    const firstNonEmpty = (...values: Array<unknown>) => {
+      for (const value of values) {
+        const normalized = String(value ?? '').trim();
+        if (normalized) return normalized;
+      }
+      return '';
+    };
+
+    const productCategoryLabelMap = new Map<string, string>();
+    productCategoryMasters.forEach((row: any) => {
+      const departmentId = Number(row.department_id);
+      const productCode = String(row.normalized_product_code ?? '').trim();
+      if (!Number.isFinite(departmentId) || !productCode) return;
+
+      productCategoryLabelMap.set(
+        `${departmentId}|${productCode}`,
+        firstNonEmpty(
+          row.major_category,
+          row.proposal_category,
+          row.normalized_product_name,
+          row.normalized_product_code,
+          UNCLASSIFIED_PRODUCT_LABEL,
+        )
+      );
+    });
+
+    const buildProductDepartmentMap = (rows: any[]) => {
+      const result = new Map<string, number>();
+
+      rows.forEach((row: any) => {
+        const profileId = resolveSalesRowProfileId(row);
+        if (!profileId || !allowedUserIds.has(profileId)) {
+          return;
+        }
+
+        const amount = Number(row.amount ?? 0);
+        if (!Number.isFinite(amount)) return;
+
+        const productCode = String(row.normalized_product_code ?? '').trim();
+        const safeLabel = firstNonEmpty(
+          productCategoryLabelMap.get(`${row.department_id}|${productCode}`),
+          UNCLASSIFIED_PRODUCT_LABEL,
+        );
+
+        result.set(safeLabel, (result.get(safeLabel) ?? 0) + amount);
+      });
+
+      return result;
+    };
+
+    const currentProductDepartmentMap = buildProductDepartmentMap(currentSalesRows);
+    const previousProductDepartmentMap = buildProductDepartmentMap(previousSalesRows);
+
+    const sumSalesMap = (salesMap: Map<string, number>) =>
+      Array.from(salesMap.entries()).reduce((sum, [userId, amount]) => {
+        if (!allowedUserIds.has(userId)) return sum;
         return sum + amount;
       }, 0);
 
-    const useScopedSales = granularity !== 'all';
-    const sharedSalesTotal = sumSalesRows(currentSalesRows, { scoped: useScopedSales });
-    const sharedPreviousSalesTotal = sumSalesRows(previousSalesRows, { scoped: useScopedSales });
+    const sharedSalesTotal = sumSalesMap(currentSalesAllMap);
+    const sharedPreviousSalesTotal = sumSalesMap(previousSalesAllMap);
     const achievementRate = budgetTotal > 0 ? Number(((sharedSalesTotal / budgetTotal) * 100).toFixed(1)) : 0;
     const changeRate = sharedPreviousSalesTotal > 0
       ? Number((((sharedSalesTotal - sharedPreviousSalesTotal) / sharedPreviousSalesTotal) * 100).toFixed(1))
       : sharedSalesTotal > 0
         ? null
         : 0;
+
+    const currentProductDepartmentTotal = Array.from(currentProductDepartmentMap.values())
+      .reduce((sum, value) => sum + value, 0);
+
+    const product_department_sales = Array.from(currentProductDepartmentMap.entries())
+      .map(([label, sales]) => {
+        const previousSales = previousProductDepartmentMap.get(label) ?? 0;
+        const departmentChangeRate = previousSales > 0
+          ? Number((((sales - previousSales) / previousSales) * 100).toFixed(1))
+          : sales > 0
+            ? null
+            : 0;
+
+        return {
+          key: label,
+          label,
+          sales: Math.round(sales),
+          share: currentProductDepartmentTotal > 0
+            ? Number(((sales / currentProductDepartmentTotal) * 100).toFixed(1))
+            : 0,
+          change_rate: departmentChangeRate,
+        };
+      })
+      .sort((a, b) => b.sales - a.sales || a.label.localeCompare(b.label, 'ja'));
 
     const visit_ranking = Array.from(visitRankingMap.entries())
       .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
@@ -463,8 +576,10 @@ export default async function handler(req: any, res: any) {
       .slice(0, 10);
 
     const sales_ranking = Array.from(salesRankingMap.entries())
-      .map(([userId, sales]) => ({ name: userById.get(userId)?.name ?? '', sales: Math.round(sales) }))
+      .map(([userId, sales]) => ({ user_id: userId, name: userById.get(userId)?.name ?? '', sales: Math.round(sales) }))
+      .filter((item) => item.user_id !== headOfficeSalesUserId)
       .filter((item) => item.name)
+      .map(({ name, sales }) => ({ name, sales }))
       .sort((a, b) => b.sales - a.sales)
       .slice(0, 10);
 
@@ -478,6 +593,7 @@ export default async function handler(req: any, res: any) {
         visit_goal: visitGoalByUserMap.get(user.id) ?? null,
         won_count: wonRankingMap.get(user.id) ?? 0,
       }))
+      .filter((row) => row.user_id !== headOfficeSalesUserId)
       .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
 
     const new_orders = scopedMergedProspectsInPeriod
@@ -514,7 +630,7 @@ export default async function handler(req: any, res: any) {
       new_prospects_count: newProspectsCount,
       merged_new_orders_count: mergedProspectsCount,
       avg_order_value: avgOrderValue,
-      product_department_sales: [],
+      product_department_sales,
       new_orders,
     });
   } catch (error) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,6 +49,27 @@ interface SalesDetail {
   amount: number;
 }
 
+interface DealComment {
+  id: string;
+  deal_id: string | null;
+  clinic_kind: ClinicKind;
+  clinic_id: string;
+  body: string;
+  created_at: string;
+  author_user_id: string;
+  author_name: string;
+}
+
+interface DealReactionSummary {
+  deal_id: string;
+  counts: {
+    like: number;
+    helpful: number;
+    congrats: number;
+  };
+  mine: string[];
+}
+
 const TEMPERATURE_LABELS: Record<NonNullable<ClinicDeal['dealTemperature']>, string> = {
   A: 'A すぐ案件化',
   B: 'B 見込みあり',
@@ -81,9 +102,15 @@ export default function ClinicDetail() {
   });
   const [salesMonthTotal, setSalesMonthTotal] = useState(0);
   const [salesDetails, setSalesDetails] = useState<SalesDetail[]>([]);
+  const [commentsByDealId, setCommentsByDealId] = useState<Record<string, DealComment[]>>({});
+  const [reactionsByDealId, setReactionsByDealId] = useState<Record<string, DealReactionSummary>>({});
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [submittingCommentDealId, setSubmittingCommentDealId] = useState<string | null>(null);
+  const [submittingReactionKey, setSubmittingReactionKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingDealId, setDeletingDealId] = useState<string | null>(null);
+  const recordedViewKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -122,6 +149,8 @@ export default function ClinicDetail() {
           setAssignedStaffs([]);
           setSalesMonthTotal(0);
           setSalesDetails([]);
+          setCommentsByDealId({});
+          setReactionsByDealId({});
           setIsLoading(false);
           return;
         }
@@ -140,11 +169,13 @@ export default function ClinicDetail() {
           setAssignedStaffs([]);
           setSalesMonthTotal(0);
           setSalesDetails([]);
+          setCommentsByDealId({});
+          setReactionsByDealId({});
           setIsLoading(false);
           return;
         }
 
-        setDeals((dealsResult.data ?? []).map((deal: any) => ({
+        const mappedDeals = (dealsResult.data ?? []).map((deal: any) => ({
           id: deal.id,
           dealDate: deal.deal_date,
           notes: deal.notes ?? undefined,
@@ -157,7 +188,77 @@ export default function ClinicDetail() {
           proposalCategory: deal.proposal_category ?? undefined,
           proposalCategories: Array.isArray(deal.proposal_categories) ? deal.proposal_categories : undefined,
           productName: deal.product_name ?? undefined,
-        })));
+        }));
+        setDeals(mappedDeals);
+
+        const dealIds = mappedDeals.map((deal) => deal.id);
+        if (dealIds.length > 0) {
+          const [commentsResponse, reactionsResponse] = await Promise.all([
+            authFetch('/api/deals?path=comments', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                mode: 'list',
+                deal_ids: dealIds.join(','),
+              }),
+            }),
+            authFetch('/api/deals?path=reactions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                mode: 'list',
+                deal_ids: dealIds.join(','),
+              }),
+            }),
+          ]);
+
+          if (!commentsResponse.ok) {
+            const payload = await commentsResponse.json().catch(() => null);
+            console.error('clinic detail comments fetch error:', payload);
+            setError('コメントの取得に失敗しました');
+            setCommentsByDealId({});
+            setReactionsByDealId({});
+            setIsLoading(false);
+            return;
+          }
+
+          if (!reactionsResponse.ok) {
+            const payload = await reactionsResponse.json().catch(() => null);
+            console.error('clinic detail reactions fetch error:', payload);
+            setError('リアクションの取得に失敗しました');
+            setCommentsByDealId({});
+            setReactionsByDealId({});
+            setIsLoading(false);
+            return;
+          }
+
+          const commentsPayload = await commentsResponse.json();
+          const reactionsPayload = await reactionsResponse.json();
+
+          const nextCommentsByDealId: Record<string, DealComment[]> = {};
+          for (const comment of Array.isArray(commentsPayload) ? commentsPayload : []) {
+            const dealId = String(comment.deal_id ?? '').trim();
+            if (!dealId) continue;
+            nextCommentsByDealId[dealId] = [...(nextCommentsByDealId[dealId] ?? []), comment];
+          }
+
+          const nextReactionsByDealId: Record<string, DealReactionSummary> = {};
+          for (const reaction of Array.isArray(reactionsPayload) ? reactionsPayload : []) {
+            const dealId = String(reaction.deal_id ?? '').trim();
+            if (!dealId) continue;
+            nextReactionsByDealId[dealId] = reaction;
+          }
+
+          setCommentsByDealId(nextCommentsByDealId);
+          setReactionsByDealId(nextReactionsByDealId);
+        } else {
+          setCommentsByDealId({});
+          setReactionsByDealId({});
+        }
       } catch (loadError) {
         console.error('clinic detail unexpected error:', loadError);
         setError('医院ページの読み込みに失敗しました');
@@ -166,6 +267,8 @@ export default function ClinicDetail() {
         setAssignedStaffs([]);
         setSalesMonthTotal(0);
         setSalesDetails([]);
+        setCommentsByDealId({});
+        setReactionsByDealId({});
       } finally {
         setIsLoading(false);
       }
@@ -173,6 +276,40 @@ export default function ClinicDetail() {
 
     load();
   }, [params.kind, params.clinicId, salesMonth, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !isClinicKind(params.kind) || !params.clinicId) {
+      return;
+    }
+
+    const clinicId = decodeURIComponent(params.clinicId);
+    const recordKey = `${user.id}:${params.kind}:${clinicId}`;
+    if (recordedViewKeyRef.current === recordKey) {
+      return;
+    }
+
+    recordedViewKeyRef.current = recordKey;
+
+    const recordView = async () => {
+      try {
+        await authFetch('/api/deals?path=view', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            clinic_kind: params.kind,
+            clinic_id: clinicId,
+            deal_id: deals[0]?.id ?? null,
+          }),
+        });
+      } catch (recordError) {
+        console.error('clinic detail view tracking error:', recordError);
+      }
+    };
+
+    recordView();
+  }, [deals, params.clinicId, params.kind, user?.id]);
 
   const handleLogout = async () => {
     await logout();
@@ -206,6 +343,111 @@ export default function ClinicDetail() {
       setError('商談履歴の削除に失敗しました');
     } finally {
       setDeletingDealId(null);
+    }
+  };
+
+  const handleSubmitComment = async (deal: ClinicDeal) => {
+    if (!clinic) {
+      return;
+    }
+    const body = commentDrafts[deal.id]?.trim() ?? '';
+    if (!body) return;
+
+    setSubmittingCommentDealId(deal.id);
+    setError('');
+
+    try {
+      const response = await authFetch('/api/deals?path=comments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clinic_kind: clinic.kind,
+          clinic_id: clinic.id,
+          deal_id: deal.id,
+          body,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        console.error('clinic detail comment post error:', payload);
+        setError('コメントの投稿に失敗しました');
+        return;
+      }
+
+      const newComment = await response.json();
+      setCommentsByDealId((current) => ({
+        ...current,
+        [deal.id]: [newComment, ...(current[deal.id] ?? [])],
+      }));
+      setCommentDrafts((current) => ({
+        ...current,
+        [deal.id]: '',
+      }));
+    } catch (submitError) {
+      console.error('clinic detail comment post unexpected error:', submitError);
+      setError('コメントの投稿に失敗しました');
+    } finally {
+      setSubmittingCommentDealId(null);
+    }
+  };
+
+  const handleToggleReaction = async (dealId: string, reactionType: 'like' | 'helpful' | 'congrats') => {
+    setSubmittingReactionKey(`${dealId}:${reactionType}`);
+    setError('');
+
+    try {
+      const response = await authFetch('/api/deals?path=reactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          deal_id: dealId,
+          reaction_type: reactionType,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        console.error('clinic detail reaction post error:', payload);
+        setError('リアクションの更新に失敗しました');
+        return;
+      }
+
+      const payload = await response.json();
+      setReactionsByDealId((current) => {
+        const currentEntry = current[dealId] ?? {
+          deal_id: dealId,
+          counts: { like: 0, helpful: 0, congrats: 0 },
+          mine: [],
+        };
+        const nextMine = new Set(currentEntry.mine);
+        const nextCounts = { ...currentEntry.counts };
+        if (payload.active) {
+          nextMine.add(reactionType);
+          nextCounts[reactionType] += 1;
+        } else {
+          nextMine.delete(reactionType);
+          nextCounts[reactionType] = Math.max(0, nextCounts[reactionType] - 1);
+        }
+
+        return {
+          ...current,
+          [dealId]: {
+            deal_id: dealId,
+            counts: nextCounts,
+            mine: Array.from(nextMine),
+          },
+        };
+      });
+    } catch (reactionError) {
+      console.error('clinic detail reaction post unexpected error:', reactionError);
+      setError('リアクションの更新に失敗しました');
+    } finally {
+      setSubmittingReactionKey(null);
     }
   };
 
@@ -570,6 +812,83 @@ export default function ClinicDetail() {
                             次アクション: {deal.nextAction}
                           </div>
                         )}
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {([
+                            ['like', 'いいね'],
+                            ['helpful', '参考になった'],
+                            ['congrats', 'おめでとう'],
+                          ] as const).map(([reactionType, label]) => {
+                            const reactionState = reactionsByDealId[deal.id];
+                            const isActive = reactionState?.mine.includes(reactionType) ?? false;
+                            const count = reactionState?.counts[reactionType] ?? 0;
+                            const isSubmitting = submittingReactionKey === `${deal.id}:${reactionType}`;
+
+                            return (
+                              <button
+                                key={reactionType}
+                                type="button"
+                                onClick={() => handleToggleReaction(deal.id, reactionType)}
+                                disabled={isSubmitting}
+                                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                                  isActive
+                                    ? 'bg-purple-100 text-purple-700'
+                                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                                } disabled:opacity-50`}
+                              >
+                                {label} {count > 0 ? `${count}` : ''}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-4 rounded-xl bg-zinc-50 p-4">
+                          <textarea
+                            value={commentDrafts[deal.id] ?? ''}
+                            onChange={(event) => setCommentDrafts((current) => ({
+                              ...current,
+                              [deal.id]: event.target.value,
+                            }))}
+                            placeholder="この商談へのコメントを書く"
+                            className="min-h-[80px] w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                          />
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleSubmitComment(deal)}
+                              disabled={submittingCommentDealId === deal.id || !(commentDrafts[deal.id] ?? '').trim()}
+                              className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {submittingCommentDealId === deal.id ? '投稿中...' : 'コメントを投稿'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 space-y-2">
+                          {(commentsByDealId[deal.id] ?? []).length === 0 ? (
+                            <div className="rounded-lg bg-zinc-50 px-3 py-3 text-sm text-zinc-500">
+                              まだコメントはありません。
+                            </div>
+                          ) : (
+                            (commentsByDealId[deal.id] ?? []).map((comment) => (
+                              <div key={comment.id} className="rounded-lg border border-zinc-200 px-3 py-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-sm font-bold text-zinc-900">{comment.author_name}</p>
+                                  <p className="text-xs text-zinc-500">
+                                    {new Intl.DateTimeFormat('ja-JP', {
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    }).format(new Date(comment.created_at))}
+                                  </p>
+                                </div>
+                                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{comment.body}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
                     );
                   })}

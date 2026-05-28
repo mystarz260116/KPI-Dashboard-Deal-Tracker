@@ -48,6 +48,14 @@ type PerformanceData = {
     existing_count: number;
     won_count: number;
   }>;
+  usage_members: Array<{
+    user_id: string;
+    name: string;
+    department: string;
+    last_login_at: string | null;
+    login_count: number;
+    deal_view_count: number;
+  }>;
   temperature_portfolio: Array<{
     key: string;
     label: string;
@@ -63,6 +71,23 @@ type PerformanceData = {
     count: number;
   }>;
 };
+
+function formatUsageDateTime(value: string | null) {
+  if (!value) return '未ログイン';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '未ログイン';
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
 
 const PORTFOLIO_COLORS: Record<string, string> = {
   A: '#7c3aed',
@@ -239,6 +264,14 @@ export default function SalesPerformanceDashboard() {
       ? users.filter((entry) => String(entry.department_id ?? '') === selectedDepartmentId)
       : users
   ), [selectedDepartmentId, users]);
+  const sortedDepartments = useMemo(
+    () => [...departments].sort((a, b) => a.name.localeCompare(b.name, 'ja')),
+    [departments]
+  );
+  const sortedScopedUsers = useMemo(
+    () => [...scopedUsers].sort((a, b) => a.name.localeCompare(b.name, 'ja')),
+    [scopedUsers]
+  );
 
   const handleLogout = async () => {
     await logout();
@@ -320,7 +353,7 @@ export default function SalesPerformanceDashboard() {
                 />
               </div>
 
-              <div className="flex min-w-[220px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
+              <div className="flex min-w-[240px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
                 <Target className="h-4 w-4 text-zinc-400" />
                 <select
                   value={selectedDepartmentId}
@@ -331,7 +364,7 @@ export default function SalesPerformanceDashboard() {
                   className="w-full bg-transparent text-sm font-medium text-zinc-700 outline-none"
                 >
                   <option value="">部署すべて</option>
-                  {departments.map((department) => (
+                  {sortedDepartments.map((department) => (
                     <option key={department.id} value={department.id}>
                       {department.name}
                     </option>
@@ -339,7 +372,7 @@ export default function SalesPerformanceDashboard() {
                 </select>
               </div>
 
-              <div className="flex min-w-[240px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
+              <div className="flex min-w-[280px] items-center gap-2 rounded-2xl bg-zinc-50 px-3 py-2">
                 <Users className="h-4 w-4 text-zinc-400" />
                 <select
                   value={selectedUserId}
@@ -347,9 +380,9 @@ export default function SalesPerformanceDashboard() {
                   className="w-full bg-transparent text-sm font-medium text-zinc-700 outline-none"
                 >
                   <option value="">個人すべて</option>
-                  {scopedUsers.map((entry) => (
+                  {sortedScopedUsers.map((entry) => (
                     <option key={entry.id} value={entry.id}>
-                      {entry.name}
+                      {entry.name}（{entry.department ?? ''}）
                     </option>
                   ))}
                 </select>
@@ -521,6 +554,43 @@ export default function SalesPerformanceDashboard() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-3xl bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <Users className="h-5 w-5 text-indigo-600" />
+            <div>
+              <h2 className="text-lg font-bold text-zinc-900">活用状況</h2>
+              <p className="text-sm text-zinc-500">ログイン状況と商談閲覧状況を確認できます</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-100 text-left text-zinc-500">
+                  <th className="px-4 py-3 font-semibold">名前</th>
+                  <th className="px-4 py-3 font-semibold">部署</th>
+                  <th className="px-4 py-3 font-semibold">最終ログイン</th>
+                  <th className="px-4 py-3 font-semibold">ログイン回数</th>
+                  <th className="px-4 py-3 font-semibold">商談閲覧件数</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data?.usage_members ?? []).map((entry) => (
+                  <tr key={entry.user_id} className="border-b border-zinc-50 text-zinc-700">
+                    <td className="px-4 py-4 font-bold text-zinc-900">{entry.name}</td>
+                    <td className="px-4 py-4">{entry.department || '部署未設定'}</td>
+                    <td className="px-4 py-4">{formatUsageDateTime(entry.last_login_at)}</td>
+                    <td className="px-4 py-4 font-semibold text-zinc-900">{entry.login_count}回</td>
+                    <td className={`px-4 py-4 font-semibold ${entry.deal_view_count > 0 ? 'text-indigo-600' : 'text-zinc-400'}`}>
+                      {entry.deal_view_count}件
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

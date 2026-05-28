@@ -3,6 +3,7 @@ import finalizeHandler from '../src/server-handlers/import-sales/finalize.js';
 import closeMonthHandler from '../src/server-handlers/import-sales/close-month.js';
 import monthClosuresHandler from '../src/server-handlers/import-sales/month-closures.js';
 import uploadHandler from '../src/server-handlers/import-sales/upload.js';
+import productCategoryMasterUpsertHandler from '../src/server-handlers/import-product-categories/upsert.js';
 
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
   if (Array.isArray(pathValue)) {
@@ -39,6 +40,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (route === 'sales/month-closures') {
     return monthClosuresHandler(req, res);
+  }
+
+  if (route === 'product-categories/upsert') {
+    return productCategoryMasterUpsertHandler(req, res);
   }
 
   return res.status(404).json({ error: 'Not found' });

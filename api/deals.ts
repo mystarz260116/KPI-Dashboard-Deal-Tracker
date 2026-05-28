@@ -1,7 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import boardHandler from '../src/server-handlers/deals/board.js';
 import closeMonthHandler from '../src/server-handlers/deals/close-month.js';
+import commentsHandler from '../src/server-handlers/deals/comments.js';
+import reactionsHandler from '../src/server-handlers/deals/reactions.js';
 import statusHandler from '../src/server-handlers/deals/status.js';
+import viewHandler from '../src/server-handlers/deals/view.js';
 
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
   if (Array.isArray(pathValue)) {
@@ -34,6 +37,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (route === 'close-month') {
     return closeMonthHandler(req, res);
+  }
+
+  if (route === 'comments') {
+    return commentsHandler(req, res);
+  }
+
+  if (route === 'reactions') {
+    return reactionsHandler(req, res);
+  }
+
+  if (route === 'view') {
+    return viewHandler(req, res);
   }
 
   return res.status(404).json({ error: 'Not found' });

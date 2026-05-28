@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { authFetch } from '../lib/authFetch';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, Building2, Search, CalendarDays, ChevronLeft, ChevronRight,
@@ -27,6 +28,27 @@ interface Deal {
   dealTemperature?: 'A' | 'B' | 'C' | 'D' | 'E';
   nextActionType?: string;
   nextActionDate?: string;
+}
+
+interface DealComment {
+  id: string;
+  deal_id: string | null;
+  clinic_kind: 'customer' | 'prospect';
+  clinic_id: string;
+  body: string;
+  created_at: string;
+  author_user_id: string;
+  author_name: string;
+}
+
+interface DealReactionSummary {
+  deal_id: string;
+  counts: {
+    like: number;
+    helpful: number;
+    congrats: number;
+  };
+  mine: string[];
 }
 
 const ACTIVITY_LABELS: Record<Deal['activityType'], string> = {
@@ -93,6 +115,11 @@ export default function DealHistory() {
   const [filterType, setFilterType] = useState<Deal['activityType'] | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth);
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [commentsByDealId, setCommentsByDealId] = useState<Record<string, DealComment[]>>({});
+  const [reactionsByDealId, setReactionsByDealId] = useState<Record<string, DealReactionSummary>>({});
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [submittingCommentDealId, setSubmittingCommentDealId] = useState<string | null>(null);
+  const [submittingReactionKey, setSubmittingReactionKey] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [deletingDealId, setDeletingDealId] = useState<string | null>(null);
 
@@ -145,6 +172,70 @@ export default function DealHistory() {
       }));
 
       setDeals(results);
+
+      const dealIds = results.map((deal) => deal.id);
+      if (dealIds.length === 0) {
+        setCommentsByDealId({});
+        setReactionsByDealId({});
+        return;
+      }
+
+      const [commentsResponse, reactionsResponse] = await Promise.all([
+        authFetch('/api/deals?path=comments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            mode: 'list',
+            deal_ids: dealIds.join(','),
+          }),
+        }),
+        authFetch('/api/deals?path=reactions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            mode: 'list',
+            deal_ids: dealIds.join(','),
+          }),
+        }),
+      ]);
+
+      if (!commentsResponse.ok) {
+        setError('コメントの取得に失敗しました');
+        setCommentsByDealId({});
+        setReactionsByDealId({});
+        return;
+      }
+
+      if (!reactionsResponse.ok) {
+        setError('リアクションの取得に失敗しました');
+        setCommentsByDealId({});
+        setReactionsByDealId({});
+        return;
+      }
+
+      const commentsPayload = await commentsResponse.json();
+      const reactionsPayload = await reactionsResponse.json();
+
+      const nextCommentsByDealId: Record<string, DealComment[]> = {};
+      for (const comment of Array.isArray(commentsPayload) ? commentsPayload : []) {
+        const dealId = String(comment.deal_id ?? '').trim();
+        if (!dealId) continue;
+        nextCommentsByDealId[dealId] = [...(nextCommentsByDealId[dealId] ?? []), comment];
+      }
+
+      const nextReactionsByDealId: Record<string, DealReactionSummary> = {};
+      for (const reaction of Array.isArray(reactionsPayload) ? reactionsPayload : []) {
+        const dealId = String(reaction.deal_id ?? '').trim();
+        if (!dealId) continue;
+        nextReactionsByDealId[dealId] = reaction;
+      }
+
+      setCommentsByDealId(nextCommentsByDealId);
+      setReactionsByDealId(nextReactionsByDealId);
     };
 
     fetchDeals();
@@ -188,6 +279,104 @@ export default function DealHistory() {
       setError('商談履歴の削除に失敗しました');
     } finally {
       setDeletingDealId(null);
+    }
+  };
+
+  const handleSubmitComment = async (deal: Deal) => {
+    const body = commentDrafts[deal.id]?.trim() ?? '';
+    if (!body) return;
+
+    setSubmittingCommentDealId(deal.id);
+    setError('');
+
+    try {
+      const response = await authFetch('/api/deals?path=comments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clinic_kind: deal.clinicKind,
+          clinic_id: deal.clinicId,
+          deal_id: deal.id,
+          body,
+        }),
+      });
+
+      if (!response.ok) {
+        setError('コメントの投稿に失敗しました');
+        return;
+      }
+
+      const newComment = await response.json();
+      setCommentsByDealId((current) => ({
+        ...current,
+        [deal.id]: [newComment, ...(current[deal.id] ?? [])],
+      }));
+      setCommentDrafts((current) => ({
+        ...current,
+        [deal.id]: '',
+      }));
+    } catch (submitError) {
+      console.error('deal history comment post error:', submitError);
+      setError('コメントの投稿に失敗しました');
+    } finally {
+      setSubmittingCommentDealId(null);
+    }
+  };
+
+  const handleToggleReaction = async (dealId: string, reactionType: 'like' | 'helpful' | 'congrats') => {
+    setSubmittingReactionKey(`${dealId}:${reactionType}`);
+    setError('');
+
+    try {
+      const response = await authFetch('/api/deals?path=reactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          deal_id: dealId,
+          reaction_type: reactionType,
+        }),
+      });
+
+      if (!response.ok) {
+        setError('リアクションの更新に失敗しました');
+        return;
+      }
+
+      const payload = await response.json();
+      setReactionsByDealId((current) => {
+        const currentEntry = current[dealId] ?? {
+          deal_id: dealId,
+          counts: { like: 0, helpful: 0, congrats: 0 },
+          mine: [],
+        };
+        const nextMine = new Set(currentEntry.mine);
+        const nextCounts = { ...currentEntry.counts };
+        if (payload.active) {
+          nextMine.add(reactionType);
+          nextCounts[reactionType] += 1;
+        } else {
+          nextMine.delete(reactionType);
+          nextCounts[reactionType] = Math.max(0, nextCounts[reactionType] - 1);
+        }
+
+        return {
+          ...current,
+          [dealId]: {
+            deal_id: dealId,
+            counts: nextCounts,
+            mine: Array.from(nextMine),
+          },
+        };
+      });
+    } catch (reactionError) {
+      console.error('deal history reaction update error:', reactionError);
+      setError('リアクションの更新に失敗しました');
+    } finally {
+      setSubmittingReactionKey(null);
     }
   };
 
@@ -390,6 +579,83 @@ export default function DealHistory() {
                     {deal.nextActionDate ? `（${deal.nextActionDate}）` : ''}
                   </div>
                 )}
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {([
+                    ['like', 'いいね'],
+                    ['helpful', '参考になった'],
+                    ['congrats', 'おめでとう'],
+                  ] as const).map(([reactionType, label]) => {
+                    const reactionState = reactionsByDealId[deal.id];
+                    const isActive = reactionState?.mine.includes(reactionType) ?? false;
+                    const count = reactionState?.counts[reactionType] ?? 0;
+                    const isSubmitting = submittingReactionKey === `${deal.id}:${reactionType}`;
+
+                    return (
+                      <button
+                        key={reactionType}
+                        type="button"
+                        onClick={() => handleToggleReaction(deal.id, reactionType)}
+                        disabled={isSubmitting}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                          isActive
+                            ? 'bg-purple-100 text-purple-700'
+                            : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                        } disabled:opacity-50`}
+                      >
+                        {label} {count > 0 ? `${count}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 rounded-xl bg-zinc-50 p-4">
+                  <textarea
+                    value={commentDrafts[deal.id] ?? ''}
+                    onChange={(event) => setCommentDrafts((current) => ({
+                      ...current,
+                      [deal.id]: event.target.value,
+                    }))}
+                    placeholder="この商談へのコメントを書く"
+                    className="min-h-[80px] w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                  />
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitComment(deal)}
+                      disabled={submittingCommentDealId === deal.id || !(commentDrafts[deal.id] ?? '').trim()}
+                      className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {submittingCommentDealId === deal.id ? '投稿中...' : 'コメントを投稿'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {(commentsByDealId[deal.id] ?? []).length === 0 ? (
+                    <div className="rounded-lg bg-zinc-50 px-3 py-3 text-sm text-zinc-500">
+                      まだコメントはありません
+                    </div>
+                  ) : (
+                    (commentsByDealId[deal.id] ?? []).map((comment) => (
+                      <div key={comment.id} className="rounded-lg border border-zinc-200 px-3 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-bold text-zinc-900">{comment.author_name}</p>
+                          <p className="text-xs text-zinc-500">
+                            {new Intl.DateTimeFormat('ja-JP', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            }).format(new Date(comment.created_at))}
+                          </p>
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-700">{comment.body}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
               </motion.div>
             ))
           )}

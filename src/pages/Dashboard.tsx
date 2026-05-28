@@ -260,6 +260,15 @@ export default function Dashboard() {
   const departmentOptions = departments.length > 0 ? departments : userDepartmentOptions;
   const productDepartmentSales: ProductDepartmentPanelItem[] = data?.product_department_sales ?? [];
   const performanceRanking: PerformanceRankingItem[] = data?.performance_ranking ?? [];
+  const scopedUsers = selectedDept
+    ? users.filter((u) => String(u.department_id ?? '') === selectedDept)
+    : users;
+  const sortedDepartmentOptions = [...departmentOptions].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  const sortedScopedUsers = [...scopedUsers].sort((a, b) => {
+    const departmentCompare = (a.department ?? '').localeCompare((b.department ?? ''), 'ja');
+    if (departmentCompare !== 0) return departmentCompare;
+    return a.name.localeCompare(b.name, 'ja');
+  });
 
   const fetchPendingMergeCount = async () => {
     setIsMergeCountLoading(true);
@@ -903,7 +912,7 @@ export default function Dashboard() {
               setGranularity(e.target.value as Granularity);
               setSelectedDept('');
               setSelectedUser('');
-            }} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
+            }} className="min-w-[140px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
               <option value="all">全体</option>
               <option value="department">部署</option>
               <option value="individual">個人</option>
@@ -911,13 +920,13 @@ export default function Dashboard() {
           </div>
 
           {/* Department select */}
-          {granularity === 'department' && (
+          {(granularity === 'department' || granularity === 'individual') && (
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-zinc-400" />
               <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
-                <option value="">部署を選択</option>
-                {departmentOptions.map(d => (
+                className="min-w-[220px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
+                <option value="">{granularity === 'individual' ? '部署で絞る（任意）' : '部署を選択'}</option>
+                {sortedDepartmentOptions.map(d => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
@@ -929,9 +938,9 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-zinc-400" />
               <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
+                className="min-w-[280px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
                 <option value="">担当者を選択</option>
-                {users.map(u => (
+                {sortedScopedUsers.map(u => (
                   <option key={u.id} value={u.id}>
                     {u.name}（{u.department}）
                   </option>
@@ -978,7 +987,7 @@ export default function Dashboard() {
         </section>
 
         <section className="mb-8">
-          <SectionGroupTitle title="商品部門別" description="商品部門別の売上パネルを置く受け皿です。具体的な集計ロジックはあとから差し込めます。" />
+          <SectionGroupTitle title="商品部門別" description="商品マスターにひもづく部門別に、売上の構成と前期間比を見られるようにしています。" />
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
             className="rounded-xl bg-white p-6 shadow-sm">
             <SectionTitle title="商品部門別売上" color="#14b8a6" />
@@ -997,7 +1006,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-5 py-8 text-sm text-zinc-500">
-                商品部門別の集計ロジック待ちです。ここは「部門名 / 売上 / 構成比 / 前期間比」を並べる前提で、先にパネルだけ整えています。
+                商品マスターにひもづく売上がまだありません。商品分類マスターの設定後に、部門名ごとの売上・構成比・前期間比が表示されます。
               </div>
             )}
           </motion.div>

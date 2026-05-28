@@ -1,10 +1,10 @@
 // src/contexts/AuthContext.tsx
-
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import { User } from '../types';
 import { perfMark, perfMeasure } from '../lib/perf';
+import { authFetch } from '../lib/authFetch';
 
 interface AuthContextType {
   user: User | null;
@@ -23,6 +23,31 @@ export function useAuth() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const recordedLoginKeyRef = useRef<string | null>(null);
+
+  const recordLoginUsage = async (session: Session | null) => {
+    if (!session?.user) return;
+
+    const tokenKey = `${session.user.id}:${session.access_token}`;
+    if (recordedLoginKeyRef.current === tokenKey) {
+      return;
+    }
+
+    recordedLoginKeyRef.current = tokenKey;
+
+    try {
+      await authFetch('/api/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'record-login' }),
+      });
+    } catch (error) {
+      console.error('login usage tracking error:', error);
+      recordedLoginKeyRef.current = null;
+    }
+  };
 
   const buildUserFromSession = async (session: Session | null): Promise<User | null> => {
     if (!session?.user) return null;
@@ -68,6 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!isMounted) return;
 
       const user = await buildUserFromSession(session);
+      await recordLoginUsage(session);
       setUser(user);
       setIsLoading(false);
       perfMark('auth:init:end');
@@ -82,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const load = async () => {
         perfMark('auth:change:start');
         const user = await buildUserFromSession(session);
+        await recordLoginUsage(session);
         setUser(user);
         setIsLoading(false);
         perfMark('auth:change:end');

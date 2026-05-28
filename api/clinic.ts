@@ -137,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const { data: salesRows, error: salesError } = await supabaseAdmin
         .from('sales_import_rows')
-        .select('source_raw_id, delivery_date, amount')
+        .select('source_raw_id, delivery_date, amount, normalized_product_code, normalized_product_name')
         .eq('department_id', Number(profile.department_id))
         .eq('customer_code', customerCodeForMapping)
         .gte('delivery_date', monthStart)
@@ -179,7 +179,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           return {
             delivery_date: row.delivery_date ? String(row.delivery_date) : null,
-            product_name: String(raw?.['補綴物名'] ?? '').trim() || String(raw?.['明細区分'] ?? '').trim() || '未設定',
+            product_name:
+              String(row.normalized_product_name ?? '').trim()
+              || String(raw?.['補綴物名'] ?? '').trim()
+              || String(raw?.['明細区分'] ?? '').trim()
+              || '未設定',
             detail_category: raw?.['明細区分'] ? String(raw['明細区分']) : null,
             patient_name: raw?.['患者名'] ? String(raw['患者名']) : null,
             quantity: Number.isFinite(quantity) ? quantity : 0,
