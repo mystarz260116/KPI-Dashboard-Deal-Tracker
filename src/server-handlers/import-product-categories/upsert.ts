@@ -3,6 +3,7 @@ import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../ap
 
 type RawRow = {
   department_id?: unknown;
+  product_department_id?: unknown;
   normalized_product_code?: unknown;
   normalized_product_name?: unknown;
   proposal_category?: unknown;
@@ -47,8 +48,9 @@ export default async function handler(req: any, res: any) {
 
     const deduped = new Map<string, {
       department_id: number;
+      product_department_id: string | null;
       normalized_product_code: string;
-      normalized_product_name: string;
+      normalized_product_name: string | null;
       proposal_category: string | null;
       major_category: string | null;
       is_kpi_target: boolean;
@@ -59,16 +61,18 @@ export default async function handler(req: any, res: any) {
 
     for (const row of rows) {
       const departmentId = parseInteger((row as any).department_id, NaN);
+      const productDepartmentId = normalizeText((row as any).product_department_id);
       const normalizedProductCode = String((row as any).normalized_product_code ?? '').trim();
-      const normalizedProductName = String((row as any).normalized_product_name ?? '').trim();
+      const normalizedProductName = normalizeText((row as any).normalized_product_name);
 
-      if (!Number.isFinite(departmentId) || departmentId <= 0 || !normalizedProductCode || !normalizedProductName) {
+      if (!Number.isFinite(departmentId) || departmentId <= 0 || !normalizedProductCode) {
         continue;
       }
 
       const key = `${departmentId}|${normalizedProductCode}`;
       deduped.set(key, {
         department_id: departmentId,
+        product_department_id: productDepartmentId,
         normalized_product_code: normalizedProductCode,
         normalized_product_name: normalizedProductName,
         proposal_category: normalizeText((row as any).proposal_category),

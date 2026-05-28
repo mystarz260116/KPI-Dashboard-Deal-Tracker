@@ -306,10 +306,11 @@ export default async function handler(req: any, res: any) {
     ));
 
     let productCategoryMasters: any[] = [];
+    let productDepartments: any[] = [];
     if (salesRowDepartmentIds.length > 0) {
       const { data: productCategoryMastersData, error: productCategoryMastersError } = await supabaseAdmin
         .from('product_category_masters')
-        .select('department_id, normalized_product_code, normalized_product_name, proposal_category, major_category')
+        .select('department_id, normalized_product_code, product_department_id')
         .in('department_id', salesRowDepartmentIds);
 
       if (productCategoryMastersError) {
@@ -318,6 +319,18 @@ export default async function handler(req: any, res: any) {
       }
 
       productCategoryMasters = productCategoryMastersData ?? [];
+
+      const { data: productDepartmentsData, error: productDepartmentsError } = await supabaseAdmin
+        .from('product_departments')
+        .select('id, department_id, name')
+        .in('department_id', salesRowDepartmentIds);
+
+      if (productDepartmentsError) {
+        console.error('kpi product departments error:', productDepartmentsError);
+        return res.status(500).json({ error: 'product departments fetch failed' });
+      }
+
+      productDepartments = productDepartmentsData ?? [];
     }
 
     const budgetTotal = scopedBudgets.reduce((sum: number, b: any) => {
@@ -471,29 +484,25 @@ export default async function handler(req: any, res: any) {
       salesRankingMap.set(userId, amount);
     });
 
-    const firstNonEmpty = (...values: Array<unknown>) => {
-      for (const value of values) {
-        const normalized = String(value ?? '').trim();
-        if (normalized) return normalized;
+    const productDepartmentNameById = new Map<string, string>();
+    productDepartments.forEach((row: any) => {
+      const id = String(row.id ?? '').trim();
+      const name = String(row.name ?? '').trim();
+      if (id && name) {
+        productDepartmentNameById.set(id, name);
       }
-      return '';
-    };
+    });
 
-    const productCategoryLabelMap = new Map<string, string>();
+    const productCategoryDepartmentMap = new Map<string, string>();
     productCategoryMasters.forEach((row: any) => {
       const departmentId = Number(row.department_id);
       const productCode = String(row.normalized_product_code ?? '').trim();
-      if (!Number.isFinite(departmentId) || !productCode) return;
+      const productDepartmentId = String(row.product_department_id ?? '').trim();
+      if (!Number.isFinite(departmentId) || !productCode || !productDepartmentId) return;
 
-      productCategoryLabelMap.set(
+      productCategoryDepartmentMap.set(
         `${departmentId}|${productCode}`,
-        firstNonEmpty(
-          row.major_category,
-          row.proposal_category,
-          row.normalized_product_name,
-          row.normalized_product_code,
-          UNCLASSIFIED_PRODUCT_LABEL,
-        )
+        productDepartmentId,
       );
     });
 
@@ -510,10 +519,8 @@ export default async function handler(req: any, res: any) {
         if (!Number.isFinite(amount)) return;
 
         const productCode = String(row.normalized_product_code ?? '').trim();
-        const safeLabel = firstNonEmpty(
-          productCategoryLabelMap.get(`${row.department_id}|${productCode}`),
-          UNCLASSIFIED_PRODUCT_LABEL,
-        );
+        const productDepartmentId = productCategoryDepartmentMap.get(`${row.department_id}|${productCode}`) ?? '';
+        const safeLabel = productDepartmentNameById.get(productDepartmentId) ?? UNCLASSIFIED_PRODUCT_LABEL;
 
         result.set(safeLabel, (result.get(safeLabel) ?? 0) + amount);
       });
