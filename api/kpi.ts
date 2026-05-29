@@ -369,8 +369,6 @@ export default async function handler(req: any, res: any) {
     });
 
     const profileStaffCodeMap = new Map<string, string>();
-    const scopedCodeOwners = new Map<string, Set<string>>();
-
     for (const [departmentId, profileIds] of profileIdsByDepartment.entries()) {
       const { data: profileStaffMapsData, error: profileStaffMapsError } = await supabaseAdmin
         .from('profile_external_staff_maps')
@@ -390,20 +388,9 @@ export default async function handler(req: any, res: any) {
             `${departmentId}|${code}`,
             String(row.profile_id)
           );
-
-          const owners = scopedCodeOwners.get(code) ?? new Set<string>();
-          owners.add(String(row.profile_id));
-          scopedCodeOwners.set(code, owners);
         }
       });
     }
-
-    const uniqueScopedCodeMap = new Map<string, string>();
-    scopedCodeOwners.forEach((owners, code) => {
-      if (owners.size === 1) {
-        uniqueScopedCodeMap.set(code, Array.from(owners)[0]);
-      }
-    });
 
     const resolveSalesRowProfileId = (row: any) => {
       const staffCode = row.external_staff_code ? String(row.external_staff_code) : '';
@@ -415,7 +402,7 @@ export default async function handler(req: any, res: any) {
         return exactProfileId;
       }
 
-      return uniqueScopedCodeMap.get(staffCode) ?? headOfficeSalesUserId;
+      return headOfficeSalesUserId;
     };
 
     scopedBudgets.forEach((b: any) => {
