@@ -336,7 +336,7 @@ export default function Dashboard() {
     setCommentNotificationError('');
 
     try {
-      const response = await authFetch('/api/deals?path=notifications&limit=6', {
+      const response = await authFetch('/api/deals?path=notifications&limit=10', {
         cache: 'no-store',
       });
 

@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/deals/notifications-cleanup",
+      "schedule": "0 18 * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/api/customers/(.*)", "destination": "/api/customers?path=$1" },
     { "source": "/api/deals/(.*)", "destination": "/api/deals?path=$1" },

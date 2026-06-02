@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import boardHandler from '../src/server-handlers/deals/board.js';
 import closeMonthHandler from '../src/server-handlers/deals/close-month.js';
 import commentsHandler from '../src/server-handlers/deals/comments.js';
+import notificationsCleanupHandler from '../src/server-handlers/deals/notifications-cleanup.js';
 import notificationsHandler from '../src/server-handlers/deals/notifications.js';
 import reactionsHandler from '../src/server-handlers/deals/reactions.js';
 import statusHandler from '../src/server-handlers/deals/status.js';
@@ -46,6 +47,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (route === 'notifications') {
     return notificationsHandler(req, res);
+  }
+
+  if (route === 'notifications-cleanup') {
+    return notificationsCleanupHandler(req, res);
   }
 
   if (route === 'reactions') {

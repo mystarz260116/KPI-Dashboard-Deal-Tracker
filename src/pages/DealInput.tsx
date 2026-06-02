@@ -193,7 +193,7 @@ export default function DealInput() {
     setCommentNotificationError('');
 
     try {
-      const response = await authFetch('/api/deals?path=notifications&limit=5', {
+      const response = await authFetch('/api/deals?path=notifications&limit=10', {
         cache: 'no-store',
       });
 
