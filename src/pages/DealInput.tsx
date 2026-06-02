@@ -7,7 +7,7 @@ import { authFetch } from '../lib/authFetch';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, Plus, Check, ChevronRight, ArrowLeft,
-  Loader2, Building2, Send, LayoutDashboard, GitMerge, BellRing, LogOut
+  Loader2, Building2, Send, LayoutDashboard, GitMerge, BellRing, LogOut, ChevronDown
 } from 'lucide-react';
 
 
@@ -19,6 +19,21 @@ interface Clinic {
 
 interface DealInputLocationState {
   preselectedClinic?: Clinic;
+}
+
+interface DealCommentNotification {
+  id: string;
+  deal_id: string;
+  comment_id: string;
+  created_at: string;
+  read_at: string | null;
+  clinic_kind: 'customer' | 'prospect';
+  clinic_id: string;
+  clinic_name: string;
+  deal_date: string | null;
+  comment_body: string;
+  comment_author_name: string;
+  comment_created_at: string;
 }
 
 type ContactRole = '院長' | '副院長' | '事務長・経営者' | '技工担当' | '衛生士・スタッフ' | '受付' | 'その他';
@@ -97,6 +112,20 @@ function pipelineStageToActivityType(stage: DealPipelineStage) {
   return 'visit';
 }
 
+function formatNotificationTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 export default function DealInput() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -125,6 +154,11 @@ export default function DealInput() {
   const [nextActionDate, setNextActionDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [commentNotifications, setCommentNotifications] = useState<DealCommentNotification[]>([]);
+  const [unreadCommentNotificationCount, setUnreadCommentNotificationCount] = useState(0);
+  const [isLoadingCommentNotifications, setIsLoadingCommentNotifications] = useState(false);
+  const [commentNotificationError, setCommentNotificationError] = useState('');
+  const [isCommentNotificationsOpen, setIsCommentNotificationsOpen] = useState(false);
 
   const filteredClinics = clinics;
   const locationState = location.state as DealInputLocationState | null;
@@ -147,6 +181,38 @@ export default function DealInput() {
     setMergeCandidateCount(0);
   }
 };
+
+  const fetchCommentNotifications = async () => {
+    if (!user?.id || canViewDashboard) {
+      setCommentNotifications([]);
+      setUnreadCommentNotificationCount(0);
+      return;
+    }
+
+    setIsLoadingCommentNotifications(true);
+    setCommentNotificationError('');
+
+    try {
+      const response = await authFetch('/api/deals?path=notifications&limit=5', {
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error('comment notifications fetch failed');
+      }
+
+      const payload = await response.json();
+      setCommentNotifications(Array.isArray(payload?.notifications) ? payload.notifications : []);
+      setUnreadCommentNotificationCount(Number(payload?.unread_count ?? 0));
+    } catch (notificationError) {
+      console.error('comment notifications fetch error:', notificationError);
+      setCommentNotificationError('コメント通知の取得に失敗しました');
+      setCommentNotifications([]);
+      setUnreadCommentNotificationCount(0);
+    } finally {
+      setIsLoadingCommentNotifications(false);
+    }
+  };
 
     useEffect(() => {
     const fetchClinics = async () => {
@@ -356,6 +422,10 @@ export default function DealInput() {
   fetchMergeCandidateCount();
   }, []);
 
+  useEffect(() => {
+    fetchCommentNotifications();
+  }, [canViewDashboard, user?.id]);
+
   const handleLogout = async () => {
     await logout();
     navigate('/login');
@@ -367,6 +437,56 @@ export default function DealInput() {
         ? current.filter(item => item !== category)
         : [...current, category]
     );
+  };
+
+  const markCommentNotificationRead = async (notificationId: string) => {
+    try {
+      await authFetch('/api/deals?path=notifications', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notification_id: notificationId }),
+      });
+
+      setCommentNotifications((current) => current.map((notification) => (
+        notification.id === notificationId
+          ? { ...notification, read_at: notification.read_at ?? new Date().toISOString() }
+          : notification
+      )));
+      setUnreadCommentNotificationCount((current) => Math.max(0, current - 1));
+    } catch (notificationError) {
+      console.error('comment notification read error:', notificationError);
+    }
+  };
+
+  const markAllCommentNotificationsRead = async () => {
+    try {
+      await authFetch('/api/deals?path=notifications', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mode: 'read_all' }),
+      });
+
+      const now = new Date().toISOString();
+      setCommentNotifications((current) => current.map((notification) => ({
+        ...notification,
+        read_at: notification.read_at ?? now,
+      })));
+      setUnreadCommentNotificationCount(0);
+    } catch (notificationError) {
+      console.error('comment notifications read all error:', notificationError);
+    }
+  };
+
+  const openCommentNotification = async (notification: DealCommentNotification) => {
+    if (!notification.read_at) {
+      await markCommentNotificationRead(notification.id);
+    }
+
+    navigate(`/clinics/${notification.clinic_kind}/${encodeURIComponent(notification.clinic_id)}`);
   };
 
   useEffect(() => {
@@ -458,6 +578,112 @@ export default function DealInput() {
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {!canViewDashboard && (
+          <div className="mb-6 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+            <button
+              type="button"
+              onClick={() => setIsCommentNotificationsOpen((current) => !current)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition hover:bg-zinc-50"
+            >
+              <div className="flex items-center gap-2">
+                <div className="relative rounded-full bg-purple-50 p-2 text-purple-600">
+                  <BellRing className="h-5 w-5" />
+                  {unreadCommentNotificationCount > 0 && (
+                    <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-pink-500 px-1.5 py-0.5 text-center text-[10px] font-bold leading-none text-white">
+                      {unreadCommentNotificationCount}
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-zinc-900">コメント通知</p>
+                  <p className="text-xs text-zinc-500">自分の商談や参加中のコメントを確認できます</p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {unreadCommentNotificationCount > 0 && (
+                  <span className="rounded-full bg-pink-50 px-2.5 py-1 text-xs font-bold text-pink-600">
+                    未読 {unreadCommentNotificationCount}
+                  </span>
+                )}
+                <ChevronDown className={`h-4 w-4 text-zinc-400 transition ${isCommentNotificationsOpen ? 'rotate-180' : ''}`} />
+              </div>
+            </button>
+
+            <AnimatePresence>
+              {isCommentNotificationsOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="overflow-hidden border-t border-zinc-100"
+                >
+                  <div className="p-4 pt-3">
+                    {unreadCommentNotificationCount > 0 && (
+                      <div className="mb-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={markAllCommentNotificationsRead}
+                          className="rounded-lg px-3 py-2 text-xs font-semibold text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900"
+                        >
+                          すべて既読
+                        </button>
+                      </div>
+                    )}
+
+                    {isLoadingCommentNotifications ? (
+                      <div className="rounded-xl bg-zinc-50 px-4 py-5 text-center text-sm text-zinc-500">
+                        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin text-purple-500" />
+                        読み込み中です...
+                      </div>
+                    ) : commentNotificationError ? (
+                      <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+                        {commentNotificationError}
+                      </div>
+                    ) : commentNotifications.length === 0 ? (
+                      <div className="rounded-xl bg-zinc-50 px-4 py-4 text-sm text-zinc-500">
+                        新しいコメント通知はありません
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {commentNotifications.map((notification) => (
+                          <button
+                            key={notification.id}
+                            type="button"
+                            onClick={() => openCommentNotification(notification)}
+                            className={`w-full rounded-xl border px-4 py-3 text-left transition hover:border-purple-300 hover:bg-purple-50/40 ${
+                              notification.read_at
+                                ? 'border-zinc-100 bg-zinc-50'
+                                : 'border-purple-200 bg-purple-50'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-zinc-900">
+                                  {notification.clinic_name}
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-purple-600">
+                                  {notification.comment_author_name}さんがコメントしました
+                                </p>
+                              </div>
+                              <span className="shrink-0 text-xs text-zinc-400">
+                                {formatNotificationTime(notification.comment_created_at)}
+                              </span>
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-sm leading-5 text-zinc-600">
+                              {notification.comment_body}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
 

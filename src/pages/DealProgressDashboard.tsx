@@ -173,6 +173,18 @@ const TEMPERATURE_FILTER_OPTIONS = [
   { value: 'E', label: 'E' },
 ] as const;
 
+const PROGRESS_FILTER_STORAGE_KEY = 'dealProgressDashboardFilters';
+const TEMPERATURE_FILTER_VALUES = new Set<string>(TEMPERATURE_FILTER_OPTIONS.map((option) => option.value));
+const LIFECYCLE_VALUES = new Set<DealLifecycle>(['all', 'new', 'existing']);
+
+type ProgressFilters = {
+  month: string;
+  lifecycle: DealLifecycle;
+  selectedUserId: string;
+  selectedDepartmentId: string;
+  selectedTemperatures: string[];
+};
+
 function currentMonth() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -197,6 +209,91 @@ function getTemperatureTone(temperature: string | null) {
   return TEMPERATURE_TONES[temperature] ?? DEFAULT_TEMPERATURE_TONE;
 }
 
+function normalizeMonth(value: string | null | undefined) {
+  return value && /^\d{4}-\d{2}$/.test(value) ? value : currentMonth();
+}
+
+function normalizeLifecycle(value: string | null | undefined): DealLifecycle {
+  return value && LIFECYCLE_VALUES.has(value as DealLifecycle) ? value as DealLifecycle : 'all';
+}
+
+function normalizeTemperatures(value: string | null | undefined) {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((entry) => entry.trim().charAt(0).toUpperCase())
+    .filter((entry, index, entries) => TEMPERATURE_FILTER_VALUES.has(entry) && entries.indexOf(entry) === index);
+}
+
+function readStoredProgressFilters(): Partial<ProgressFilters> {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(PROGRESS_FILTER_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Partial<ProgressFilters>;
+    return {
+      month: parsed.month ? normalizeMonth(parsed.month) : undefined,
+      lifecycle: parsed.lifecycle ? normalizeLifecycle(parsed.lifecycle) : undefined,
+      selectedUserId: typeof parsed.selectedUserId === 'string' ? parsed.selectedUserId : undefined,
+      selectedDepartmentId: typeof parsed.selectedDepartmentId === 'string' ? parsed.selectedDepartmentId : undefined,
+      selectedTemperatures: Array.isArray(parsed.selectedTemperatures)
+        ? parsed.selectedTemperatures.filter((entry) => TEMPERATURE_FILTER_VALUES.has(entry))
+        : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function getInitialProgressFilters(): ProgressFilters {
+  const storedFilters = readStoredProgressFilters();
+  const searchParams = typeof window === 'undefined'
+    ? new URLSearchParams()
+    : new URLSearchParams(window.location.search);
+
+  return {
+    month: searchParams.has('month') ? normalizeMonth(searchParams.get('month')) : storedFilters.month ?? currentMonth(),
+    lifecycle: searchParams.has('lifecycle') ? normalizeLifecycle(searchParams.get('lifecycle')) : storedFilters.lifecycle ?? 'all',
+    selectedUserId: searchParams.has('userId') ? searchParams.get('userId') ?? '' : storedFilters.selectedUserId ?? '',
+    selectedDepartmentId: searchParams.has('departmentId') ? searchParams.get('departmentId') ?? '' : storedFilters.selectedDepartmentId ?? '',
+    selectedTemperatures: searchParams.has('temperatures')
+      ? normalizeTemperatures(searchParams.get('temperatures'))
+      : storedFilters.selectedTemperatures ?? [],
+  };
+}
+
+function buildProgressFilterSearch(filters: ProgressFilters) {
+  const params = new URLSearchParams();
+  params.set('month', filters.month);
+
+  if (filters.lifecycle !== 'all') {
+    params.set('lifecycle', filters.lifecycle);
+  }
+
+  if (filters.selectedUserId) {
+    params.set('userId', filters.selectedUserId);
+  }
+
+  if (filters.selectedDepartmentId) {
+    params.set('departmentId', filters.selectedDepartmentId);
+  }
+
+  if (filters.selectedTemperatures.length > 0) {
+    params.set('temperatures', filters.selectedTemperatures.join(','));
+  }
+
+  return params.toString();
+}
+
 function buildNextActionLabel(deal: BoardDeal) {
   if (!deal.next_action) {
     return '次アクション未設定';
@@ -212,15 +309,16 @@ function buildNextActionLabel(deal: BoardDeal) {
 export default function DealProgressDashboard() {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
+  const initialFilters = useMemo(getInitialProgressFilters, []);
   const homePath = user?.can_view_dashboard ? '/dashboard' : '/deals/new';
   const homeLabel = user?.can_view_dashboard ? 'ダッシュボード' : '商談入力';
   const isRestrictedUser = Boolean(user && user.role !== 'admin' && !user.can_view_dashboard);
 
-  const [month, setMonth] = useState(currentMonth());
-  const [lifecycle, setLifecycle] = useState<DealLifecycle>('all');
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState('');
-  const [selectedTemperatures, setSelectedTemperatures] = useState<string[]>([]);
+  const [month, setMonth] = useState(initialFilters.month);
+  const [lifecycle, setLifecycle] = useState<DealLifecycle>(initialFilters.lifecycle);
+  const [selectedUserId, setSelectedUserId] = useState(initialFilters.selectedUserId);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(initialFilters.selectedDepartmentId);
+  const [selectedTemperatures, setSelectedTemperatures] = useState<string[]>(initialFilters.selectedTemperatures);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [deals, setDeals] = useState<BoardDeal[]>([]);
@@ -271,6 +369,23 @@ export default function DealProgressDashboard() {
       setDidInitializeUserFilter(true);
     }
   }, [didInitializeUserFilter, isRestrictedUser, user?.id]);
+
+  useEffect(() => {
+    const filters = {
+      month,
+      lifecycle,
+      selectedUserId,
+      selectedDepartmentId,
+      selectedTemperatures,
+    };
+    const nextSearch = buildProgressFilterSearch(filters);
+    const nextUrl = nextSearch ? `/deals/progress?${nextSearch}` : '/deals/progress';
+
+    window.sessionStorage.setItem(PROGRESS_FILTER_STORAGE_KEY, JSON.stringify(filters));
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      navigate(nextUrl, { replace: true });
+    }
+  }, [lifecycle, month, navigate, selectedDepartmentId, selectedTemperatures, selectedUserId]);
 
   useEffect(() => {
     const loadDeals = async () => {

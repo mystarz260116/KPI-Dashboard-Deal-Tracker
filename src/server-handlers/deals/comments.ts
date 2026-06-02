@@ -20,6 +20,90 @@ function getSearchParams(req: VercelRequest) {
   return new URL(req.url ?? '/api/deals', 'http://localhost').searchParams;
 }
 
+async function createCommentNotifications({
+  dealId,
+  commentId,
+  authorUserId,
+}: {
+  dealId: string;
+  commentId: string;
+  authorUserId: string;
+}) {
+  const [dealResult, commentersResult, adminsResult] = await Promise.all([
+    supabaseAdmin
+      .from('deals')
+      .select('id, user_id')
+      .eq('id', dealId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('deal_comments')
+      .select('author_user_id')
+      .eq('deal_id', dealId)
+      .neq('id', commentId),
+    supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('role', 'admin'),
+  ]);
+
+  if (dealResult.error) {
+    console.error('deal comment notification deal fetch error:', dealResult.error);
+    return;
+  }
+
+  if (commentersResult.error) {
+    console.error('deal comment notification commenters fetch error:', commentersResult.error);
+    return;
+  }
+
+  if (adminsResult.error) {
+    console.error('deal comment notification admins fetch error:', adminsResult.error);
+    return;
+  }
+
+  const recipientIds = new Set<string>();
+  const dealOwnerId = String((dealResult.data as any)?.user_id ?? '').trim();
+  if (dealOwnerId) {
+    recipientIds.add(dealOwnerId);
+  }
+
+  for (const commenter of commentersResult.data ?? []) {
+    const commenterId = String((commenter as any).author_user_id ?? '').trim();
+    if (commenterId) {
+      recipientIds.add(commenterId);
+    }
+  }
+
+  for (const admin of adminsResult.data ?? []) {
+    const adminId = String((admin as any).id ?? '').trim();
+    if (adminId) {
+      recipientIds.add(adminId);
+    }
+  }
+
+  recipientIds.delete(authorUserId);
+  const notificationRows = Array.from(recipientIds).map((recipientUserId) => ({
+    recipient_user_id: recipientUserId,
+    deal_id: dealId,
+    comment_id: commentId,
+  }));
+
+  if (notificationRows.length === 0) {
+    return;
+  }
+
+  const { error } = await supabaseAdmin
+    .from('deal_comment_notifications')
+    .upsert(notificationRows, {
+      onConflict: 'recipient_user_id,comment_id',
+      ignoreDuplicates: true,
+    });
+
+  if (error) {
+    console.error('deal comment notification insert error:', error);
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const profile = await requireAuthenticatedProfile(req, res);
@@ -131,6 +215,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.error('deal comments insert error:', error);
         return res.status(500).json({ error: 'deal comment insert failed' });
       }
+
+      await createCommentNotifications({
+        dealId,
+        commentId: data.id,
+        authorUserId: profile.id,
+      });
 
       return res.status(201).json({
         ...data,
