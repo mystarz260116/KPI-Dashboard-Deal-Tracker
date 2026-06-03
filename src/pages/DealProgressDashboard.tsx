@@ -31,6 +31,7 @@ type BoardDeal = {
   decision_maker_contact: string | null;
   proposal_category: string | null;
   proposal_categories: string[];
+  expected_monthly_amounts: Record<string, number> | null;
   amount: number | null;
   deal_temperature: string | null;
   source_month: string;
@@ -352,6 +353,20 @@ function parseExpectedAmountNotes(notes: string | null) {
   ].join('\n').trim();
 
   return { amountLines, cleanNotes };
+}
+
+function buildExpectedAmountLines(deal: BoardDeal) {
+  if (deal.expected_monthly_amounts && typeof deal.expected_monthly_amounts === 'object') {
+    const lines = Object.entries(deal.expected_monthly_amounts)
+      .filter(([, amount]) => Number.isFinite(Number(amount)))
+      .map(([category, amount]) => `${category}：¥${Number(amount).toLocaleString()}`);
+
+    if (lines.length > 0) {
+      return lines;
+    }
+  }
+
+  return parseExpectedAmountNotes(deal.notes).amountLines;
 }
 
 export default function DealProgressDashboard() {
@@ -920,7 +935,8 @@ export default function DealProgressDashboard() {
                             : [];
                       const temperatureTone = getTemperatureTone(deal.deal_temperature);
                       const nextActionParts = buildNextActionParts(deal);
-                      const { amountLines, cleanNotes } = parseExpectedAmountNotes(deal.notes);
+                      const amountLines = buildExpectedAmountLines(deal);
+                      const { cleanNotes } = parseExpectedAmountNotes(deal.notes);
                       const metaBadges = [
                         deal.contact_role ? `接触: ${deal.contact_role}` : null,
                       ].filter(Boolean);

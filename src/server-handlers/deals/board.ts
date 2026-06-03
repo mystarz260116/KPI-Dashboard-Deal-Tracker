@@ -21,6 +21,7 @@ type DealRow = {
   decision_maker_contact: string | null;
   proposal_category: string | null;
   proposal_categories: string[] | null;
+  expected_monthly_amounts: Record<string, number> | null;
   amount: number | null;
   deal_temperature: string | null;
   created_at: string;
@@ -64,6 +65,7 @@ const DEAL_BOARD_SELECT = `
   decision_maker_contact,
   proposal_category,
   proposal_categories,
+  expected_monthly_amounts,
   amount,
   deal_temperature,
   created_at,
@@ -271,6 +273,7 @@ function mapBoardDeal(row: DealRow, mergedCustomerNameMap: Map<string, string>, 
     decision_maker_contact: row.decision_maker_contact ?? null,
     proposal_category: row.proposal_category ?? null,
     proposal_categories: Array.isArray(row.proposal_categories) ? row.proposal_categories : [],
+    expected_monthly_amounts: row.expected_monthly_amounts ?? null,
     amount: row.amount ?? null,
     deal_temperature: row.deal_temperature ?? null,
     source_month: toMonthString(row.deal_date),

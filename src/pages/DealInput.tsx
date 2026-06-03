@@ -383,14 +383,10 @@ export default function DealInput() {
     }
 
     const totalExpectedMonthlyAmount = parsedCategoryAmounts.reduce((sum, item) => sum + item.parsedAmount, 0);
-    const expectedMonthlyAmountSummary = [
-      '【受注予定額/月】',
-      ...parsedCategoryAmounts.map((item) => `${item.category}：¥${item.parsedAmount.toLocaleString()}`),
-      `合計：¥${totalExpectedMonthlyAmount.toLocaleString()}`,
-    ].join('\n');
-    const mergedNotes = notes.trim()
-      ? `${expectedMonthlyAmountSummary}\n\n${notes.trim()}`
-      : expectedMonthlyAmountSummary;
+    const expectedMonthlyAmounts = parsedCategoryAmounts.reduce<Record<string, number>>((acc, item) => {
+      acc[item.category] = item.parsedAmount;
+      return acc;
+    }, {});
 
     const payload = {
       user_id: user.id,
@@ -404,13 +400,14 @@ export default function DealInput() {
       decision_maker_contact: decisionMakerContact,
       proposal_category: proposalCategories[0] ?? null,
       proposal_categories: proposalCategories,
+      expected_monthly_amounts: expectedMonthlyAmounts,
       product_name: specificProduct || null,
       deal_temperature: dealTemperature,
       next_action_type: nextActionType,
       next_action_date: nextActionDate || null,
       unit_count: null,
       amount: totalExpectedMonthlyAmount,
-      notes: mergedNotes,
+      notes: notes.trim() || null,
       next_action: nextActionType === 'なし'
         ? null
         : nextActionDate

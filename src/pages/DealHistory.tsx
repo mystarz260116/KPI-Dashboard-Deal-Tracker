@@ -25,6 +25,7 @@ interface Deal {
   decisionMakerContact?: 'yes' | 'no' | 'unknown';
   proposalCategory?: string;
   proposalCategories?: string[];
+  expectedMonthlyAmounts?: Record<string, number>;
   dealTemperature?: 'A' | 'B' | 'C' | 'D' | 'E';
   nextActionType?: string;
   nextActionDate?: string;
@@ -105,6 +106,32 @@ function getMonthRange(value: string) {
   return { start, endExclusive };
 }
 
+function stripExpectedAmountNotes(notes: string | undefined) {
+  if (!notes) return '';
+
+  const lines = notes.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => line.trim() === '【受注予定額/月】');
+  if (headerIndex === -1) return notes.trim();
+
+  let endIndex = lines.length;
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) {
+      endIndex = index + 1;
+      break;
+    }
+    if (line.startsWith('合計：')) {
+      endIndex = index + 1;
+      break;
+    }
+  }
+
+  return [
+    ...lines.slice(0, headerIndex),
+    ...lines.slice(endIndex),
+  ].join('\n').trim();
+}
+
 export default function DealHistory() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -129,7 +156,7 @@ export default function DealHistory() {
 
       let query = supabase
         .from('deals')
-        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, product_name, amount, notes, next_action, contact_role, decision_maker_contact, proposal_category, proposal_categories, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
+        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, product_name, amount, expected_monthly_amounts, notes, next_action, contact_role, decision_maker_contact, proposal_category, proposal_categories, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
         .gte('deal_date', getMonthRange(selectedMonth).start)
         .lt('deal_date', getMonthRange(selectedMonth).endExclusive)
         .order('deal_date', { ascending: false })
@@ -166,6 +193,9 @@ export default function DealHistory() {
         decisionMakerContact: d.decision_maker_contact ?? undefined,
         proposalCategory: d.proposal_category ?? undefined,
         proposalCategories: Array.isArray(d.proposal_categories) ? d.proposal_categories : undefined,
+        expectedMonthlyAmounts: d.expected_monthly_amounts && typeof d.expected_monthly_amounts === 'object'
+          ? d.expected_monthly_amounts
+          : undefined,
         dealTemperature: d.deal_temperature ?? undefined,
         nextActionType: d.next_action_type ?? undefined,
         nextActionDate: d.next_action_date ?? undefined,
@@ -560,10 +590,20 @@ export default function DealHistory() {
                   </p>
                 )}
 
-                {deal.notes && (
+                {deal.expectedMonthlyAmounts && Object.keys(deal.expectedMonthlyAmounts).length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {Object.entries(deal.expectedMonthlyAmounts).map(([category, amount]) => (
+                      <span key={category} className="rounded-full bg-purple-50 px-2 py-1 text-xs font-semibold text-purple-700">
+                        {category}：¥{Number(amount).toLocaleString()}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {stripExpectedAmountNotes(deal.notes) && (
                   <div className="mb-2 flex items-start gap-2">
                     <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
-                    <p className="text-sm text-zinc-600">{deal.notes}</p>
+                    <p className="text-sm text-zinc-600">{stripExpectedAmountNotes(deal.notes)}</p>
                   </div>
                 )}
 

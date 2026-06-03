@@ -31,6 +31,7 @@ interface ClinicDeal {
   dealTemperature?: 'A' | 'B' | 'C' | 'D' | 'E';
   proposalCategory?: string;
   proposalCategories?: string[];
+  expectedMonthlyAmounts?: Record<string, number>;
   amount?: number;
   productName?: string;
 }
@@ -89,6 +90,32 @@ function isClinicKind(value: string | undefined): value is ClinicKind {
   return value === 'customer' || value === 'prospect';
 }
 
+function stripExpectedAmountNotes(notes: string | undefined) {
+  if (!notes) return '';
+
+  const lines = notes.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => line.trim() === '【受注予定額/月】');
+  if (headerIndex === -1) return notes.trim();
+
+  let endIndex = lines.length;
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) {
+      endIndex = index + 1;
+      break;
+    }
+    if (line.startsWith('合計：')) {
+      endIndex = index + 1;
+      break;
+    }
+  }
+
+  return [
+    ...lines.slice(0, headerIndex),
+    ...lines.slice(endIndex),
+  ].join('\n').trim();
+}
+
 export default function ClinicDetail() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -131,7 +158,7 @@ export default function ClinicDetail() {
 
         const dealsQuery = supabase
           .from('deals')
-          .select('id, deal_date, notes, next_action, next_action_date, next_action_type, contact_role, decision_maker_contact, deal_temperature, proposal_category, proposal_categories, amount, product_name, created_at')
+          .select('id, deal_date, notes, next_action, next_action_date, next_action_type, contact_role, decision_maker_contact, deal_temperature, proposal_category, proposal_categories, expected_monthly_amounts, amount, product_name, created_at')
           .order('deal_date', { ascending: false })
           .order('created_at', { ascending: false });
 
@@ -188,6 +215,9 @@ export default function ClinicDetail() {
           dealTemperature: deal.deal_temperature ?? undefined,
           proposalCategory: deal.proposal_category ?? undefined,
           proposalCategories: Array.isArray(deal.proposal_categories) ? deal.proposal_categories : undefined,
+          expectedMonthlyAmounts: deal.expected_monthly_amounts && typeof deal.expected_monthly_amounts === 'object'
+            ? deal.expected_monthly_amounts
+            : undefined,
           amount: deal.amount ?? undefined,
           productName: deal.product_name ?? undefined,
         }));
@@ -664,6 +694,15 @@ export default function ClinicDetail() {
                         ? `¥${latestDeal.amount.toLocaleString()}`
                         : '未登録'}
                     </p>
+                    {latestDeal?.expectedMonthlyAmounts && Object.keys(latestDeal.expectedMonthlyAmounts).length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {Object.entries(latestDeal.expectedMonthlyAmounts).map(([category, amount]) => (
+                          <span key={category} className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700">
+                            {category}：¥{Number(amount).toLocaleString()}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-xl bg-zinc-50 p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">最新商談温度</p>
@@ -814,8 +853,8 @@ export default function ClinicDetail() {
                         {deal.productName && (
                           <p className="mt-3 text-sm text-zinc-700">具体商品: {deal.productName}</p>
                         )}
-                        {deal.notes && (
-                          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-zinc-600">{deal.notes}</p>
+                        {stripExpectedAmountNotes(deal.notes) && (
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-zinc-600">{stripExpectedAmountNotes(deal.notes)}</p>
                         )}
                         {deal.nextAction && (
                           <div className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
