@@ -554,9 +554,9 @@ export default function DealHistory() {
                   </div>
                 )}
 
-                {deal.amount && (
-                  <p className="mb-2 text-sm font-bold text-emerald-600">
-                    ¥{deal.amount.toLocaleString()}
+                {deal.amount != null && (
+                  <p className="mb-2 text-sm font-bold text-purple-600">
+                    受注予定額/月：¥{deal.amount.toLocaleString()}
                   </p>
                 )}
 

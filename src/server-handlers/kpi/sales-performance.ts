@@ -4,7 +4,7 @@ import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../ap
 
 type PerformancePeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
 
-type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'won' | 'lost';
+type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'won' | 'lost';
 
 type DealRow = {
   id: string;
@@ -383,9 +383,11 @@ export default async function handler(req: any, res: any) {
           ? '訪問中'
           : key === 'negotiating'
             ? '交渉中'
-            : key === 'won'
-              ? '受注'
-              : '失注',
+            : key === 'accepted'
+              ? '応諾済み'
+              : key === 'won'
+                ? '受注'
+                : '失注',
       count,
     }));
 

@@ -64,15 +64,21 @@ export default function CrmSearch() {
             .order('name', { ascending: true })
             .limit(30);
 
+        let prospectQuery = supabase
+          .from('prospect_customers')
+          .select('id, name, status')
+          .or('status.is.null,status.neq.merged')
+          .ilike('name', `%${normalizedQuery}%`)
+          .order('name', { ascending: true })
+          .limit(30);
+
+        if (!user.can_view_dashboard) {
+          prospectQuery = prospectQuery.eq('created_by', user.id);
+        }
+
         const prospectPromise = filter === 'customer'
           ? Promise.resolve({ data: [], error: null })
-          : supabase
-            .from('prospect_customers')
-            .select('id, name, status')
-            .eq('created_by', user.id)
-            .ilike('name', `%${normalizedQuery}%`)
-            .order('name', { ascending: true })
-            .limit(30);
+          : prospectQuery;
 
         const [customerResult, prospectResult] = await Promise.all([customerPromise, prospectPromise]);
 

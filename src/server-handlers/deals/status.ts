@@ -2,10 +2,10 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 
-const ALLOWED_PIPELINE_STAGES = new Set(['targeting', 'visiting', 'negotiating', 'lost']);
+const ALLOWED_PIPELINE_STAGES = new Set(['targeting', 'visiting', 'negotiating', 'accepted', 'lost']);
 
 function toActivityType(pipelineStage: string) {
-  if (pipelineStage === 'negotiating') return 'negotiating';
+  if (pipelineStage === 'negotiating' || pipelineStage === 'accepted') return 'negotiating';
   if (pipelineStage === 'lost') return 'lost';
   return 'visit';
 }

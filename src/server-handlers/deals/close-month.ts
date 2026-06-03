@@ -7,13 +7,15 @@ type DealRow = {
   customer_code: string | null;
   prospect_customer_id: string | null;
   deal_date: string;
-  pipeline_stage: 'targeting' | 'visiting' | 'negotiating' | 'won' | 'lost' | null;
+  pipeline_stage: 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'won' | 'lost' | null;
   created_at: string;
   prospect_customers?: {
     status?: string | null;
     merged_customer_code?: string | null;
   } | null;
 };
+
+const DEAL_CLOSE_SELECT = 'id, customer_code, prospect_customer_id, deal_date, pipeline_stage, created_at, prospect_customers(status, merged_customer_code)';
 
 function parseMonth(value: unknown) {
   const raw = String(value ?? '').trim();
@@ -54,6 +56,66 @@ function resolvePipelineStage(row: DealRow) {
   return row.pipeline_stage ?? 'visiting';
 }
 
+async function fetchMergedProspectDealsInMonth(monthStart: string, monthEndExclusive: string) {
+  const { data: mergedProspects, error: mergedProspectsError } = await supabaseAdmin
+    .from('prospect_customers')
+    .select('id, merged_customer_code')
+    .eq('status', 'merged')
+    .not('merged_customer_code', 'is', null)
+    .gte('merged_at', monthStart)
+    .lt('merged_at', monthEndExclusive);
+
+  if (mergedProspectsError) {
+    throw mergedProspectsError;
+  }
+
+  const prospectIds = Array.from(new Set(
+    (mergedProspects ?? []).map((row: any) => String(row.id)).filter(Boolean)
+  ));
+  const customerCodes = Array.from(new Set(
+    (mergedProspects ?? []).map((row: any) => String(row.merged_customer_code)).filter(Boolean)
+  ));
+
+  const rows: DealRow[] = [];
+
+  if (prospectIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('deals')
+      .select(DEAL_CLOSE_SELECT)
+      .in('prospect_customer_id', prospectIds)
+      .order('deal_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    rows.push(...((data ?? []) as DealRow[]));
+  }
+
+  if (customerCodes.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('deals')
+      .select(DEAL_CLOSE_SELECT)
+      .in('customer_code', customerCodes)
+      .order('deal_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    rows.push(...((data ?? []) as DealRow[]));
+  }
+
+  const uniqueRows = new Map<string, DealRow>();
+  for (const row of rows) {
+    uniqueRows.set(row.id, row);
+  }
+
+  return Array.from(uniqueRows.values());
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST' && req.method !== 'DELETE') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -83,7 +145,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'POST') {
       const { data: rows, error: rowsError } = await supabaseAdmin
         .from('deals')
-        .select('id, customer_code, prospect_customer_id, deal_date, pipeline_stage, created_at, prospect_customers(status, merged_customer_code)')
+        .select(DEAL_CLOSE_SELECT)
         .gte('deal_date', monthStart)
         .lt('deal_date', monthEndExclusive)
         .order('deal_date', { ascending: false })
@@ -101,6 +163,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!current || compareDeals(row, current) < 0) {
           latestByClinic.set(key, row);
         }
+      }
+
+      try {
+        const mergedMonthRows = await fetchMergedProspectDealsInMonth(monthStart, monthEndExclusive);
+        for (const row of mergedMonthRows) {
+          const key = resolveClinicKey(row);
+          const current = latestByClinic.get(key);
+          if (!current || compareDeals(row, current) < 0) {
+            latestByClinic.set(key, row);
+          }
+        }
+      } catch (mergedMonthError) {
+        console.error('deal board close month merged month deals error:', mergedMonthError);
+        return res.status(500).json({ error: 'deal board close month merged deals fetch failed' });
       }
 
       const snapshotRows = Array.from(latestByClinic.entries()).map(([clinicKey, row]) => ({

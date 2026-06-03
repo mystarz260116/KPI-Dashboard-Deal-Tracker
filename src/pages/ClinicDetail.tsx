@@ -31,6 +31,7 @@ interface ClinicDeal {
   dealTemperature?: 'A' | 'B' | 'C' | 'D' | 'E';
   proposalCategory?: string;
   proposalCategories?: string[];
+  amount?: number;
   productName?: string;
 }
 
@@ -46,7 +47,7 @@ interface SalesDetail {
   detail_category: string | null;
   patient_name: string | null;
   quantity: number;
-  amount: number;
+  amount?: number;
 }
 
 interface DealComment {
@@ -130,7 +131,7 @@ export default function ClinicDetail() {
 
         const dealsQuery = supabase
           .from('deals')
-          .select('id, deal_date, notes, next_action, next_action_date, next_action_type, contact_role, decision_maker_contact, deal_temperature, proposal_category, proposal_categories, product_name, created_at')
+          .select('id, deal_date, notes, next_action, next_action_date, next_action_type, contact_role, decision_maker_contact, deal_temperature, proposal_category, proposal_categories, amount, product_name, created_at')
           .order('deal_date', { ascending: false })
           .order('created_at', { ascending: false });
 
@@ -187,6 +188,7 @@ export default function ClinicDetail() {
           dealTemperature: deal.deal_temperature ?? undefined,
           proposalCategory: deal.proposal_category ?? undefined,
           proposalCategories: Array.isArray(deal.proposal_categories) ? deal.proposal_categories : undefined,
+          amount: deal.amount ?? undefined,
           productName: deal.product_name ?? undefined,
         }));
         setDeals(mappedDeals);
@@ -654,6 +656,14 @@ export default function ClinicDetail() {
                         <p className="text-sm text-zinc-500">まだ登録がありません</p>
                       )}
                     </div>
+                  </div>
+                  <div className="rounded-xl bg-zinc-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">受注予定額/月</p>
+                    <p className="mt-2 text-sm font-semibold text-zinc-800">
+                      {latestDeal?.amount != null
+                        ? `¥${latestDeal.amount.toLocaleString()}`
+                        : '未登録'}
+                    </p>
                   </div>
                   <div className="rounded-xl bg-zinc-50 p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">最新商談温度</p>

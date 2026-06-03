@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 
-type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'won' | 'lost';
+type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'won' | 'lost';
 type DealLifecycle = 'all' | 'new' | 'existing';
 
 type DealRow = {
@@ -21,6 +21,7 @@ type DealRow = {
   decision_maker_contact: string | null;
   proposal_category: string | null;
   proposal_categories: string[] | null;
+  amount: number | null;
   deal_temperature: string | null;
   created_at: string;
   customers?: { name?: string | null } | null;
@@ -46,6 +47,30 @@ type DealBoardStateRow = {
 };
 
 type BoardDeal = ReturnType<typeof mapBoardDeal>;
+
+const DEAL_BOARD_SELECT = `
+  id,
+  user_id,
+  customer_code,
+  prospect_customer_id,
+  deal_date,
+  pipeline_stage,
+  product_name,
+  notes,
+  next_action,
+  next_action_date,
+  next_action_type,
+  contact_role,
+  decision_maker_contact,
+  proposal_category,
+  proposal_categories,
+  amount,
+  deal_temperature,
+  created_at,
+  customers(name),
+  prospect_customers(name, status, merged_customer_code),
+  profiles!deals_user_id_fkey(name, department_id)
+`;
 
 function parseMonth(value: unknown) {
   const raw = String(value ?? '').trim();
@@ -125,6 +150,66 @@ function isTerminalStage(stage: DealPipelineStage) {
   return stage === 'won' || stage === 'lost';
 }
 
+async function fetchMergedProspectDealsInMonth(start: string, end: string) {
+  const { data: mergedProspects, error: mergedProspectsError } = await supabaseAdmin
+    .from('prospect_customers')
+    .select('id, merged_customer_code')
+    .eq('status', 'merged')
+    .not('merged_customer_code', 'is', null)
+    .gte('merged_at', start)
+    .lt('merged_at', end);
+
+  if (mergedProspectsError) {
+    throw mergedProspectsError;
+  }
+
+  const prospectIds = Array.from(new Set(
+    (mergedProspects ?? []).map((row: any) => String(row.id)).filter(Boolean)
+  ));
+  const customerCodes = Array.from(new Set(
+    (mergedProspects ?? []).map((row: any) => String(row.merged_customer_code)).filter(Boolean)
+  ));
+
+  const rows: DealRow[] = [];
+
+  if (prospectIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('deals')
+      .select(DEAL_BOARD_SELECT)
+      .in('prospect_customer_id', prospectIds)
+      .order('deal_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    rows.push(...((data ?? []) as DealRow[]));
+  }
+
+  if (customerCodes.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('deals')
+      .select(DEAL_BOARD_SELECT)
+      .in('customer_code', customerCodes)
+      .order('deal_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    rows.push(...((data ?? []) as DealRow[]));
+  }
+
+  const uniqueRows = new Map<string, DealRow>();
+  for (const row of rows) {
+    uniqueRows.set(row.id, row);
+  }
+
+  return Array.from(uniqueRows.values());
+}
+
 async function fetchMergedCustomerNameMap(rows: DealRow[]) {
   const mergedCustomerCodes = Array.from(new Set(
     rows
@@ -186,6 +271,7 @@ function mapBoardDeal(row: DealRow, mergedCustomerNameMap: Map<string, string>, 
     decision_maker_contact: row.decision_maker_contact ?? null,
     proposal_category: row.proposal_category ?? null,
     proposal_categories: Array.isArray(row.proposal_categories) ? row.proposal_categories : [],
+    amount: row.amount ?? null,
     deal_temperature: row.deal_temperature ?? null,
     source_month: toMonthString(row.deal_date),
     is_carried_over: false,
@@ -263,28 +349,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const { data: dealRows, error: dealRowsError } = await supabaseAdmin
         .from('deals')
-        .select(`
-          id,
-          user_id,
-          customer_code,
-          prospect_customer_id,
-          deal_date,
-          pipeline_stage,
-          product_name,
-          notes,
-          next_action,
-          next_action_date,
-          next_action_type,
-          contact_role,
-          decision_maker_contact,
-          proposal_category,
-          proposal_categories,
-          deal_temperature,
-          created_at,
-          customers(name),
-          prospect_customers(name, status, merged_customer_code),
-          profiles!deals_user_id_fkey(name, department_id)
-        `)
+        .select(DEAL_BOARD_SELECT)
         .in('id', baseDealIds);
 
       if (dealRowsError) {
@@ -305,14 +370,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!row) return null;
           return mapBoardDeal(row, mergedCustomerNameMap, snapshot.pipeline_stage as DealPipelineStage);
         })
-        .filter(Boolean)
-        .filter((deal: any) => matchesFilters(deal, lifecycle, userId, departmentId));
+        .filter(Boolean) as BoardDeal[];
+
+      const snapshotClinicKeys = new Set((snapshotRows ?? []).map((snapshot: any) => String(snapshot.clinic_key)));
+
+      try {
+        const mergedMonthRows = await fetchMergedProspectDealsInMonth(start, end);
+        const latestMergedByClinic = new Map<string, DealRow>();
+        for (const row of mergedMonthRows) {
+          const clinicKey = resolveClinicKey(row);
+          if (snapshotClinicKeys.has(clinicKey)) {
+            continue;
+          }
+
+          const current = latestMergedByClinic.get(clinicKey);
+          if (!current || compareDeals(row, current) < 0) {
+            latestMergedByClinic.set(clinicKey, row);
+          }
+        }
+
+        const mergedRows = Array.from(latestMergedByClinic.values());
+        const mergedMonthNameMap = await fetchMergedCustomerNameMap(mergedRows);
+        for (const row of mergedRows) {
+          deals.push(mapBoardDeal(row, mergedMonthNameMap, resolvePipelineStage(row)));
+        }
+      } catch (mergedMonthError) {
+        console.error('deals board closed merged month deals error:', mergedMonthError);
+        return res.status(500).json({ error: 'deal board closed merged month deals fetch failed' });
+      }
+
+      const filteredDeals = deals.filter((deal) => matchesFilters(deal, lifecycle, userId, departmentId));
 
       return res.status(200).json({
         month,
         lifecycle,
         is_closed: true,
-        deals,
+        deals: filteredDeals,
       });
     }
 
@@ -348,28 +441,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let query = supabaseAdmin
       .from('deals')
-      .select(`
-        id,
-        user_id,
-        customer_code,
-        prospect_customer_id,
-        deal_date,
-        pipeline_stage,
-        product_name,
-        notes,
-        next_action,
-        next_action_date,
-        next_action_type,
-        contact_role,
-        decision_maker_contact,
-        proposal_category,
-        proposal_categories,
-        deal_temperature,
-        created_at,
-        customers(name),
-        prospect_customers(name, status, merged_customer_code),
-        profiles!deals_user_id_fkey(name, department_id)
-      `)
+      .select(DEAL_BOARD_SELECT)
       .gte('deal_date', start)
       .lt('deal_date', end)
       .order('deal_date', { ascending: false })
@@ -401,6 +473,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!current || compareDeals(rawRow, current) < 0) {
         latestByClinic.set(key, rawRow);
       }
+    }
+
+    try {
+      const mergedMonthRows = await fetchMergedProspectDealsInMonth(start, end);
+      for (const rawRow of mergedMonthRows) {
+        const key = resolveClinicKey(rawRow);
+        const current = latestByClinic.get(key);
+        if (!current || compareDeals(rawRow, current) < 0) {
+          latestByClinic.set(key, rawRow);
+        }
+      }
+    } catch (mergedMonthError) {
+      console.error('deals board merged month deals error:', mergedMonthError);
+      return res.status(500).json({ error: 'deal board merged month deals fetch failed' });
     }
 
     const liveRows = Array.from(latestByClinic.values());
@@ -436,28 +522,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (carryBaseDealIds.length > 0) {
         const { data: carryDealRows, error: carryDealRowsError } = await supabaseAdmin
           .from('deals')
-          .select(`
-            id,
-            user_id,
-            customer_code,
-            prospect_customer_id,
-            deal_date,
-            pipeline_stage,
-            product_name,
-            notes,
-            next_action,
-            next_action_date,
-            next_action_type,
-            contact_role,
-            decision_maker_contact,
-            proposal_category,
-            proposal_categories,
-            deal_temperature,
-            created_at,
-            customers(name),
-            prospect_customers(name, status, merged_customer_code),
-            profiles!deals_user_id_fkey(name, department_id)
-          `)
+          .select(DEAL_BOARD_SELECT)
           .in('id', carryBaseDealIds);
 
         if (carryDealRowsError) {
@@ -486,7 +551,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const baseStage = resolvePipelineStage(row);
           const effectiveStage = currentMonthOverride ?? (baseStage === 'won' ? 'won' : snapshot.pipeline_stage);
 
-          if (!currentMonthOverride && isTerminalStage(snapshot.pipeline_stage) && baseStage !== 'won') {
+          if (!currentMonthOverride && (isTerminalStage(snapshot.pipeline_stage) || isTerminalStage(effectiveStage))) {
             continue;
           }
 

@@ -48,6 +48,7 @@ export interface Deal {
 export type DealStatus =
   | 'proposal'   // 提案
   | 'negotiating'// 商談中
+  | 'accepted'   // 応諾済み
   | 'won'        // 受注
   | 'lost';      // 失注
 

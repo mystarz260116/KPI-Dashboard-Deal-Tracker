@@ -40,7 +40,7 @@ type ContactRole = '院長' | '副院長' | '事務長・経営者' | '技工担
 type DecisionMakerContact = 'yes' | 'no' | 'unknown';
 type DealTemperature = 'A' | 'B' | 'C' | 'D' | 'E';
 type NextActionType = '見積提出' | 'サンプル持参' | '再訪問' | '電話フォロー' | 'メール・資料送付' | '院長面談設定' | '保留' | 'なし';
-type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'lost';
+type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'lost';
 type ExecutedActionType = '訪問' | '電話' | 'メール・資料送付';
 
 const PROPOSAL_CATEGORIES = [
@@ -97,6 +97,7 @@ const PIPELINE_STAGE_OPTIONS: { value: DealPipelineStage; label: string; rule: s
   { value: 'targeting', label: 'ターゲティング', rule: '候補先の選定や情報整理の段階。まだ本格接触前。' },
   { value: 'visiting', label: '訪問中', rule: '初回訪問や継続接触を進めている段階。' },
   { value: 'negotiating', label: '交渉中', rule: '提案・見積・サンプル・具体相談まで進んでいる段階。' },
+  { value: 'accepted', label: '応諾済み', rule: '先方から応諾を得ており、受注確認や正式処理を待っている段階。' },
   { value: 'lost', label: '失注', rule: '今回は追わない、または失注として整理する段階。' },
 ];
 
@@ -107,7 +108,7 @@ const EXECUTED_ACTION_OPTIONS: { value: ExecutedActionType; rule: string }[] = [
 ];
 
 function pipelineStageToActivityType(stage: DealPipelineStage) {
-  if (stage === 'negotiating') return 'negotiating';
+  if (stage === 'negotiating' || stage === 'accepted') return 'negotiating';
   if (stage === 'lost') return 'lost';
   return 'visit';
 }
@@ -147,6 +148,9 @@ export default function DealInput() {
   const [decisionMakerContact, setDecisionMakerContact] = useState<DecisionMakerContact>('unknown');
   const [pipelineStage, setPipelineStage] = useState<DealPipelineStage>('visiting');
   const [proposalCategories, setProposalCategories] = useState<string[]>(['CADCAM冠']);
+  const [proposalCategoryAmounts, setProposalCategoryAmounts] = useState<Record<string, string>>({
+    CADCAM冠: '',
+  });
   const [specificProduct, setSpecificProduct] = useState('');
   const [dealTemperature, setDealTemperature] = useState<DealTemperature>('C');
   const [notes, setNotes] = useState('');
@@ -230,6 +234,18 @@ export default function DealInput() {
         return;
       }
 
+      let prospectQuery = supabase
+        .from('prospect_customers')
+        .select('id, name, status')
+        .or('status.is.null,status.neq.merged')
+        .ilike('name', `%${keyword}%`)
+        .order('name', { ascending: true })
+        .limit(20);
+
+      if (!canViewDashboard) {
+        prospectQuery = prospectQuery.eq('created_by', user.id);
+      }
+
       const [{ data: customerData, error: customerError }, { data: prospectData, error: prospectError }] = await Promise.all([
         supabase
           .from('customers')
@@ -237,14 +253,7 @@ export default function DealInput() {
           .or(`name.ilike.%${keyword}%,code.ilike.%${keyword}%`)
           .order('name', { ascending: true })
           .limit(20),
-        supabase
-          .from('prospect_customers')
-          .select('id, name, status')
-          .eq('created_by', user.id)
-          .in('status', ['new', 'matched'])
-          .ilike('name', `%${keyword}%`)
-          .order('name', { ascending: true })
-          .limit(20),
+        prospectQuery,
       ]);
 
       console.log('clinic search keyword:', keyword);
@@ -279,7 +288,7 @@ export default function DealInput() {
     };
 
     fetchClinics();
-  }, [searchQuery, user?.id]);
+  }, [canViewDashboard, searchQuery, user?.id]);
 
   useEffect(() => {
     const preselectedClinic = locationState?.preselectedClinic;
@@ -353,6 +362,36 @@ export default function DealInput() {
       return;
     }
 
+    const parsedCategoryAmounts = proposalCategories.map((category) => {
+      const rawAmount = proposalCategoryAmounts[category] ?? '';
+      const normalizedAmount = rawAmount.replace(/[,\s]/g, '');
+      const parsedAmount = Number(normalizedAmount);
+      return { category, normalizedAmount, parsedAmount };
+    });
+
+    const hasInvalidCategoryAmount = parsedCategoryAmounts.some(({ normalizedAmount, parsedAmount }) => (
+      !normalizedAmount
+      || !Number.isFinite(parsedAmount)
+      || !Number.isInteger(parsedAmount)
+      || parsedAmount < 0
+    ));
+
+    if (hasInvalidCategoryAmount) {
+      setError('受注予定額/月は選択したカテゴリごとに0以上の整数で入力してください');
+      setIsSubmitting(false);
+      return;
+    }
+
+    const totalExpectedMonthlyAmount = parsedCategoryAmounts.reduce((sum, item) => sum + item.parsedAmount, 0);
+    const expectedMonthlyAmountSummary = [
+      '【受注予定額/月】',
+      ...parsedCategoryAmounts.map((item) => `${item.category}：¥${item.parsedAmount.toLocaleString()}`),
+      `合計：¥${totalExpectedMonthlyAmount.toLocaleString()}`,
+    ].join('\n');
+    const mergedNotes = notes.trim()
+      ? `${expectedMonthlyAmountSummary}\n\n${notes.trim()}`
+      : expectedMonthlyAmountSummary;
+
     const payload = {
       user_id: user.id,
       customer_code: selectedClinic.kind === 'customer' ? selectedClinic.id : null,
@@ -370,8 +409,8 @@ export default function DealInput() {
       next_action_type: nextActionType,
       next_action_date: nextActionDate || null,
       unit_count: null,
-      amount: null,
-      notes: notes || null,
+      amount: totalExpectedMonthlyAmount,
+      notes: mergedNotes,
       next_action: nextActionType === 'なし'
         ? null
         : nextActionDate
@@ -410,6 +449,7 @@ export default function DealInput() {
     setDecisionMakerContact('unknown');
     setPipelineStage('visiting');
     setProposalCategories(['CADCAM冠']);
+    setProposalCategoryAmounts({ CADCAM冠: '' });
     setSpecificProduct('');
     setDealTemperature('C');
     setNotes('');
@@ -437,6 +477,18 @@ export default function DealInput() {
         ? current.filter(item => item !== category)
         : [...current, category]
     );
+    setProposalCategoryAmounts(current => (
+      current[category] != null
+        ? current
+        : { ...current, [category]: '' }
+    ));
+  };
+
+  const updateProposalCategoryAmount = (category: string, value: string) => {
+    setProposalCategoryAmounts(current => ({
+      ...current,
+      [category]: value,
+    }));
   };
 
   const markCommentNotificationRead = async (notificationId: string) => {
@@ -952,6 +1004,41 @@ export default function DealInput() {
                       複数選択可。今回の商談で提案した品目をすべて選んでください。
                     </p>
                   </div>
+
+                  {/* カテゴリ別受注予定額 */}
+                  {proposalCategories.length > 0 && (
+                    <div>
+                    <label className="mb-2 block text-sm font-medium text-zinc-700">
+                      受注予定額/月 <span className="text-red-500">*</span>
+                    </label>
+                    <div className="space-y-2">
+                      {proposalCategories.map(category => (
+                        <div key={category} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                          <div className="mb-2 text-sm font-bold text-zinc-700">{category}</div>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-zinc-400">
+                              ¥
+                            </span>
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min="0"
+                              step="1"
+                              required
+                              value={proposalCategoryAmounts[category] ?? ''}
+                              onChange={e => updateProposalCategoryAmount(category, e.target.value)}
+                              placeholder="例：300000"
+                              className="w-full rounded-xl border border-zinc-200 bg-white py-3 pl-9 pr-4 focus:border-purple-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-200"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                      入力ルール：選択したカテゴリごとに、受注した場合に見込まれる月あたりの金額を入力してください。合計額は進捗ボードなどに表示されます。
+                    </p>
+                    </div>
+                  )}
 
                   {/* 具体商品 */}
                   <div>

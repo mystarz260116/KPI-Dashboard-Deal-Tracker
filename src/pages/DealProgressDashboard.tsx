@@ -8,7 +8,7 @@ import {
   Loader2, Lock, LogOut, Users,
 } from 'lucide-react';
 
-type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'won' | 'lost';
+type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'won' | 'lost';
 type EditableDealPipelineStage = Exclude<DealPipelineStage, 'won'>;
 type DealLifecycle = 'all' | 'new' | 'existing';
 
@@ -31,6 +31,7 @@ type BoardDeal = {
   decision_maker_contact: string | null;
   proposal_category: string | null;
   proposal_categories: string[];
+  amount: number | null;
   deal_temperature: string | null;
   source_month: string;
   is_carried_over: boolean;
@@ -61,6 +62,7 @@ const COLUMNS: Array<{ key: DealPipelineStage; title: string; accent: string; bg
   { key: 'targeting', title: 'ターゲティング', accent: '#8b5cf6', bg: 'bg-violet-50', hint: '候補先の選定・情報整理段階', editable: true },
   { key: 'visiting', title: '訪問中', accent: '#f59e0b', bg: 'bg-amber-50', hint: '初回訪問や継続接触を進めている段階', editable: true },
   { key: 'negotiating', title: '交渉中', accent: '#06b6d4', bg: 'bg-cyan-50', hint: '提案・見積・具体相談が進んでいる段階', editable: true },
+  { key: 'accepted', title: '応諾済み', accent: '#22c55e', bg: 'bg-lime-50', hint: '先方応諾済み。受注確認待ちの段階', editable: true },
   { key: 'won', title: '受注', accent: '#10b981', bg: 'bg-emerald-50', hint: '受注確認完了後に自動で移動', editable: false },
   { key: 'lost', title: '失注', accent: '#ef4444', bg: 'bg-rose-50', hint: '見送り・失注。担当者が手動で更新', editable: true },
 ];
@@ -294,16 +296,62 @@ function buildProgressFilterSearch(filters: ProgressFilters) {
   return params.toString();
 }
 
-function buildNextActionLabel(deal: BoardDeal) {
+function buildNextActionParts(deal: BoardDeal) {
   if (!deal.next_action) {
-    return '次アクション未設定';
+    return { action: '次アクション未設定', date: '' };
   }
+
+  const datePattern = deal.next_action_date
+    ? new RegExp(`（${deal.next_action_date}）|\\(${deal.next_action_date}\\)|・\\s*${deal.next_action_date}|·\\s*${deal.next_action_date}`)
+    : null;
+  const action = datePattern
+    ? deal.next_action.replace(datePattern, '').trim()
+    : deal.next_action.trim();
 
   if (!deal.next_action_date) {
-    return deal.next_action;
+    return { action, date: '' };
   }
 
-  return `${deal.next_action} · ${deal.next_action_date}`;
+  return { action: action || deal.next_action, date: deal.next_action_date };
+}
+
+function parseExpectedAmountNotes(notes: string | null) {
+  if (!notes) {
+    return { amountLines: [] as string[], cleanNotes: '' };
+  }
+
+  const lines = notes.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => line.trim() === '【受注予定額/月】');
+
+  if (headerIndex === -1) {
+    return { amountLines: [] as string[], cleanNotes: notes.trim() };
+  }
+
+  const amountLines: string[] = [];
+  let endIndex = lines.length;
+
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+
+    if (!line) {
+      endIndex = index + 1;
+      break;
+    }
+
+    if (line.startsWith('合計：')) {
+      endIndex = index + 1;
+      break;
+    }
+
+    amountLines.push(line);
+  }
+
+  const cleanNotes = [
+    ...lines.slice(0, headerIndex),
+    ...lines.slice(endIndex),
+  ].join('\n').trim();
+
+  return { amountLines, cleanNotes };
 }
 
 export default function DealProgressDashboard() {
@@ -477,16 +525,46 @@ export default function DealProgressDashboard() {
       targeting: [],
       visiting: [],
       negotiating: [],
+      accepted: [],
       won: [],
       lost: [],
     })
   ), [filteredDeals]);
+
+  const columnAmountTotals = useMemo(() => (
+    COLUMNS.reduce<Record<DealPipelineStage, number>>((acc, column) => {
+      acc[column.key] = groupedDeals[column.key].reduce((sum, deal) => (
+        sum + (Number.isFinite(Number(deal.amount)) ? Number(deal.amount) : 0)
+      ), 0);
+      return acc;
+    }, {
+      targeting: 0,
+      visiting: 0,
+      negotiating: 0,
+      accepted: 0,
+      won: 0,
+      lost: 0,
+    })
+  ), [groupedDeals]);
 
   const summary = useMemo(() => ({
     total: filteredDeals.length,
     newCount: filteredDeals.filter((deal) => deal.lifecycle === 'new').length,
     existingCount: filteredDeals.filter((deal) => deal.lifecycle === 'existing').length,
   }), [filteredDeals]);
+
+  const portfolioSummary = useMemo(() => {
+    const totalAmount = COLUMNS.reduce((sum, column) => sum + columnAmountTotals[column.key], 0);
+    return {
+      totalAmount,
+      columns: COLUMNS.map((column) => ({
+        ...column,
+        count: groupedDeals[column.key].length,
+        amount: columnAmountTotals[column.key],
+        ratio: totalAmount > 0 ? Math.round((columnAmountTotals[column.key] / totalAmount) * 100) : 0,
+      })),
+    };
+  }, [columnAmountTotals, groupedDeals]);
 
   const canEditDeal = (deal: BoardDeal) => (
     !isClosed
@@ -747,6 +825,43 @@ export default function DealProgressDashboard() {
           </div>
         </div>
 
+        <div className="mb-5 rounded-3xl border border-zinc-200/80 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-bold text-zinc-400">商談ポートフォリオ</p>
+              <div className="mt-1 flex flex-wrap items-end gap-x-3 gap-y-1">
+                <p className="text-2xl font-black text-zinc-900">
+                  ¥{portfolioSummary.totalAmount.toLocaleString()}
+                </p>
+                <p className="pb-1 text-xs font-semibold text-zinc-500">
+                  受注予定額/月 合計
+                </p>
+              </div>
+            </div>
+
+            <div className="grid flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-6">
+              {portfolioSummary.columns.map((item) => (
+                <div key={item.key} className="rounded-2xl bg-zinc-50 px-3 py-2">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-bold text-zinc-700">{item.title}</span>
+                    <span className="text-[10px] font-bold text-zinc-400">{item.count}件</span>
+                  </div>
+                  <p className="text-sm font-black text-zinc-900">¥{item.amount.toLocaleString()}</p>
+                  <div className="mt-2 h-1.5 rounded-full bg-white">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${item.ratio}%`, backgroundColor: item.accent }}
+                    />
+                  </div>
+                  <p className="mt-1 text-[10px] font-semibold text-zinc-400">
+                    構成比 {item.ratio}%
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
         {error && (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 shadow-sm">
             {error}
@@ -759,7 +874,7 @@ export default function DealProgressDashboard() {
             商談進捗を読み込み中です...
           </div>
         ) : (
-          <div className="grid gap-5 xl:grid-cols-5">
+          <div className="grid gap-4 xl:grid-cols-6">
             {COLUMNS.map((column) => (
               <div
                 key={column.key}
@@ -771,13 +886,24 @@ export default function DealProgressDashboard() {
                 }}
                 className={`rounded-3xl border border-zinc-200/80 p-4 shadow-sm ${column.bg}`}
               >
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
+                <div className="mb-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
                     <h2 className="text-base font-bold text-zinc-900">{column.title}</h2>
                     <p className="mt-1 text-xs text-zinc-500">{column.hint}</p>
-                    <p className="mt-2 text-xs font-semibold text-zinc-500">{groupedDeals[column.key].length} 件</p>
+                    </div>
+                    <div className="h-2 w-14 shrink-0 rounded-full" style={{ backgroundColor: column.accent }} />
                   </div>
-                  <div className="h-2 w-16 rounded-full" style={{ backgroundColor: column.accent }} />
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="rounded-2xl bg-white/75 px-3 py-2">
+                      <p className="text-[10px] font-bold text-zinc-400">件数</p>
+                      <p className="mt-0.5 text-sm font-black text-zinc-900">{groupedDeals[column.key].length}件</p>
+                    </div>
+                    <div className="rounded-2xl bg-white/75 px-3 py-2">
+                      <p className="text-[10px] font-bold text-zinc-400">予定額/月</p>
+                      <p className="mt-0.5 text-sm font-black text-zinc-900">¥{columnAmountTotals[column.key].toLocaleString()}</p>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -793,14 +919,10 @@ export default function DealProgressDashboard() {
                             ? [deal.proposal_category]
                             : [];
                       const temperatureTone = getTemperatureTone(deal.deal_temperature);
-                      const nextActionLabel = buildNextActionLabel(deal);
+                      const nextActionParts = buildNextActionParts(deal);
+                      const { amountLines, cleanNotes } = parseExpectedAmountNotes(deal.notes);
                       const metaBadges = [
                         deal.contact_role ? `接触: ${deal.contact_role}` : null,
-                        deal.decision_maker_contact === 'yes'
-                          ? '決裁者接触あり'
-                          : deal.decision_maker_contact === 'no'
-                            ? '決裁者未接触'
-                            : null,
                       ].filter(Boolean);
 
                       return (
@@ -819,7 +941,7 @@ export default function DealProgressDashboard() {
                               navigate(`/clinics/${deal.clinic_kind}/${encodeURIComponent(deal.clinic_id)}`);
                             }
                           }}
-                          className={`relative overflow-hidden rounded-2xl border p-4 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md ${
+                          className={`relative overflow-hidden rounded-2xl border p-3 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md ${
                             temperatureTone.cardClassName
                           } ${
                             updatingDealId === deal.id ? 'opacity-60' : ''
@@ -827,9 +949,9 @@ export default function DealProgressDashboard() {
                         >
                           <div className={`pointer-events-none absolute inset-x-0 top-0 h-1 bg-linear-to-r ${temperatureTone.glowClassName}`} />
 
-                          <div className="mb-3 flex items-start justify-between gap-3">
+                          <div className="mb-3 flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                              <div className="mb-2 flex flex-wrap items-center gap-1.5">
                                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${temperatureTone.chipClassName}`}>
                                   {temperatureTone.label}
                                 </span>
@@ -856,43 +978,79 @@ export default function DealProgressDashboard() {
                                   </span>
                                 )}
                               </div>
-                              <div className="truncate text-left text-base font-bold text-zinc-900 hover:text-purple-600">
+                              <div className="line-clamp-2 text-left text-base font-bold leading-snug text-zinc-900 hover:text-purple-600">
                                 {deal.clinic_name}
                               </div>
-                              <p className="mt-1 text-xs font-medium text-zinc-500">
-                                {deal.user_name || '担当者未設定'} · {deal.deal_date}
+                              <p className="mt-1 truncate text-xs font-medium text-zinc-500">
+                                {deal.user_name || '担当者未設定'} ・ {deal.deal_date}
                               </p>
                             </div>
                             <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
                           </div>
 
-                          <div className="mb-3 flex flex-wrap gap-2">
+                          <div className="mb-3 flex flex-wrap gap-1.5">
                             {categories.slice(0, 2).map((category) => (
-                              <span key={category} className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+                              <span key={category} className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700">
                                 {category}
                               </span>
                             ))}
                             {categories.length > 2 && (
-                              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-600">
+                              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-semibold text-zinc-600">
                                 +{categories.length - 2}
                               </span>
                             )}
                           </div>
 
                           <div className="space-y-2 text-sm text-zinc-600">
-                            <div className="rounded-xl bg-white/80 px-3 py-2">
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-400">
-                                Next
+                            <div className="rounded-xl border border-zinc-100 bg-white/85 px-3 py-2">
+                              <p className="mb-1 text-[10px] font-bold text-zinc-400">
+                                次回
                               </p>
-                              <p className="mt-1 font-semibold text-zinc-800">{nextActionLabel}</p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-sm font-bold leading-5 text-zinc-900">
+                                  {nextActionParts.action}
+                                </span>
+                                {nextActionParts.date && (
+                                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-bold text-zinc-600">
+                                    {nextActionParts.date}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
+                            {deal.amount != null && (
+                              <div className="rounded-xl border border-purple-100 bg-purple-50/70 px-3 py-2 text-purple-900">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-purple-400">
+                                    予定額/月
+                                  </p>
+                                  <p className="shrink-0 text-sm font-bold">
+                                    ¥{deal.amount.toLocaleString()}
+                                  </p>
+                                </div>
+                                {amountLines.length > 0 && (
+                                  <div className="mt-2 space-y-1">
+                                    {amountLines.slice(0, 3).map((line) => (
+                                      <p key={line} className="truncate text-[11px] font-medium text-purple-700">
+                                        {line}
+                                      </p>
+                                    ))}
+                                    {amountLines.length > 3 && (
+                                      <p className="text-[11px] font-semibold text-purple-500">
+                                        +{amountLines.length - 3}カテゴリ
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             {metaBadges.length > 0 && (
-                              <div className="flex flex-wrap gap-2">
+                              <div className="flex flex-wrap gap-1.5">
                                 {metaBadges.map((badge) => (
                                   <span
                                     key={badge}
-                                    className="rounded-full bg-white/85 px-2 py-1 text-[11px] font-medium text-zinc-600"
+                                    className="rounded-full bg-white/80 px-2 py-1 text-[10px] font-semibold text-zinc-600"
                                   >
                                     {badge}
                                   </span>
@@ -900,9 +1058,9 @@ export default function DealProgressDashboard() {
                               </div>
                             )}
 
-                            {deal.notes && (
+                            {cleanNotes && (
                               <p className="line-clamp-2 text-xs leading-5 text-zinc-500">
-                                {deal.notes}
+                                {cleanNotes}
                               </p>
                             )}
                           </div>
