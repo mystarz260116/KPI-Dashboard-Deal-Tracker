@@ -599,6 +599,10 @@ export default async function handler(req: any, res: any) {
         const customerCode = p.merged_customer_code;
         return {
           clinic: mergedCustomerNameMap.get(customerCode) ?? p.name ?? customerCode,
+          clinic_kind: 'customer',
+          clinic_id: customerCode,
+          customer_code: customerCode,
+          prospect_customer_id: p.id,
           sales: user?.name ?? '',
         };
       });

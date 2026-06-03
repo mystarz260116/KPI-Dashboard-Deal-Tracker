@@ -1304,12 +1304,29 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(data?.new_orders ?? []).map((o: any, i: number) => (
-                    <tr key={i} className="border-b border-zinc-100 hover:bg-zinc-50">
-                      <td className="py-2 font-medium text-indigo-600">{o.clinic}</td>
-                      <td className="py-2 text-zinc-700">{o.sales}</td>
-                    </tr>
-                  ))}
+                  {(data?.new_orders ?? []).map((o: any, i: number) => {
+                    const clinicKind = o.clinic_kind === 'prospect' ? 'prospect' : 'customer';
+                    const clinicId = String(o.clinic_id ?? o.customer_code ?? '').trim();
+
+                    return (
+                      <tr key={`${clinicKind}:${clinicId || i}`} className="border-b border-zinc-100 hover:bg-zinc-50">
+                        <td className="py-2 font-medium">
+                          {clinicId ? (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/clinics/${clinicKind}/${encodeURIComponent(clinicId)}`)}
+                              className="font-semibold text-indigo-600 underline-offset-2 transition hover:text-indigo-800 hover:underline"
+                            >
+                              {o.clinic}
+                            </button>
+                          ) : (
+                            <span className="text-indigo-600">{o.clinic}</span>
+                          )}
+                        </td>
+                        <td className="py-2 text-zinc-700">{o.sales}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

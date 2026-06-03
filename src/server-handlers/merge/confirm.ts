@@ -69,6 +69,7 @@ export default async function handler(req: any, res: any) {
     const { error: dealUpdateError } = await supabaseAdmin
       .from('deals')
       .update({
+        customer_code,
         pipeline_stage: 'won',
         activity_type: 'won',
       })
