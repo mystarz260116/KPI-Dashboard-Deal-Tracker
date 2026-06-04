@@ -5,19 +5,27 @@ type SalesRowFilters = {
   endExclusiveDate: string;
   customerCodes?: string[];
   departmentId?: number;
+  dataKind?: 'delivery' | 'order';
 };
+
+export function normalizeSalesImportDataKind(value: unknown): 'delivery' | 'order' {
+  return value === 'order' ? 'order' : 'delivery';
+}
 
 export async function fetchRegionalSalesRows(filters: SalesRowFilters) {
   const pageSize = 1000;
   const allRows: any[] = [];
   let from = 0;
+  const dataKind = normalizeSalesImportDataKind(filters.dataKind);
+  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
 
   while (true) {
     let query = supabaseAdmin
       .from('sales_import_rows')
-      .select('department_id, customer_code, amount, delivery_date, external_staff_code, normalized_product_code, normalized_product_name')
-      .gte('delivery_date', filters.startDate)
-      .lt('delivery_date', filters.endExclusiveDate)
+      .select('department_id, data_kind, customer_code, amount, delivery_date, order_date, external_staff_code, normalized_product_code, normalized_product_name')
+      .eq('data_kind', dataKind)
+      .gte(dateColumn, filters.startDate)
+      .lt(dateColumn, filters.endExclusiveDate)
       .range(from, from + pageSize - 1);
 
     if (filters.departmentId) {
@@ -48,6 +56,7 @@ export async function fetchRegionalSalesRows(filters: SalesRowFilters) {
 }
 
 export async function fetchRegionalSalesTotal(filters: SalesRowFilters) {
+  const dataKind = normalizeSalesImportDataKind(filters.dataKind);
   const { data, error } = await supabaseAdmin.rpc('sum_sales_import_rows_amount', {
     p_start_date: filters.startDate,
     p_end_date: filters.endExclusiveDate,
@@ -55,6 +64,7 @@ export async function fetchRegionalSalesTotal(filters: SalesRowFilters) {
       ? filters.customerCodes
       : null,
     p_department_id: filters.departmentId ?? null,
+    p_data_kind: dataKind,
   });
 
   if (error) {

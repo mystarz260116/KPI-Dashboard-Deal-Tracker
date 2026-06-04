@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 import { SALES_IMPORT_RAW_TABLE } from './regions.js';
+import { normalizeSalesImportDataKind } from './regionalReads.js';
 
 function padMonth(month: number) {
   return String(month).padStart(2, '0');
@@ -60,30 +61,25 @@ export function getMonthRange(yearMonth: string) {
 
 export async function getBatchTargetMonths(
   departmentId: number,
-  importBatchId: string
+  importBatchId: string,
+  dataKind: 'delivery' | 'order' = 'delivery'
 ) {
   const { data, error } = await supabaseAdmin
     .from(SALES_IMPORT_RAW_TABLE)
-    .select('delivery_date_parsed, 納品日')
+    .select('納品日, 受注日, data_kind')
     .eq('department_id', departmentId)
-    .eq('import_batch_id', importBatchId);
+    .eq('import_batch_id', importBatchId)
+    .eq('data_kind', dataKind);
 
   if (error) {
     throw error;
   }
 
   const months = new Set<string>();
+  const rawDateColumn = dataKind === 'order' ? '受注日' : '納品日';
 
   (data ?? []).forEach((row: any) => {
-    if (row.delivery_date_parsed) {
-      const parsed = new Date(String(row.delivery_date_parsed));
-      if (!Number.isNaN(parsed.getTime())) {
-        months.add(`${parsed.getFullYear()}-${padMonth(parsed.getMonth() + 1)}`);
-        return;
-      }
-    }
-
-    const fallbackMonth = getMonthKeyFromRawDate(row['納品日']);
+    const fallbackMonth = getMonthKeyFromRawDate(row[rawDateColumn]);
     if (fallbackMonth) {
       months.add(fallbackMonth);
     }
@@ -94,7 +90,8 @@ export async function getBatchTargetMonths(
 
 export async function getClosedMonths(
   departmentId: number,
-  targetYearMonths: string[]
+  targetYearMonths: string[],
+  dataKind: 'delivery' | 'order' = 'delivery'
 ) {
   if (targetYearMonths.length === 0) {
     return [];
@@ -112,6 +109,7 @@ export async function getClosedMonths(
     .from('sales_import_month_closures')
     .select('target_year_month, closed_at, closed_by')
     .eq('department_id', departmentId)
+    .eq('data_kind', dataKind)
     .in('target_year_month', normalizedMonths);
 
   if (error) {
@@ -124,35 +122,77 @@ export async function getClosedMonths(
 export async function replaceOpenMonthSalesData(
   departmentId: number,
   importBatchId: string,
-  targetYearMonths: string[]
+  targetYearMonths: string[],
+  dataKind: 'delivery' | 'order' = 'delivery'
 ) {
   let deletedRawRows = 0;
   let deletedSalesRows = 0;
+  const normalizedDataKind = normalizeSalesImportDataKind(dataKind);
+  const salesDateColumn = normalizedDataKind === 'order' ? 'order_date' : 'delivery_date';
+  const rawDateColumn = normalizedDataKind === 'order' ? '受注日' : '納品日';
 
   for (const targetYearMonth of targetYearMonths) {
     const { start, endExclusive } = getMonthRange(targetYearMonth);
 
-    const deleteRawResult = await supabaseAdmin
-      .from(SALES_IMPORT_RAW_TABLE)
-      .delete()
-      .eq('department_id', departmentId)
-      .neq('import_batch_id', importBatchId)
-      .gte('delivery_date_parsed', start)
-      .lt('delivery_date_parsed', endExclusive);
+    const rawRowsToDelete: any[] = [];
+    const pageSize = 1000;
+    let from = 0;
 
-    if (deleteRawResult.error) {
-      throw deleteRawResult.error;
+    while (true) {
+      const { data: rawRowsPage, error: rawRowsLookupError } = await supabaseAdmin
+        .from(SALES_IMPORT_RAW_TABLE)
+        .select(`id, ${rawDateColumn}`)
+        .eq('department_id', departmentId)
+        .eq('data_kind', normalizedDataKind)
+        .neq('import_batch_id', importBatchId)
+        .range(from, from + pageSize - 1);
+
+      if (rawRowsLookupError) {
+        throw rawRowsLookupError;
+      }
+
+      const page = rawRowsPage ?? [];
+      rawRowsToDelete.push(...page);
+
+      if (page.length < pageSize) {
+        break;
+      }
+
+      from += pageSize;
     }
 
-    deletedRawRows += deleteRawResult.count ?? 0;
+    const rawIdsToDelete = (rawRowsToDelete ?? [])
+      .filter((row: any) => {
+        const month = getMonthKeyFromRawDate(row[rawDateColumn]);
+        return month === targetYearMonth;
+      })
+      .map((row: any) => row.id)
+      .filter(Boolean);
+
+    for (let index = 0; index < rawIdsToDelete.length; index += 1000) {
+      const rawIdChunk = rawIdsToDelete.slice(index, index + 1000);
+      const deleteRawResult = await supabaseAdmin
+        .from(SALES_IMPORT_RAW_TABLE)
+        .delete({ count: 'exact' })
+        .eq('department_id', departmentId)
+        .eq('data_kind', normalizedDataKind)
+        .in('id', rawIdChunk);
+
+      if (deleteRawResult.error) {
+        throw deleteRawResult.error;
+      }
+
+      deletedRawRows += deleteRawResult.count ?? rawIdChunk.length;
+    }
 
     const deleteSalesRowsResult = await supabaseAdmin
       .from('sales_import_rows')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('department_id', departmentId)
+      .eq('data_kind', normalizedDataKind)
       .neq('import_batch_id', importBatchId)
-      .gte('delivery_date', start)
-      .lt('delivery_date', endExclusive);
+      .gte(salesDateColumn, start)
+      .lt(salesDateColumn, endExclusive);
 
     if (deleteSalesRowsResult.error) {
       throw deleteSalesRowsResult.error;
@@ -169,12 +209,14 @@ export async function replaceOpenMonthSalesData(
 
 export async function discardImportBatch(
   departmentId: number,
-  importBatchId: string
+  importBatchId: string,
+  dataKind: 'delivery' | 'order' = 'delivery'
 ) {
   const deleteResult = await supabaseAdmin
     .from(SALES_IMPORT_RAW_TABLE)
     .delete()
     .eq('department_id', departmentId)
+    .eq('data_kind', dataKind)
     .eq('import_batch_id', importBatchId);
 
   if (deleteResult.error) {

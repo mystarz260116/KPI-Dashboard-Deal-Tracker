@@ -5,6 +5,7 @@ import {
   parseDepartmentId,
   SALES_IMPORT_RAW_TABLE,
 } from '../../../api/_lib/regions.js';
+import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
 // Type for incoming rows from the CSV parser on the client
 // We keep it flexible because CSV headers may vary
@@ -61,9 +62,11 @@ export default async function handler(req: any, res: any) {
 
     const batchId = req.body?.import_batch_id ?? crypto.randomUUID();
     const importedAt = req.body?.imported_at ?? new Date().toISOString();
+    const dataKind = normalizeSalesImportDataKind(req.body?.data_kind);
 
     const rowsWithBatch = rows.map((r) => ({
       ...r,
+      data_kind: dataKind,
       department_id: departmentId,
       import_batch_id: batchId,
       imported_at: importedAt,
@@ -98,6 +101,7 @@ export default async function handler(req: any, res: any) {
       uploaded_count: uploadResult.inserted_count,
       import_batch_id: batchId,
       department_id: departmentId,
+      data_kind: dataKind,
       imported_at: importedAt,
       finalized: false,
     });

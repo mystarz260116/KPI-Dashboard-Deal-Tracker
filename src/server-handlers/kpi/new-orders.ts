@@ -3,7 +3,7 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { toDateString } from '../../lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
-import { fetchRegionalSalesRows } from '../../../api/_lib/regionalReads.js';
+import { fetchRegionalSalesRows, normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
 type Granularity = 'all' | 'department' | 'individual';
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
@@ -23,6 +23,7 @@ export default async function handler(req: any, res: any) {
     const userId = (req.query.userId as string | undefined) ?? '';
     const fromParam = req.query.from as string | undefined;
     const toParam = req.query.to as string | undefined;
+    const dataKind = normalizeSalesImportDataKind(req.query.data_kind);
 
     if (!fromParam || !toParam) {
       return res.status(400).json({ error: 'from and to are required' });
@@ -105,6 +106,7 @@ export default async function handler(req: any, res: any) {
         startDate: currentStart,
         endExclusiveDate: currentEnd,
         customerCodes: mergedCustomerCodes.length > 0 ? mergedCustomerCodes : ['__none__'],
+        dataKind,
       });
     } catch (salesRowsError) {
       console.error('new-orders sales rows error:', salesRowsError);

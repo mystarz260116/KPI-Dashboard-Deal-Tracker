@@ -9,6 +9,7 @@ import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth
 import {
   fetchRegionalSalesRows,
   fetchRegionalSalesTotal,
+  normalizeSalesImportDataKind,
 } from './_lib/regionalReads.js';
 import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
 import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performance.js';
@@ -100,6 +101,7 @@ export default async function handler(req: any, res: any) {
     const departmentIdParam = (req.query.departmentId as string | undefined) ?? '';
     const legacyDepartment = (req.query.department as string | undefined) ?? '';
     const userId = (req.query.userId as string | undefined) ?? '';
+    const dataKind = normalizeSalesImportDataKind(req.query.data_kind);
 
     const fromParam = req.query.from as string | undefined;
     const toParam = req.query.to as string | undefined;
@@ -234,6 +236,7 @@ export default async function handler(req: any, res: any) {
         startDate: currentStart,
         endExclusiveDate: currentEnd,
         customerCodes: mergedCustomerCodesInPeriod,
+        dataKind,
       });
     } catch (e) {
       console.error('kpi merged sales error:', e);
@@ -288,10 +291,12 @@ export default async function handler(req: any, res: any) {
         fetchRegionalSalesRows({
           startDate: currentStart,
           endExclusiveDate: currentEnd,
+          dataKind,
         }),
         fetchRegionalSalesRows({
           startDate: previousStart,
           endExclusiveDate: previousEnd,
+          dataKind,
         }),
       ]);
     } catch (salesImportRowsError) {
@@ -608,6 +613,7 @@ export default async function handler(req: any, res: any) {
       });
 
     return res.status(200).json({
+      data_kind: dataKind,
       budget: {
         sales: sharedSalesTotal,
         budget: budgetTotal,

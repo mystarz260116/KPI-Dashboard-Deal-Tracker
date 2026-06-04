@@ -100,27 +100,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }> = [];
     let salesMonthTotal = 0;
 
-    if (customerCodeForMapping && profile.department_id) {
-      const { data: mapRows, error: mapError } = await supabaseAdmin
+    if (customerCodeForMapping) {
+      const canReadAllDepartments = Boolean(profile.can_view_dashboard || profile.role === 'admin');
+      const profileDepartmentId = profile.department_id ? Number(profile.department_id) : null;
+
+      let mapQuery = supabaseAdmin
         .from('customer_external_staff_maps')
-        .select('external_staff_code')
-        .eq('department_id', Number(profile.department_id))
+        .select('department_id, external_staff_code')
         .eq('customer_code', customerCodeForMapping);
+
+      if (!canReadAllDepartments) {
+        if (!profileDepartmentId) {
+          mapQuery = mapQuery.eq('department_id', -1);
+        } else {
+          mapQuery = mapQuery.eq('department_id', profileDepartmentId);
+        }
+      }
+
+      const { data: mapRows, error: mapError } = await mapQuery;
 
       if (mapError) {
         console.error('clinic api staff maps error:', mapError);
         return res.status(500).json({ error: 'Clinic staff mappings fetch failed' });
       }
 
+      const mappedDepartmentIds = Array.from(new Set(
+        (mapRows ?? [])
+          .map((row: any) => Number(row.department_id))
+          .filter((value: number) => Number.isFinite(value) && value > 0)
+      ));
       const staffCodes = Array.from(new Set(
         (mapRows ?? []).map((row: any) => String(row.external_staff_code)).filter(Boolean)
       ));
 
-      if (staffCodes.length > 0) {
+      if (staffCodes.length > 0 && mappedDepartmentIds.length > 0) {
         const { data: staffs, error: staffsError } = await supabaseAdmin
           .from('external_staffs')
-          .select('code, name, raw_label')
-          .eq('department_id', Number(profile.department_id))
+          .select('department_id, code, name, raw_label')
+          .in('department_id', mappedDepartmentIds)
           .in('code', staffCodes);
 
         if (staffsError) {
@@ -129,21 +146,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         assignedStaffs = (staffs ?? []).map((staff: any) => ({
-          key: `sales:${String(staff.code)}`,
+          key: `sales:${String(staff.department_id)}:${String(staff.code)}`,
           label: String(staff.name ?? staff.raw_label ?? staff.code),
           source: 'sales',
         }));
       }
 
-      const { data: salesRows, error: salesError } = await supabaseAdmin
+      let salesQuery = supabaseAdmin
         .from('sales_import_rows')
         .select('source_raw_id, delivery_date, amount, normalized_product_code, normalized_product_name')
-        .eq('department_id', Number(profile.department_id))
         .eq('customer_code', customerCodeForMapping)
+        .eq('data_kind', 'delivery')
         .gte('delivery_date', monthStart)
         .lt('delivery_date', monthEndExclusive)
         .order('delivery_date', { ascending: false })
         .limit(1000);
+
+      if (!canReadAllDepartments) {
+        if (!profileDepartmentId) {
+          salesQuery = salesQuery.eq('department_id', -1);
+        } else {
+          salesQuery = salesQuery.eq('department_id', profileDepartmentId);
+        }
+      }
+
+      const { data: salesRows, error: salesError } = await salesQuery;
 
       if (salesError) {
         console.error('clinic api sales rows error:', salesError);

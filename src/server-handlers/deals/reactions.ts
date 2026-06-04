@@ -3,6 +3,14 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 
 const ALLOWED_REACTIONS = new Set(['like', 'helpful', 'congrats']);
+type ReactionType = 'like' | 'helpful' | 'congrats';
+
+type ReactionSummary = {
+  deal_id: string;
+  counts: Record<ReactionType, number>;
+  mine: string[];
+  reactors: Record<ReactionType, Array<{ user_id: string; name: string }>>;
+};
 
 function parseDealIds(value: unknown) {
   const raw = String(value ?? '').trim();
@@ -15,6 +23,62 @@ function parseDealIds(value: unknown) {
 
 function getSearchParams(req: VercelRequest) {
   return new URL(req.url ?? '/api/deals', 'http://localhost').searchParams;
+}
+
+async function buildReactionSummaries(rows: any[], currentUserId: string) {
+  const reactorUserIds = Array.from(new Set(
+    rows.map((row) => String(row.reactor_user_id ?? '')).filter(Boolean)
+  ));
+
+  const profileNameMap = new Map<string, string>();
+  if (reactorUserIds.length > 0) {
+    const { data: profiles, error: profilesError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, name, email')
+      .in('id', reactorUserIds);
+
+    if (profilesError) {
+      throw profilesError;
+    }
+
+    for (const profile of profiles ?? []) {
+      profileNameMap.set(
+        String((profile as any).id),
+        String((profile as any).name ?? (profile as any).email ?? '名前未設定')
+      );
+    }
+  }
+
+  const byDeal = new Map<string, ReactionSummary>();
+
+  for (const row of rows) {
+    const dealKey = String(row.deal_id);
+    const reactionType = String(row.reaction_type);
+    const reactorUserId = String(row.reactor_user_id ?? '');
+    if (!ALLOWED_REACTIONS.has(reactionType)) continue;
+
+    const entry = byDeal.get(dealKey) ?? {
+      deal_id: dealKey,
+      counts: { like: 0, helpful: 0, congrats: 0 },
+      mine: [],
+      reactors: { like: [], helpful: [], congrats: [] },
+    };
+
+    const typedReaction = reactionType as ReactionType;
+    entry.counts[typedReaction] += 1;
+    if (reactorUserId === currentUserId && !entry.mine.includes(reactionType)) {
+      entry.mine.push(reactionType);
+    }
+    if (reactorUserId) {
+      entry.reactors[typedReaction].push({
+        user_id: reactorUserId,
+        name: profileNameMap.get(reactorUserId) ?? '名前未設定',
+      });
+    }
+    byDeal.set(dealKey, entry);
+  }
+
+  return Array.from(byDeal.values());
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -43,31 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'deal reactions fetch failed' });
       }
 
-      const byDeal = new Map<string, {
-        deal_id: string;
-        counts: Record<'like' | 'helpful' | 'congrats', number>;
-        mine: string[];
-      }>();
-
-      for (const row of data ?? []) {
-        const dealKey = String((row as any).deal_id);
-        const reactionType = String((row as any).reaction_type);
-        if (!ALLOWED_REACTIONS.has(reactionType)) continue;
-
-        const entry = byDeal.get(dealKey) ?? {
-          deal_id: dealKey,
-          counts: { like: 0, helpful: 0, congrats: 0 },
-          mine: [],
-        };
-
-        entry.counts[reactionType as 'like' | 'helpful' | 'congrats'] += 1;
-        if ((row as any).reactor_user_id === profile.id && !entry.mine.includes(reactionType)) {
-          entry.mine.push(reactionType);
-        }
-        byDeal.set(dealKey, entry);
-      }
-
-      return res.status(200).json(Array.from(byDeal.values()));
+      return res.status(200).json(await buildReactionSummaries(data ?? [], profile.id));
     }
 
     if (req.method === 'POST') {
@@ -89,31 +129,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(500).json({ error: 'deal reactions bulk fetch failed' });
         }
 
-        const byDeal = new Map<string, {
-          deal_id: string;
-          counts: Record<'like' | 'helpful' | 'congrats', number>;
-          mine: string[];
-        }>();
-
-        for (const row of data ?? []) {
-          const dealKey = String((row as any).deal_id);
-          const reactionType = String((row as any).reaction_type);
-          if (!ALLOWED_REACTIONS.has(reactionType)) continue;
-
-          const entry = byDeal.get(dealKey) ?? {
-            deal_id: dealKey,
-            counts: { like: 0, helpful: 0, congrats: 0 },
-            mine: [],
-          };
-
-          entry.counts[reactionType as 'like' | 'helpful' | 'congrats'] += 1;
-          if ((row as any).reactor_user_id === profile.id && !entry.mine.includes(reactionType)) {
-            entry.mine.push(reactionType);
-          }
-          byDeal.set(dealKey, entry);
-        }
-
-        return res.status(200).json(Array.from(byDeal.values()));
+        return res.status(200).json(await buildReactionSummaries(data ?? [], profile.id));
       }
 
       const dealId = String((req.body as any)?.deal_id ?? '').trim();

@@ -41,6 +41,13 @@ interface ImportMonthClosureItem {
   closed_by_name: string;
 }
 
+type ImportDataKind = 'delivery' | 'order';
+
+const IMPORT_DATA_KIND_LABEL: Record<ImportDataKind, string> = {
+  delivery: '納品データ',
+  order: '受注データ',
+};
+
 interface ProductDepartmentPanelItem {
   key: string;
   label: string;
@@ -245,6 +252,8 @@ export default function Dashboard() {
   const [appliedToDate, setAppliedToDate] = useState(defaultRange.to);
   const [appliedDept, setAppliedDept] = useState('');
   const [appliedUser, setAppliedUser] = useState('');
+  const [salesImportDataKind, setSalesImportDataKind] = useState<ImportDataKind>('delivery');
+  const [appliedSalesImportDataKind, setAppliedSalesImportDataKind] = useState<ImportDataKind>('delivery');
   const [data, setData] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
@@ -257,6 +266,7 @@ export default function Dashboard() {
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [importResultMessage, setImportResultMessage] = useState('');
   const [importDepartmentId, setImportDepartmentId] = useState('');
+  const [importDataKind, setImportDataKind] = useState<ImportDataKind>('delivery');
   const [importClosureMonth, setImportClosureMonth] = useState(() => formatYearMonthInput(new Date()));
   const [importedAtInput, setImportedAtInput] = useState(() => formatImportDatetimeInput(new Date()));
   const [isMonthClosureLoading, setIsMonthClosureLoading] = useState(false);
@@ -423,6 +433,7 @@ export default function Dashboard() {
       const params = new URLSearchParams({
         department_id: departmentId,
         target_year_month: targetYearMonth,
+        data_kind: importDataKind,
       });
 
       const res = await authFetch(`/api/import/sales/month-closures?${params.toString()}`, {
@@ -472,6 +483,7 @@ export default function Dashboard() {
         body: JSON.stringify({
           department_id: Number(importDepartmentId),
           target_year_month: importClosureMonth,
+          data_kind: importDataKind,
         }),
       });
 
@@ -528,7 +540,7 @@ export default function Dashboard() {
     }
 
     void fetchImportMonthClosureStatus(importDepartmentId, importClosureMonth);
-  }, [isImportModalOpen, importDepartmentId, importClosureMonth]);
+  }, [isImportModalOpen, importDepartmentId, importClosureMonth, importDataKind]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -565,6 +577,7 @@ export default function Dashboard() {
           granularity: appliedGranularity,
           from: appliedFromDate,
           to: appliedToDate,
+          data_kind: appliedSalesImportDataKind,
         });
 
         if (appliedDept) params.set('departmentId', appliedDept);
@@ -631,7 +644,7 @@ export default function Dashboard() {
     };
 
     fetchDashboardData();
-  }, [appliedPeriod, appliedGranularity, appliedDept, appliedUser, appliedFromDate, appliedToDate]);
+  }, [appliedPeriod, appliedGranularity, appliedDept, appliedUser, appliedFromDate, appliedToDate, appliedSalesImportDataKind]);
   const handleApplyFilters = () => {
     setAppliedPeriod(period);
     setAppliedGranularity(granularity);
@@ -639,6 +652,7 @@ export default function Dashboard() {
     setAppliedToDate(toDate);
     setAppliedDept(selectedDept);
     setAppliedUser(selectedUser);
+    setAppliedSalesImportDataKind(salesImportDataKind);
   };
 
   const parseCsvLine = (line: string) => {
@@ -763,6 +777,7 @@ export default function Dashboard() {
         rows,
         import_batch_id: importBatchId,
         department_id: Number(departmentId),
+        data_kind: importDataKind,
         imported_at: importedAt,
       }),
     });
@@ -841,6 +856,7 @@ export default function Dashboard() {
         body: JSON.stringify({
           import_batch_id: importBatchId,
           department_id: Number(importDepartmentId),
+          data_kind: importDataKind,
         }),
       });
 
@@ -854,11 +870,12 @@ export default function Dashboard() {
       }
 
       const importDepartmentName = departmentOptions.find((d) => d.id === importDepartmentId)?.name ?? importDepartmentId;
+      const importDataKindLabel = IMPORT_DATA_KIND_LABEL[importDataKind];
       const replacedMonths = Array.isArray(finalizeResult?.replaced_months)
         ? finalizeResult.replaced_months.join(', ')
         : '';
       setImportResultMessage(
-        `CSV取込と同期処理が完了しました。部署: ${importDepartmentName} / 取り込み日時: ${importedAtInput.replace('T', ' ')} / 対象月: ${replacedMonths || '判定不可'} / 取込件数: ${uploadedCount}件 / 置換raw件数: ${finalizeResult?.deleted_raw_rows ?? 0}件 / 置換売上件数: ${finalizeResult?.deleted_sales_rows ?? 0}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
+        `CSV取込と同期処理が完了しました。種別: ${importDataKindLabel} / 部署: ${importDepartmentName} / 取り込み日時: ${importedAtInput.replace('T', ' ')} / 対象月: ${replacedMonths || '判定不可'} / 取込件数: ${uploadedCount}件 / 置換raw件数: ${finalizeResult?.deleted_raw_rows ?? 0}件 / 置換売上件数: ${finalizeResult?.deleted_sales_rows ?? 0}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
       );
       setSelectedCsvFile(null);
       await fetchPendingMergeCount();
@@ -908,6 +925,7 @@ export default function Dashboard() {
           <div className="flex flex-col gap-3 xl:items-end">
             <div className="flex flex-wrap gap-2">
             <button onClick={() => {
+              setImportDataKind(salesImportDataKind);
               setIsImportModalOpen(true);
               setImportResultMessage('');
             }}
@@ -1105,6 +1123,26 @@ export default function Dashboard() {
             <span className="text-sm font-medium">絞り込み</span>
           </div>
 
+          <div className="flex rounded-lg bg-zinc-100 p-1">
+            {(['delivery', 'order'] as ImportDataKind[]).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => {
+                  setSalesImportDataKind(kind);
+                  setAppliedSalesImportDataKind(kind);
+                }}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold transition ${
+                  salesImportDataKind === kind
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-800'
+                }`}
+              >
+                {kind === 'delivery' ? '納品' : '受注'}
+              </button>
+            ))}
+          </div>
+
           {/* Period */}
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-zinc-400" />
@@ -1191,11 +1229,14 @@ export default function Dashboard() {
           </div>
         )}
         <section className="mb-8">
-          <SectionGroupTitle title="売上サマリー" description="まず売上の着地と予算差分を確認しやすい並びに変えています。" />
+          <SectionGroupTitle
+            title={`${IMPORT_DATA_KIND_LABEL[appliedSalesImportDataKind]}サマリー`}
+            description={`${IMPORT_DATA_KIND_LABEL[appliedSalesImportDataKind]}を基準に、着地と予算差分を確認します。`}
+          />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
               className="rounded-xl bg-white p-6 shadow-sm">
-              <SectionTitle title="売上合計" color="#10b981" />
+              <SectionTitle title={appliedSalesImportDataKind === 'order' ? '受注額合計' : '売上合計'} color="#10b981" />
               <p className="text-4xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
               <p className="mt-2 text-sm text-zinc-500">前期間比 {formatChangeRate(data?.sales.change_rate)}%</p>
             </motion.div>
@@ -1205,7 +1246,7 @@ export default function Dashboard() {
               <SectionTitle title="予算達成率" color="#6366f1" />
               <p className="text-4xl font-bold text-indigo-600">{data?.budget.achievement_rate ?? 0}%</p>
               <p className="mt-2 text-sm text-zinc-500">
-                売上：¥{(data?.budget.sales ?? 0).toLocaleString()} ／ 予算：¥{(data?.budget.budget ?? 0).toLocaleString()}
+                {appliedSalesImportDataKind === 'order' ? '受注額' : '売上'}：¥{(data?.budget.sales ?? 0).toLocaleString()} ／ 予算：¥{(data?.budget.budget ?? 0).toLocaleString()}
               </p>
               <div className="mt-4 h-3 w-full rounded-full bg-zinc-100">
                 <div className="h-3 rounded-full bg-indigo-500"
@@ -1350,8 +1391,32 @@ export default function Dashboard() {
             </div>
 
             <p className="mb-4 text-sm text-zinc-600">
-              売上CSVを取り込んだ後、顧客同期・担当紐付け・マージ候補生成までまとめて実行します。
+              納品CSVまたは受注CSVを取り込んだ後、顧客同期・担当紐付け・マージ候補生成までまとめて実行します。
             </p>
+
+            <div className="mb-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+              <p className="mb-2 text-sm font-medium text-zinc-800">取り込み種別</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(['delivery', 'order'] as ImportDataKind[]).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => {
+                      setImportDataKind(kind);
+                      setImportMonthMessage('');
+                    }}
+                    disabled={isImportingCsv}
+                    className={`rounded-lg border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      importDataKind === kind
+                        ? 'border-indigo-300 bg-indigo-600 text-white shadow-sm'
+                        : 'border-zinc-200 bg-white text-zinc-600 hover:border-indigo-200 hover:bg-indigo-50'
+                    }`}
+                  >
+                    {IMPORT_DATA_KIND_LABEL[kind]}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="mb-4 grid gap-4 sm:grid-cols-2">
               <label className="block text-sm text-zinc-700">
@@ -1399,7 +1464,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-sm font-medium text-zinc-800">月次締め</p>
                   <p className="mt-1 text-xs text-zinc-500">
-                    未締め月は、その月の既存CSV売上を削除して今回の取込内容で上書きします。
+                    未締め月は、その月の既存{IMPORT_DATA_KIND_LABEL[importDataKind]}を削除して今回の取込内容で上書きします。
                   </p>
                   <p className="mt-2 text-sm">
                     状態:

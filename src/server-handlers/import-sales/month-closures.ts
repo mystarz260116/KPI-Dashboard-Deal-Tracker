@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { parseDepartmentId } from '../../../api/_lib/regions.js';
 import { normalizeYearMonth } from '../../../api/_lib/salesImportMonthClosures.js';
+import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -19,6 +20,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const targetYearMonth = normalizeYearMonth(req.query?.target_year_month);
+    const dataKind = normalizeSalesImportDataKind(req.query?.data_kind);
 
     let statusRow: any = null;
     if (targetYearMonth) {
@@ -26,6 +28,7 @@ export default async function handler(req: any, res: any) {
         .from('sales_import_month_closures')
         .select('target_year_month, closed_at, closed_by')
         .eq('department_id', departmentId)
+        .eq('data_kind', dataKind)
         .eq('target_year_month', targetYearMonth)
         .maybeSingle();
 
@@ -41,6 +44,7 @@ export default async function handler(req: any, res: any) {
       .from('sales_import_month_closures')
       .select('target_year_month, closed_at, closed_by')
       .eq('department_id', departmentId)
+      .eq('data_kind', dataKind)
       .order('target_year_month', { ascending: false })
       .limit(12);
 
@@ -82,6 +86,7 @@ export default async function handler(req: any, res: any) {
 
     return res.status(200).json({
       target_year_month: targetYearMonth,
+      data_kind: dataKind,
       is_closed: Boolean(statusRow),
       closed_at: statusRow?.closed_at ?? null,
       closed_by: statusRow?.closed_by ?? null,

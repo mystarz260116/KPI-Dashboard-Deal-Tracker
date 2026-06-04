@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { parseDepartmentId } from '../../../api/_lib/regions.js';
 import { normalizeYearMonth } from '../../../api/_lib/salesImportMonthClosures.js';
+import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST' && req.method !== 'DELETE') {
@@ -15,6 +16,7 @@ export default async function handler(req: any, res: any) {
 
     const departmentId = parseDepartmentId(req.body?.department_id);
     const targetYearMonth = normalizeYearMonth(req.body?.target_year_month);
+    const dataKind = normalizeSalesImportDataKind(req.body?.data_kind);
 
     if (!departmentId || !targetYearMonth) {
       return res.status(400).json({ error: 'department_id and target_year_month are required' });
@@ -25,11 +27,12 @@ export default async function handler(req: any, res: any) {
         .from('sales_import_month_closures')
         .upsert({
           department_id: departmentId,
+          data_kind: dataKind,
           target_year_month: targetYearMonth,
           closed_by: profile.id,
           closed_at: new Date().toISOString(),
         }, {
-          onConflict: 'department_id,target_year_month',
+          onConflict: 'department_id,data_kind,target_year_month',
           ignoreDuplicates: false,
         });
 
@@ -41,6 +44,7 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({
         success: true,
         is_closed: true,
+        data_kind: dataKind,
         target_year_month: targetYearMonth,
       });
     }
@@ -49,6 +53,7 @@ export default async function handler(req: any, res: any) {
       .from('sales_import_month_closures')
       .delete()
       .eq('department_id', departmentId)
+      .eq('data_kind', dataKind)
       .eq('target_year_month', targetYearMonth);
 
     if (error) {
@@ -59,6 +64,7 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       success: true,
       is_closed: false,
+      data_kind: dataKind,
       target_year_month: targetYearMonth,
     });
   } catch (error) {

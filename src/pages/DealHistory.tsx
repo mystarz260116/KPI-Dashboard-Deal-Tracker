@@ -50,6 +50,7 @@ interface DealReactionSummary {
     congrats: number;
   };
   mine: string[];
+  reactors?: Record<'like' | 'helpful' | 'congrats', Array<{ user_id: string; name: string }>>;
 }
 
 const ACTIVITY_LABELS: Record<Deal['activityType'], string> = {
@@ -382,15 +383,28 @@ export default function DealHistory() {
           deal_id: dealId,
           counts: { like: 0, helpful: 0, congrats: 0 },
           mine: [],
+          reactors: { like: [], helpful: [], congrats: [] },
         };
         const nextMine = new Set(currentEntry.mine);
         const nextCounts = { ...currentEntry.counts };
+        const nextReactors = {
+          like: [...(currentEntry.reactors?.like ?? [])],
+          helpful: [...(currentEntry.reactors?.helpful ?? [])],
+          congrats: [...(currentEntry.reactors?.congrats ?? [])],
+        };
         if (payload.active) {
           nextMine.add(reactionType);
           nextCounts[reactionType] += 1;
+          if (!nextReactors[reactionType].some((reactor) => reactor.user_id === user?.id)) {
+            nextReactors[reactionType].push({
+              user_id: user?.id ?? '',
+              name: user?.name ?? user?.email ?? '自分',
+            });
+          }
         } else {
           nextMine.delete(reactionType);
           nextCounts[reactionType] = Math.max(0, nextCounts[reactionType] - 1);
+          nextReactors[reactionType] = nextReactors[reactionType].filter((reactor) => reactor.user_id !== user?.id);
         }
 
         return {
@@ -399,6 +413,7 @@ export default function DealHistory() {
             deal_id: dealId,
             counts: nextCounts,
             mine: Array.from(nextMine),
+            reactors: nextReactors,
           },
         };
       });
@@ -620,7 +635,8 @@ export default function DealHistory() {
                   </div>
                 )}
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-4 rounded-2xl bg-zinc-50 px-3 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
                   {([
                     ['like', 'いいね'],
                     ['helpful', '参考になった'],
@@ -647,9 +663,20 @@ export default function DealHistory() {
                       </button>
                     );
                   })}
+                  </div>
+                  {Object.values(reactionsByDealId[deal.id]?.reactors ?? {})
+                    .flat()
+                    .length > 0 && (
+                    <p
+                      className="mt-2 truncate text-xs font-medium text-zinc-500"
+                      title={Array.from(new Set(Object.values(reactionsByDealId[deal.id]?.reactors ?? {}).flat().map((reactor) => reactor.name))).join('、')}
+                    >
+                      {Array.from(new Set(Object.values(reactionsByDealId[deal.id]?.reactors ?? {}).flat().map((reactor) => reactor.name))).join('、')} がリアクションしました
+                    </p>
+                  )}
                 </div>
 
-                <div className="mt-4 rounded-xl bg-zinc-50 p-4">
+                <div className="mt-3 rounded-2xl bg-zinc-50 p-3">
                   <textarea
                     value={commentDrafts[deal.id] ?? ''}
                     onChange={(event) => setCommentDrafts((current) => ({
@@ -657,14 +684,14 @@ export default function DealHistory() {
                       [deal.id]: event.target.value,
                     }))}
                     placeholder="この商談へのコメントを書く"
-                    className="min-h-[80px] w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                    className="min-h-[72px] w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
                   />
                   <div className="mt-3 flex justify-end">
                     <button
                       type="button"
                       onClick={() => handleSubmitComment(deal)}
                       disabled={submittingCommentDealId === deal.id || !(commentDrafts[deal.id] ?? '').trim()}
-                      className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-2xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {submittingCommentDealId === deal.id ? '投稿中...' : 'コメントを投稿'}
                     </button>

@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { similarity } from '../../lib/mergeUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { parseDepartmentId, SALES_IMPORT_RAW_TABLE } from '../../../api/_lib/regions.js';
+import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 import { syncRegionalSalesImportArtifacts } from '../../../api/_lib/salesImport.js';
 import {
   discardImportBatch,
@@ -17,6 +18,7 @@ export default async function handler(req: any, res: any) {
 
   const batchId = req.body?.import_batch_id ?? null;
   const departmentId = parseDepartmentId(req.body?.department_id);
+  const dataKind = normalizeSalesImportDataKind(req.body?.data_kind);
 
   try {
     const profile = await requireAuthenticatedProfile(req, res);
@@ -27,14 +29,14 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'import_batch_id and department_id are required' });
     }
 
-    const targetYearMonths = await getBatchTargetMonths(departmentId, batchId);
+    const targetYearMonths = await getBatchTargetMonths(departmentId, batchId, dataKind);
     if (targetYearMonths.length === 0) {
       return res.status(400).json({ error: '取込バッチに対象月のデータがありません。' });
     }
 
-    const closedMonths = await getClosedMonths(departmentId, targetYearMonths);
+    const closedMonths = await getClosedMonths(departmentId, targetYearMonths, dataKind);
     if (closedMonths.length > 0) {
-      await discardImportBatch(departmentId, batchId);
+      await discardImportBatch(departmentId, batchId, dataKind);
       return res.status(409).json({
         error: `締め済みの月が含まれているため取込できません: ${closedMonths.map((row: any) => row.target_year_month).join(', ')}`,
         closed_months: closedMonths.map((row: any) => row.target_year_month),
@@ -47,7 +49,7 @@ export default async function handler(req: any, res: any) {
     };
 
     try {
-      replacedMonthResult = await replaceOpenMonthSalesData(departmentId, batchId, targetYearMonths);
+      replacedMonthResult = await replaceOpenMonthSalesData(departmentId, batchId, targetYearMonths, dataKind);
     } catch (replaceError) {
       console.error('sales import finalize replace open month data error:', replaceError);
       return res.status(500).json({ error: 'month replacement failed' });
@@ -70,6 +72,7 @@ export default async function handler(req: any, res: any) {
         .from(SALES_IMPORT_RAW_TABLE)
         .select('得意先コード')
         .eq('department_id', departmentId)
+        .eq('data_kind', dataKind)
         .eq('import_batch_id', batchId);
 
       if (batchRowsError) {
@@ -167,6 +170,7 @@ export default async function handler(req: any, res: any) {
         department_customers_upserted: departmentSyncResult.customers_upserted,
         department_sales_rows_upserted: departmentSyncResult.sales_rows_upserted,
         department_id: departmentId,
+        data_kind: dataKind,
       });
     }
 
@@ -194,6 +198,7 @@ export default async function handler(req: any, res: any) {
       department_customers_upserted: departmentSyncResult.customers_upserted,
       department_sales_rows_upserted: departmentSyncResult.sales_rows_upserted,
       department_id: departmentId,
+      data_kind: dataKind,
     });
   } catch (error) {
     console.error('sales import finalize unexpected error:', error);
