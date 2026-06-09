@@ -17,6 +17,27 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'prospect_customer_id and customer_code are required' });
     }
 
+    const { data: candidate, error: candidateFetchError } = await supabaseAdmin
+      .from('customer_merge_candidates')
+      .select('prospect_customer_id, customer_code, decision, prospect_customers!inner(created_by)')
+      .eq('prospect_customer_id', prospect_customer_id)
+      .eq('customer_code', customer_code)
+      .eq('decision', 'pending')
+      .single();
+
+    if (candidateFetchError || !candidate) {
+      console.error('merge confirm candidate fetch error:', candidateFetchError);
+      return res.status(404).json({ error: 'candidate not found or already reviewed' });
+    }
+
+    const prospectRow = Array.isArray((candidate as any).prospect_customers)
+      ? (candidate as any).prospect_customers[0]
+      : (candidate as any).prospect_customers;
+
+    if (prospectRow?.created_by !== profile.id) {
+      return res.status(403).json({ error: 'cannot confirm another user merge candidate' });
+    }
+
     const mergePayload: Record<string, any> = {
       status: 'merged',
       merged_customer_code: customer_code,

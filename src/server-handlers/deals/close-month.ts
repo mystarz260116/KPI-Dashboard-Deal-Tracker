@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
+import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from '../../../api/_lib/newOrderDates.js';
 
 type DealRow = {
   id: string;
@@ -61,19 +62,27 @@ async function fetchMergedProspectDealsInMonth(monthStart: string, monthEndExclu
     .from('prospect_customers')
     .select('id, merged_customer_code')
     .eq('status', 'merged')
-    .not('merged_customer_code', 'is', null)
-    .gte('merged_at', monthStart)
-    .lt('merged_at', monthEndExclusive);
+    .not('merged_customer_code', 'is', null);
 
   if (mergedProspectsError) {
     throw mergedProspectsError;
   }
 
+  const firstOrderDateByCustomerCode = await fetchFirstOrderDateByCustomerCode(
+    (mergedProspects ?? []).map((row: any) => row.merged_customer_code).filter(Boolean)
+  );
+  const mergedProspectsInMonth = filterMergedProspectsByFirstOrderDate(
+    mergedProspects ?? [],
+    firstOrderDateByCustomerCode,
+    monthStart,
+    monthEndExclusive
+  );
+
   const prospectIds = Array.from(new Set(
-    (mergedProspects ?? []).map((row: any) => String(row.id)).filter(Boolean)
+    mergedProspectsInMonth.map((row: any) => String(row.id)).filter(Boolean)
   ));
   const customerCodes = Array.from(new Set(
-    (mergedProspects ?? []).map((row: any) => String(row.merged_customer_code)).filter(Boolean)
+    mergedProspectsInMonth.map((row: any) => String(row.merged_customer_code)).filter(Boolean)
   ));
 
   const rows: DealRow[] = [];

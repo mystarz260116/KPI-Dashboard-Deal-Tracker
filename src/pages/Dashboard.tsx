@@ -102,6 +102,8 @@ interface PerformanceRankingItem {
   visits: number;
   visit_goal: number | null;
   won_count: number;
+  closure_goal: number | null;
+  new_order_amount_goal: number | null;
 }
 
 function formatDateInput(date: Date) {
@@ -1291,7 +1293,7 @@ export default function Dashboard() {
               {performanceRanking.length > 0 ? performanceRanking.map((item, index) => {
                 return (
                   <div key={item.user_id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-[56px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_100px] md:items-center">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-[56px_minmax(160px,1.15fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(190px,0.9fr)] md:items-center">
                       <div className="text-sm font-semibold text-zinc-400">#{index + 1}</div>
 
                       <div className="min-w-0">
@@ -1318,9 +1320,20 @@ export default function Dashboard() {
                         </p>
                       </div>
 
-                      <div className="text-left md:text-right">
-                        <p className="text-[11px] font-semibold text-zinc-500">新規受注</p>
-                        <p className="text-base font-bold text-emerald-700">{item.won_count.toLocaleString()}件</p>
+                      <div className="min-w-0 md:text-right">
+                        <p className="text-[11px] font-semibold text-zinc-500">新規受注 / 目標</p>
+                        <p className="whitespace-nowrap text-base font-bold text-emerald-700">
+                          {item.won_count.toLocaleString()}件
+                          <span className="ml-2 text-xs font-medium text-zinc-500">
+                            / {item.closure_goal != null ? `${item.closure_goal.toLocaleString()}件` : '未設定'}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-xs font-semibold leading-snug text-zinc-500">
+                          新規開拓予算目標
+                        </p>
+                        <p className="whitespace-nowrap text-sm font-bold text-zinc-700">
+                          {item.new_order_amount_goal != null ? `¥${item.new_order_amount_goal.toLocaleString()}` : '未設定'}
+                        </p>
                       </div>
                     </div>
                   </div>

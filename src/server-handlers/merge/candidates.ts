@@ -20,11 +20,12 @@ export default async function handler(req: any, res: any) {
         match_score,
         match_reason,
         decision,
-        prospect_customers(name),
+        prospect_customers!inner(name, created_by),
         customers(name)
       `)
       .eq('decision', 'pending')
       .gte('match_score', 0.95)
+      .eq('prospect_customers.created_by', profile.id)
       .order('match_score', { ascending: false });
 
     if (error) {

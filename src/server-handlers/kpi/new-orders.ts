@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { toDateString } from '../../lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { fetchRegionalSalesRows, normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
+import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from '../../../api/_lib/newOrderDates.js';
 
 type Granularity = 'all' | 'department' | 'individual';
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
@@ -70,16 +71,23 @@ export default async function handler(req: any, res: any) {
       .from('prospect_customers')
       .select('id, name, created_by, merged_customer_code, merged_at, status')
       .eq('status', 'merged')
-      .not('merged_customer_code', 'is', null)
-      .gte('merged_at', currentStart)
-      .lt('merged_at', currentEnd);
+      .not('merged_customer_code', 'is', null);
 
     if (mergedProspectsError) {
       console.error('new-orders prospects error:', mergedProspectsError);
       return res.status(500).json({ error: 'merged prospects fetch failed' });
     }
 
-    const scopedMergedProspects = (mergedProspects ?? []).filter((p: any) => allowedUserIds.has(p.created_by));
+    const scopedMergedProspectsByOwner = (mergedProspects ?? []).filter((p: any) => allowedUserIds.has(p.created_by));
+    const firstOrderDateByCustomerCode = await fetchFirstOrderDateByCustomerCode(
+      scopedMergedProspectsByOwner.map((p: any) => p.merged_customer_code).filter(Boolean)
+    );
+    const scopedMergedProspects = filterMergedProspectsByFirstOrderDate(
+      scopedMergedProspectsByOwner,
+      firstOrderDateByCustomerCode,
+      currentStart,
+      currentEnd
+    );
     const mergedCustomerCodes = Array.from(
       new Set(scopedMergedProspects.map((p: any) => p.merged_customer_code).filter(Boolean))
     );
@@ -131,7 +139,7 @@ export default async function handler(req: any, res: any) {
           customer_name: customerNameMap.get(customerCode) ?? p.name ?? customerCode,
           sales_user_id: p.created_by,
           sales_user_name: user?.name ?? '',
-          merged_at: p.merged_at,
+          merged_at: firstOrderDateByCustomerCode.get(customerCode) ?? p.merged_at,
           sales_amount: salesByCustomerCode.get(customerCode) ?? 0,
         };
       })

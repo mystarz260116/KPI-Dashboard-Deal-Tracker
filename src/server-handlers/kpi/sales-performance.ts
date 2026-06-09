@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { toDateString } from '../../lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
+import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from '../../../api/_lib/newOrderDates.js';
 
 type PerformancePeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
 
@@ -228,11 +229,9 @@ export default async function handler(req: any, res: any) {
 
     let mergedProspectsQuery = supabaseAdmin
       .from('prospect_customers')
-      .select('id, created_by, merged_at')
+      .select('id, created_by, merged_at, merged_customer_code')
       .eq('status', 'merged')
-      .not('merged_customer_code', 'is', null)
-      .gte('merged_at', from)
-      .lt('merged_at', toExclusive);
+      .not('merged_customer_code', 'is', null);
 
     if (userId) {
       mergedProspectsQuery = mergedProspectsQuery.eq('created_by', userId);
@@ -245,7 +244,16 @@ export default async function handler(req: any, res: any) {
     }
 
     const scopedDeals = ((dealsData ?? []) as DealRow[]).filter((row) => allowedUserIds.has(row.user_id));
-    const scopedMergedProspects = (mergedProspects ?? []).filter((row: any) => allowedUserIds.has(row.created_by));
+    const scopedMergedProspectsByOwner = (mergedProspects ?? []).filter((row: any) => allowedUserIds.has(row.created_by));
+    const firstOrderDateByCustomerCode = await fetchFirstOrderDateByCustomerCode(
+      scopedMergedProspectsByOwner.map((row: any) => row.merged_customer_code).filter(Boolean)
+    );
+    const scopedMergedProspects = filterMergedProspectsByFirstOrderDate(
+      scopedMergedProspectsByOwner,
+      firstOrderDateByCustomerCode,
+      from,
+      toExclusive
+    );
 
     const userMap = new Map(
       users.map((row) => [

@@ -14,9 +14,10 @@ export default async function handler(req: any, res: any) {
 
     const { count, error } = await supabaseAdmin
       .from('customer_merge_candidates')
-      .select('prospect_customer_id', { count: 'exact', head: true })
+      .select('prospect_customer_id, prospect_customers!inner(created_by)', { count: 'exact', head: true })
       .eq('decision', 'pending')
-      .gte('match_score', 0.95);
+      .gte('match_score', 0.95)
+      .eq('prospect_customers.created_by', profile.id);
 
     if (error) {
       console.error('merge candidates count error:', error);

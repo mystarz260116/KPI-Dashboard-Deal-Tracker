@@ -11,6 +11,7 @@ import {
   fetchRegionalSalesTotal,
   normalizeSalesImportDataKind,
 } from './_lib/regionalReads.js';
+import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from './_lib/newOrderDates.js';
 import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
 import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performance.js';
 
@@ -187,9 +188,7 @@ export default async function handler(req: any, res: any) {
       .from('prospect_customers')
       .select('id, name, created_by, merged_customer_code, merged_at, status')
       .eq('status', 'merged')
-      .not('merged_customer_code', 'is', null)
-      .gte('merged_at', currentStart)
-      .lt('merged_at', currentEnd);
+      .not('merged_customer_code', 'is', null);
 
     if (mergedProspectsInPeriodError) {
       console.error('kpi merged prospects error:', mergedProspectsInPeriodError);
@@ -207,8 +206,17 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'current deals fetch failed' });
     }
 
-    const scopedMergedProspectsInPeriod = (mergedProspectsInPeriod ?? []).filter((p: any) =>
+    const scopedMergedProspectsByOwner = (mergedProspectsInPeriod ?? []).filter((p: any) =>
       allowedUserIds.has(p.created_by)
+    );
+    const firstOrderDateByCustomerCode = await fetchFirstOrderDateByCustomerCode(
+      scopedMergedProspectsByOwner.map((p: any) => p.merged_customer_code).filter(Boolean)
+    );
+    const scopedMergedProspectsInPeriod = filterMergedProspectsByFirstOrderDate(
+      scopedMergedProspectsByOwner,
+      firstOrderDateByCustomerCode,
+      currentStart,
+      currentEnd
     );
 
     const mergedCustomerCodesInPeriod = Array.from(
@@ -258,10 +266,10 @@ export default async function handler(req: any, res: any) {
       return query;
     };
 
-    let budgetsResult = await buildBudgetsQuery('user_id, external_staff_code, department_id, target_year_month, target_amount, "KPI"');
+    let budgetsResult = await buildBudgetsQuery('user_id, external_staff_code, department_id, target_year_month, target_amount, kpivisit, kpiclosure, "KPI_new_order_amount"');
 
     if (budgetsResult.error && String(budgetsResult.error.message ?? '').includes('KPI')) {
-      console.warn('kpi budgets fallback: KPI column not available yet, retrying without KPI');
+      console.warn('kpi budgets fallback: KPI columns not available yet, retrying without KPI columns');
       budgetsResult = await buildBudgetsQuery('user_id, external_staff_code, department_id, target_year_month, target_amount');
     }
 
@@ -359,6 +367,8 @@ export default async function handler(req: any, res: any) {
     const salesRankingMap = new Map<string, number>();
     const budgetByUserMap = new Map<string, number>();
     const visitGoalByUserMap = new Map<string, number>();
+    const closureGoalByUserMap = new Map<string, number>();
+    const newOrderAmountGoalByUserMap = new Map<string, number>();
     const userById = new Map(users.map((user) => [user.id, user]));
     const headOfficeSalesUserId = users.find(
       (user) => user.name === HEAD_OFFICE_SALES_NAME || user.department === HEAD_OFFICE_SALES_NAME
@@ -415,11 +425,27 @@ export default async function handler(req: any, res: any) {
       if (!Number.isFinite(amount) || !b.user_id) return;
       budgetByUserMap.set(String(b.user_id), (budgetByUserMap.get(String(b.user_id)) ?? 0) + amount);
 
-      const visitGoal = Number(b.KPI ?? 0);
+      const visitGoal = Number(b.kpivisit ?? 0);
       if (Number.isFinite(visitGoal) && visitGoal > 0) {
         visitGoalByUserMap.set(
           String(b.user_id),
           (visitGoalByUserMap.get(String(b.user_id)) ?? 0) + visitGoal
+        );
+      }
+
+      const closureGoal = Number(b.kpiclosure ?? 0);
+      if (Number.isFinite(closureGoal) && closureGoal > 0) {
+        closureGoalByUserMap.set(
+          String(b.user_id),
+          (closureGoalByUserMap.get(String(b.user_id)) ?? 0) + closureGoal
+        );
+      }
+
+      const newOrderAmountGoal = Number(b.KPI_new_order_amount ?? 0);
+      if (Number.isFinite(newOrderAmountGoal) && newOrderAmountGoal > 0) {
+        newOrderAmountGoalByUserMap.set(
+          String(b.user_id),
+          (newOrderAmountGoalByUserMap.get(String(b.user_id)) ?? 0) + newOrderAmountGoal
         );
       }
     });
@@ -591,13 +617,20 @@ export default async function handler(req: any, res: any) {
         visits: visitRankingMap.get(user.id) ?? 0,
         visit_goal: visitGoalByUserMap.get(user.id) ?? null,
         won_count: wonRankingMap.get(user.id) ?? 0,
+        closure_goal: closureGoalByUserMap.get(user.id) ?? null,
+        new_order_amount_goal: newOrderAmountGoalByUserMap.get(user.id) ?? null,
       }))
       .filter((row) => row.user_id !== headOfficeSalesUserId)
       .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
 
     const new_orders = scopedMergedProspectsInPeriod
       .slice()
-      .sort((a: any, b: any) => new Date(b.merged_at).getTime() - new Date(a.merged_at).getTime())
+      .sort((a: any, b: any) => {
+        const leftCode = String(a.merged_customer_code ?? '');
+        const rightCode = String(b.merged_customer_code ?? '');
+        return new Date(firstOrderDateByCustomerCode.get(rightCode) ?? b.merged_at).getTime()
+          - new Date(firstOrderDateByCustomerCode.get(leftCode) ?? a.merged_at).getTime();
+      })
       .slice(0, 10)
       .map((p: any) => {
         const user = users.find((u) => u.id === p.created_by);
