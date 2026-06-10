@@ -547,6 +547,7 @@ export default function DealInput() {
 
   const shortcutButtons = [
     { label: '案件の進捗管理', path: '/deals/progress' },
+    { label: '医院アセット', path: '/clinic-assets' },
     { label: 'CRM検索', path: '/crm' },
     { label: '商談履歴', path: '/deals/history' },
   ];

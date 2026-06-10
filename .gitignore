@@ -9,3 +9,4 @@ coverage/
 *.db
 .vercel
 .env*.local
+supabase/.temp/

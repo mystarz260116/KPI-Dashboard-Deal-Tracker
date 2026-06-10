@@ -12,6 +12,7 @@ import ClinicDetail from './pages/ClinicDetail';
 import CrmSearch from './pages/CrmSearch';
 import DealProgressDashboard from './pages/DealProgressDashboard';
 import SalesPerformanceDashboard from './pages/SalesPerformanceDashboard';
+import ClinicAssetsDashboard from './pages/ClinicAssetsDashboard';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/deals/history" element={<ProtectedRoute><DealHistory /></ProtectedRoute>} />
           <Route path="/deals/progress" element={<ProtectedRoute><DealProgressDashboard /></ProtectedRoute>} />
           <Route path="/sales-performance" element={<ProtectedRoute><SalesPerformanceDashboard /></ProtectedRoute>} />
+          <Route path="/clinic-assets" element={<ProtectedRoute><ClinicAssetsDashboard /></ProtectedRoute>} />
           <Route path="/crm" element={<ProtectedRoute><CrmSearch /></ProtectedRoute>} />
           <Route path="/clinics/:kind/:clinicId" element={<ProtectedRoute><ClinicDetail /></ProtectedRoute>} />
           <Route path="/customer-merge" element={<ProtectedRoute><CustomerMerge /></ProtectedRoute>} />

@@ -7,19 +7,37 @@ import {
 } from '../src/lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth.js';
 import {
-  fetchRegionalSalesRows,
   fetchRegionalSalesTotal,
   normalizeSalesImportDataKind,
 } from './_lib/regionalReads.js';
 import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from './_lib/newOrderDates.js';
+import { detectExistingDealWins } from './_lib/existingDealWins.js';
 import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
 import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performance.js';
+import clinicAssetsHandler from '../src/server-handlers/kpi/clinic-assets.js';
 
 
 type Granularity = 'all' | 'department' | 'individual';
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 const HEAD_OFFICE_SALES_NAME = '本社売上';
 const UNCLASSIFIED_PRODUCT_LABEL = '未分類';
+
+type DebugStep = {
+  stage: string;
+  ms: number;
+  totalMs: number;
+  rows?: number;
+  detail?: Record<string, unknown>;
+};
+
+type ProductMetadataCacheEntry = {
+  productCategoryMasters: any[];
+  productDepartments: any[];
+  expiresAt: number;
+};
+
+const PRODUCT_METADATA_CACHE_TTL_MS = 5 * 60_000;
+const productMetadataCache = new Map<string, ProductMetadataCacheEntry>();
 
 function expandBudgetYearMonthFormats(yearMonths: string[]) {
   const variants = new Set<string>();
@@ -77,6 +95,163 @@ function getPreviousYearRange(start: Date, endExclusive: Date) {
   return { prevStart, prevEnd };
 }
 
+async function fetchProductMetadata(salesRowDepartmentIds: number[]) {
+  if (salesRowDepartmentIds.length === 0) {
+    return {
+      productCategoryMasters: [],
+      productDepartments: [],
+      fromCache: false,
+    };
+  }
+
+  const cacheKey = salesRowDepartmentIds.slice().sort((a, b) => a - b).join(',');
+  const cached = productMetadataCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      productCategoryMasters: cached.productCategoryMasters,
+      productDepartments: cached.productDepartments,
+      fromCache: true,
+    };
+  }
+
+  const [productCategoryMastersResult, productDepartmentsResult] = await Promise.all([
+    supabaseAdmin
+      .from('product_category_masters')
+      .select('department_id, normalized_product_code, product_department_id')
+      .in('department_id', salesRowDepartmentIds),
+    supabaseAdmin
+      .from('product_departments')
+      .select('id, department_id, name')
+      .in('department_id', salesRowDepartmentIds),
+  ]);
+
+  if (productCategoryMastersResult.error) {
+    throw productCategoryMastersResult.error;
+  }
+
+  if (productDepartmentsResult.error) {
+    throw productDepartmentsResult.error;
+  }
+
+  const productCategoryMasters = productCategoryMastersResult.data ?? [];
+  const productDepartments = productDepartmentsResult.data ?? [];
+  productMetadataCache.set(cacheKey, {
+    productCategoryMasters,
+    productDepartments,
+    expiresAt: Date.now() + PRODUCT_METADATA_CACHE_TTL_MS,
+  });
+
+  return {
+    productCategoryMasters,
+    productDepartments,
+    fromCache: false,
+  };
+}
+
+async function fetchDashboardSalesRowsFallback({
+  startDate,
+  endExclusiveDate,
+  departmentIds,
+  externalStaffCodes,
+  dataKind,
+}: {
+  startDate: string;
+  endExclusiveDate: string;
+  departmentIds: number[];
+  externalStaffCodes: string[];
+  dataKind: 'delivery' | 'order';
+}) {
+  if (departmentIds.length === 0 || externalStaffCodes.length === 0) {
+    return [];
+  }
+
+  const rows: any[] = [];
+  const pageSize = 1000;
+  const staffCodeChunkSize = 80;
+  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+
+  for (let staffCodeIndex = 0; staffCodeIndex < externalStaffCodes.length; staffCodeIndex += staffCodeChunkSize) {
+    const staffCodeChunk = externalStaffCodes.slice(staffCodeIndex, staffCodeIndex + staffCodeChunkSize);
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabaseAdmin
+        .from('sales_import_rows')
+        .select('department_id, data_kind, customer_code, amount, delivery_date, order_date, external_staff_code, normalized_product_code, normalized_product_name')
+        .eq('data_kind', dataKind)
+        .gte(dateColumn, startDate)
+        .lt(dateColumn, endExclusiveDate)
+        .in('department_id', departmentIds)
+        .in('external_staff_code', staffCodeChunk)
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        throw error;
+      }
+
+      const batch = data ?? [];
+      rows.push(...batch);
+
+      if (batch.length < pageSize) {
+        break;
+      }
+
+      from += pageSize;
+    }
+  }
+
+  return rows;
+}
+
+async function fetchDashboardSalesRows({
+  startDate,
+  endExclusiveDate,
+  departmentIds,
+  externalStaffCodes,
+  dataKind,
+}: {
+  startDate: string;
+  endExclusiveDate: string;
+  departmentIds: number[];
+  externalStaffCodes: string[];
+  dataKind: 'delivery' | 'order';
+}) {
+  if (departmentIds.length === 0 || externalStaffCodes.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabaseAdmin.rpc('dashboard_sales_import_aggregates', {
+    p_start_date: startDate,
+    p_end_date: endExclusiveDate,
+    p_department_ids: departmentIds,
+    p_external_staff_codes: externalStaffCodes,
+    p_data_kind: dataKind,
+  });
+
+  if (error) {
+    console.warn('dashboard sales aggregate rpc fallback:', error.message ?? error);
+    return fetchDashboardSalesRowsFallback({
+      startDate,
+      endExclusiveDate,
+      departmentIds,
+      externalStaffCodes,
+      dataKind,
+    });
+  }
+
+  return (data ?? []).map((row: any) => ({
+    department_id: row.department_id,
+    data_kind: dataKind,
+    customer_code: null,
+    amount: Number(row.sales_total ?? 0),
+    delivery_date: dataKind === 'delivery' ? startDate : null,
+    order_date: dataKind === 'order' ? startDate : null,
+    external_staff_code: row.external_staff_code,
+    normalized_product_code: row.normalized_product_code,
+    normalized_product_name: null,
+  }));
+}
+
 export default async function handler(req: any, res: any) {
   const route = getKpiRoute(req);
 
@@ -88,14 +263,38 @@ export default async function handler(req: any, res: any) {
     return salesPerformanceHandler(req, res);
   }
 
+  if (route === 'clinic-assets') {
+    return clinicAssetsHandler(req, res);
+  }
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
+    const debugStartedAt = Date.now();
+    let debugLastAt = debugStartedAt;
+    const debugSteps: DebugStep[] = [];
+    const markDebug = (stage: string, detail?: Record<string, unknown>, rows?: number) => {
+      const now = Date.now();
+      const step = {
+        stage,
+        ms: now - debugLastAt,
+        totalMs: now - debugStartedAt,
+        rows,
+        detail,
+      };
+      debugSteps.push(step);
+      console.info(
+        `[debug] dashboard-kpi server stage=${stage} ms=${step.ms} total=${step.totalMs} rows=${rows ?? '-'}`
+      );
+      debugLastAt = now;
+    };
+
     const profile = await requireAuthenticatedProfile(req, res);
     if (!profile) return;
     if (!requireDashboardAccess(profile, res)) return;
+    markDebug('auth');
 
     const period = (req.query.period as Period | undefined) ?? 'monthly';
     const granularity = (req.query.granularity as Granularity | undefined) ?? 'all';
@@ -103,6 +302,8 @@ export default async function handler(req: any, res: any) {
     const legacyDepartment = (req.query.department as string | undefined) ?? '';
     const userId = (req.query.userId as string | undefined) ?? '';
     const dataKind = normalizeSalesImportDataKind(req.query.data_kind);
+    const includeExistingDealWins = req.query.includeExistingDealWins === '1'
+      || req.query.include_existing_deal_wins === '1';
 
     const fromParam = req.query.from as string | undefined;
     const toParam = req.query.to as string | undefined;
@@ -147,6 +348,7 @@ export default async function handler(req: any, res: any) {
       console.error('kpi profiles error:', profilesError);
       return res.status(500).json({ error: 'kpi profiles fetch failed' });
     }
+    markDebug('profiles', undefined, profilesData?.length ?? 0);
 
     const users = (profilesData ?? [])
       .map((p: any) => ({
@@ -173,38 +375,53 @@ export default async function handler(req: any, res: any) {
 
     const allowedUserIds = new Set(filteredUsers.map((u) => u.id));
     const allowedDepartmentIds = Array.from(new Set(filteredUsers.map((u) => u.department_id).filter(Boolean)));
-    const { data: createdProspects, error: createdProspectsError } = await supabaseAdmin
-      .from('prospect_customers')
-      .select('id, status, merged_customer_code, merged_at, created_by, created_at')
-      .gte('created_at', currentStart)
-      .lt('created_at', currentEnd);
+    const [
+      createdProspectsResult,
+      mergedProspectsInPeriodResult,
+      currentDealsResult,
+    ] = await Promise.all([
+      supabaseAdmin
+        .from('prospect_customers')
+        .select('id, status, merged_customer_code, merged_at, created_by, created_at')
+        .gte('created_at', currentStart)
+        .lt('created_at', currentEnd),
+      supabaseAdmin
+        .from('prospect_customers')
+        .select('id, name, created_by, merged_customer_code, merged_at, status')
+        .eq('status', 'merged')
+        .not('merged_customer_code', 'is', null),
+      supabaseAdmin
+        .from('deals')
+        .select('id, user_id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, amount, created_at, customers(name), prospect_customers(name)')
+        .gte('deal_date', currentStart)
+        .lt('deal_date', currentEnd),
+    ]);
 
-    if (createdProspectsError) {
-      console.error('kpi prospects error:', createdProspectsError);
+    if (createdProspectsResult.error) {
+      console.error('kpi prospects error:', createdProspectsResult.error);
       return res.status(500).json({ error: 'prospects fetch failed' });
     }
 
-    const { data: mergedProspectsInPeriod, error: mergedProspectsInPeriodError } = await supabaseAdmin
-      .from('prospect_customers')
-      .select('id, name, created_by, merged_customer_code, merged_at, status')
-      .eq('status', 'merged')
-      .not('merged_customer_code', 'is', null);
-
-    if (mergedProspectsInPeriodError) {
-      console.error('kpi merged prospects error:', mergedProspectsInPeriodError);
+    if (mergedProspectsInPeriodResult.error) {
+      console.error('kpi merged prospects error:', mergedProspectsInPeriodResult.error);
       return res.status(500).json({ error: 'merged prospects fetch failed' });
     }
 
-    const { data: currentDeals, error: currentDealsError } = await supabaseAdmin
-      .from('deals')
-      .select('id, user_id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, amount, created_at, customers(name), prospect_customers(name)')
-      .gte('deal_date', currentStart)
-      .lt('deal_date', currentEnd);
-
-    if (currentDealsError) {
-      console.error('kpi current deals error:', currentDealsError);
+    if (currentDealsResult.error) {
+      console.error('kpi current deals error:', currentDealsResult.error);
       return res.status(500).json({ error: 'current deals fetch failed' });
     }
+
+    const createdProspects = createdProspectsResult.data ?? [];
+    const mergedProspectsInPeriod = mergedProspectsInPeriodResult.data ?? [];
+    const currentDeals = currentDealsResult.data ?? [];
+    markDebug('prospects_and_deals', {
+      createdProspects: createdProspects?.length ?? 0,
+      mergedProspects: mergedProspectsInPeriod?.length ?? 0,
+      currentDeals: currentDeals?.length ?? 0,
+      filteredUsers: filteredUsers.length,
+      allowedDepartmentIds: allowedDepartmentIds.length,
+    }, (createdProspects?.length ?? 0) + (mergedProspectsInPeriod?.length ?? 0) + (currentDeals?.length ?? 0));
 
     const scopedMergedProspectsByOwner = (mergedProspectsInPeriod ?? []).filter((p: any) =>
       allowedUserIds.has(p.created_by)
@@ -223,14 +440,19 @@ export default async function handler(req: any, res: any) {
       new Set(scopedMergedProspectsInPeriod.map((p: any) => p.merged_customer_code).filter(Boolean))
     );
 
-    const { data: mergedCustomersData, error: mergedCustomersError } = await supabaseAdmin
-      .from('customers')
-      .select('code, name')
-      .in('code', mergedCustomerCodesInPeriod.length > 0 ? mergedCustomerCodesInPeriod : ['__none__']);
+    let mergedCustomersData: any[] = [];
+    if (mergedCustomerCodesInPeriod.length > 0) {
+      const { data, error: mergedCustomersError } = await supabaseAdmin
+        .from('customers')
+        .select('code, name')
+        .in('code', mergedCustomerCodesInPeriod);
 
-    if (mergedCustomersError) {
-      console.error('kpi merged customers error:', mergedCustomersError);
-      return res.status(500).json({ error: 'merged customers fetch failed' });
+      if (mergedCustomersError) {
+        console.error('kpi merged customers error:', mergedCustomersError);
+        return res.status(500).json({ error: 'merged customers fetch failed' });
+      }
+
+      mergedCustomersData = data ?? [];
     }
 
     const mergedCustomerNameMap = new Map<string, string>();
@@ -239,16 +461,23 @@ export default async function handler(req: any, res: any) {
     });
 
     let mergedSalesTotal = 0;
-    try {
-      mergedSalesTotal = await fetchRegionalSalesTotal({
-        startDate: currentStart,
-        endExclusiveDate: currentEnd,
-        customerCodes: mergedCustomerCodesInPeriod,
-        dataKind,
-      });
-    } catch (e) {
-      console.error('kpi merged sales error:', e);
+    if (mergedCustomerCodesInPeriod.length > 0) {
+      try {
+        mergedSalesTotal = await fetchRegionalSalesTotal({
+          startDate: currentStart,
+          endExclusiveDate: currentEnd,
+          customerCodes: mergedCustomerCodesInPeriod,
+          dataKind,
+        });
+      } catch (e) {
+        console.error('kpi merged sales error:', e);
+      }
     }
+    markDebug('new_order_lookup', {
+      scopedMergedProspects: scopedMergedProspectsInPeriod.length,
+      mergedCustomerCodes: mergedCustomerCodesInPeriod.length,
+      mergedCustomers: mergedCustomersData?.length ?? 0,
+    }, mergedCustomerCodesInPeriod.length);
 
     const buildBudgetsQuery = (selectClause: string) => {
       let query = supabaseAdmin
@@ -279,31 +508,96 @@ export default async function handler(req: any, res: any) {
       console.error('kpi budgets error:', budgetsError);
       return res.status(500).json({ error: 'budgets fetch failed' });
     }
+    markDebug('budgets', {
+      targetYearMonths: targetYearMonths.length,
+      budgetMonthKeys: budgetMonthKeys.length,
+    }, budgetsData?.length ?? 0);
 
     const scopedCreatedProspects = (createdProspects ?? []).filter((p: any) =>
       allowedUserIds.has(p.created_by)
     );
 
     const scopedCurrentDeals = (currentDeals ?? []).filter((d: any) => allowedUserIds.has(d.user_id));
+    const existingDealWins = includeExistingDealWins
+      ? await detectExistingDealWins({
+        startDate: currentStart,
+        endExclusiveDate: currentEnd,
+        allowedUserIds,
+      })
+      : [];
+    markDebug('existing_deal_wins', undefined, existingDealWins.length);
     const scopedBudgets = (budgetsData ?? []).filter((b: any) => {
       if (granularity === 'individual') return b.user_id === userId;
       if (granularity === 'department') return allowedDepartmentIds.includes(b.department_id);
       return allowedUserIds.has(b.user_id);
     });
 
+    const userById = new Map(users.map((user) => [user.id, user]));
+    const headOfficeSalesUserId = users.find(
+      (user) => user.name === HEAD_OFFICE_SALES_NAME || user.department === HEAD_OFFICE_SALES_NAME
+    )?.id ?? null;
+    const mappableUsers = filteredUsers.filter((u) => u.id !== headOfficeSalesUserId);
+    const profileIdsByDepartment = new Map<number, string[]>();
+    mappableUsers.forEach((u) => {
+      if (!u.department_id) return;
+      const current = profileIdsByDepartment.get(u.department_id) ?? [];
+      current.push(u.id);
+      profileIdsByDepartment.set(u.department_id, current);
+    });
+
+    const profileStaffCodeMap = new Map<string, string>();
+    const allowedExternalStaffCodes = new Set<string>();
+    let profileStaffMapRows = 0;
+    const mappableProfileIds = mappableUsers.map((user) => user.id);
+
+    if (allowedDepartmentIds.length > 0 && mappableProfileIds.length > 0) {
+      const { data: profileStaffMapsData, error: profileStaffMapsError } = await supabaseAdmin
+        .from('profile_external_staff_maps')
+        .select('profile_id, department_id, external_staff_code')
+        .in('department_id', allowedDepartmentIds)
+        .in('profile_id', mappableProfileIds);
+
+      if (profileStaffMapsError) {
+        console.error('kpi profile external staff maps error:', profileStaffMapsError);
+        return res.status(500).json({ error: 'profile external staff maps fetch failed' });
+      }
+
+      profileStaffMapRows += profileStaffMapsData?.length ?? 0;
+      (profileStaffMapsData ?? []).forEach((row: any) => {
+        const departmentId = Number(row.department_id);
+        if (row.profile_id && row.external_staff_code && Number.isFinite(departmentId)) {
+          const code = String(row.external_staff_code);
+          profileStaffCodeMap.set(
+            `${departmentId}|${code}`,
+            String(row.profile_id)
+          );
+          allowedExternalStaffCodes.add(code);
+        }
+      });
+    }
+    markDebug('profile_external_staff_maps', {
+      departments: profileIdsByDepartment.size,
+      mappedCodes: profileStaffCodeMap.size,
+      allowedExternalStaffCodes: allowedExternalStaffCodes.size,
+    }, profileStaffMapRows);
+
     let currentSalesRows: any[] = [];
     let previousSalesRows: any[] = [];
 
     try {
       [currentSalesRows, previousSalesRows] = await Promise.all([
-        fetchRegionalSalesRows({
+        fetchDashboardSalesRows({
           startDate: currentStart,
           endExclusiveDate: currentEnd,
+          departmentIds: allowedDepartmentIds,
+          externalStaffCodes: Array.from(allowedExternalStaffCodes),
           dataKind,
         }),
-        fetchRegionalSalesRows({
+        fetchDashboardSalesRows({
           startDate: previousStart,
           endExclusiveDate: previousEnd,
+          departmentIds: allowedDepartmentIds,
+          externalStaffCodes: Array.from(allowedExternalStaffCodes),
           dataKind,
         }),
       ]);
@@ -311,6 +605,17 @@ export default async function handler(req: any, res: any) {
       console.error('kpi sales import rows error:', salesImportRowsError);
       return res.status(500).json({ error: 'sales import rows fetch failed' });
     }
+    markDebug('sales_import_rows', {
+      currentStart,
+      currentEnd,
+      previousStart,
+      previousEnd,
+      currentSalesRows: currentSalesRows.length,
+      previousSalesRows: previousSalesRows.length,
+      dataKind,
+      allowedDepartmentIds: allowedDepartmentIds.length,
+      allowedExternalStaffCodes: allowedExternalStaffCodes.size,
+    }, currentSalesRows.length + previousSalesRows.length);
 
     const salesRowDepartmentIds = Array.from(new Set(
       [...currentSalesRows, ...previousSalesRows]
@@ -320,31 +625,22 @@ export default async function handler(req: any, res: any) {
 
     let productCategoryMasters: any[] = [];
     let productDepartments: any[] = [];
-    if (salesRowDepartmentIds.length > 0) {
-      const { data: productCategoryMastersData, error: productCategoryMastersError } = await supabaseAdmin
-        .from('product_category_masters')
-        .select('department_id, normalized_product_code, product_department_id')
-        .in('department_id', salesRowDepartmentIds);
-
-      if (productCategoryMastersError) {
-        console.error('kpi product category masters error:', productCategoryMastersError);
-        return res.status(500).json({ error: 'product category masters fetch failed' });
-      }
-
-      productCategoryMasters = productCategoryMastersData ?? [];
-
-      const { data: productDepartmentsData, error: productDepartmentsError } = await supabaseAdmin
-        .from('product_departments')
-        .select('id, department_id, name')
-        .in('department_id', salesRowDepartmentIds);
-
-      if (productDepartmentsError) {
-        console.error('kpi product departments error:', productDepartmentsError);
-        return res.status(500).json({ error: 'product departments fetch failed' });
-      }
-
-      productDepartments = productDepartmentsData ?? [];
+    let productMetadataFromCache = false;
+    try {
+      const productMetadata = await fetchProductMetadata(salesRowDepartmentIds);
+      productCategoryMasters = productMetadata.productCategoryMasters;
+      productDepartments = productMetadata.productDepartments;
+      productMetadataFromCache = productMetadata.fromCache;
+    } catch (productMetadataError) {
+      console.error('kpi product metadata error:', productMetadataError);
+      return res.status(500).json({ error: 'product metadata fetch failed' });
     }
+    markDebug('product_metadata', {
+      salesRowDepartmentIds: salesRowDepartmentIds.length,
+      productCategoryMasters: productCategoryMasters.length,
+      productDepartments: productDepartments.length,
+      fromCache: productMetadataFromCache,
+    }, productCategoryMasters.length + productDepartments.length);
 
     const budgetTotal = scopedBudgets.reduce((sum: number, b: any) => {
       const amount = Number(b.target_amount ?? 0);
@@ -369,43 +665,6 @@ export default async function handler(req: any, res: any) {
     const visitGoalByUserMap = new Map<string, number>();
     const closureGoalByUserMap = new Map<string, number>();
     const newOrderAmountGoalByUserMap = new Map<string, number>();
-    const userById = new Map(users.map((user) => [user.id, user]));
-    const headOfficeSalesUserId = users.find(
-      (user) => user.name === HEAD_OFFICE_SALES_NAME || user.department === HEAD_OFFICE_SALES_NAME
-    )?.id ?? null;
-
-    const mappableUsers = users.filter((u) => u.id !== headOfficeSalesUserId);
-    const profileIdsByDepartment = new Map<number, string[]>();
-    mappableUsers.forEach((u) => {
-      if (!u.department_id) return;
-      const current = profileIdsByDepartment.get(u.department_id) ?? [];
-      current.push(u.id);
-      profileIdsByDepartment.set(u.department_id, current);
-    });
-
-    const profileStaffCodeMap = new Map<string, string>();
-    for (const [departmentId, profileIds] of profileIdsByDepartment.entries()) {
-      const { data: profileStaffMapsData, error: profileStaffMapsError } = await supabaseAdmin
-        .from('profile_external_staff_maps')
-        .select('profile_id, external_staff_code')
-        .eq('department_id', departmentId)
-        .in('profile_id', profileIds);
-
-      if (profileStaffMapsError) {
-        console.error('kpi profile external staff maps error:', profileStaffMapsError);
-        return res.status(500).json({ error: 'profile external staff maps fetch failed' });
-      }
-
-      (profileStaffMapsData ?? []).forEach((row: any) => {
-        if (row.profile_id && row.external_staff_code) {
-          const code = String(row.external_staff_code);
-          profileStaffCodeMap.set(
-            `${departmentId}|${code}`,
-            String(row.profile_id)
-          );
-        }
-      });
-    }
 
     const resolveSalesRowProfileId = (row: any) => {
       const staffCode = row.external_staff_code ? String(row.external_staff_code) : '';
@@ -465,6 +724,13 @@ export default async function handler(req: any, res: any) {
 
     scopedMergedProspectsInPeriod.forEach((p: any) => {
       const user = userById.get(p.created_by);
+      if (!user) return;
+
+      wonRankingMap.set(user.id, (wonRankingMap.get(user.id) ?? 0) + 1);
+    });
+
+    existingDealWins.forEach((win) => {
+      const user = userById.get(win.user_id);
       if (!user) return;
 
       wonRankingMap.set(user.id, (wonRankingMap.get(user.id) ?? 0) + 1);
@@ -644,9 +910,27 @@ export default async function handler(req: any, res: any) {
           sales: user?.name ?? '',
         };
       });
+    markDebug('build_response', {
+      performanceRanking: performance_ranking.length,
+      productDepartmentSales: product_department_sales.length,
+      newOrders: new_orders.length,
+    });
 
     return res.status(200).json({
       data_kind: dataKind,
+      filter_options: {
+        users,
+        departments: Array.from(
+          new Map(
+            users
+              .filter((user) => user.department_id != null && user.department)
+              .map((user) => [String(user.department_id), {
+                id: String(user.department_id),
+                name: user.department,
+              }])
+          ).values()
+        ),
+      },
       budget: {
         sales: sharedSalesTotal,
         budget: budgetTotal,
@@ -669,6 +953,31 @@ export default async function handler(req: any, res: any) {
       avg_order_value: avgOrderValue,
       product_department_sales,
       new_orders,
+      debug: {
+        endpoint: 'dashboard-kpi',
+        totalMs: Date.now() - debugStartedAt,
+        steps: debugSteps,
+        counts: {
+          profiles: profilesData?.length ?? 0,
+          users: users.length,
+          filteredUsers: filteredUsers.length,
+          allowedDepartmentIds: allowedDepartmentIds.length,
+          createdProspects: createdProspects?.length ?? 0,
+          mergedProspects: mergedProspectsInPeriod?.length ?? 0,
+          currentDeals: currentDeals?.length ?? 0,
+          budgets: budgetsData?.length ?? 0,
+          scopedBudgets: scopedBudgets.length,
+          existingDealWins: existingDealWins.length,
+          currentSalesRows: currentSalesRows.length,
+          previousSalesRows: previousSalesRows.length,
+          salesRowDepartmentIds: salesRowDepartmentIds.length,
+          productCategoryMasters: productCategoryMasters.length,
+          productDepartments: productDepartments.length,
+          profileStaffMapRows,
+          mappedStaffCodes: profileStaffCodeMap.size,
+          performanceRanking: performance_ranking.length,
+        },
+      },
     });
   } catch (error) {
     console.error('kpi api unexpected error:', error);

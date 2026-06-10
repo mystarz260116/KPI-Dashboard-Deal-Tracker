@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { toDateString } from '../../lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from '../../../api/_lib/newOrderDates.js';
+import { detectExistingDealWins } from '../../../api/_lib/existingDealWins.js';
 
 type PerformancePeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
 
@@ -254,6 +255,11 @@ export default async function handler(req: any, res: any) {
       from,
       toExclusive
     );
+    const existingDealWins = await detectExistingDealWins({
+      startDate: from,
+      endExclusiveDate: toExclusive,
+      allowedUserIds,
+    });
 
     const userMap = new Map(
       users.map((row) => [
@@ -318,9 +324,6 @@ export default async function handler(req: any, res: any) {
 
       const stage = resolveStage(row);
       stageCounts.set(stage, (stageCounts.get(stage) ?? 0) + 1);
-      if (stage === 'won' && !row.prospect_customer_id) {
-        rankingRow.won_count += 1;
-      }
 
       const temperature = normalizeTemperature(row.deal_temperature);
       temperatureCounts.set(temperature, (temperatureCounts.get(temperature) ?? 0) + 1);
@@ -359,6 +362,22 @@ export default async function handler(req: any, res: any) {
       rankingMap.set(row.created_by, rankingRow);
     }
 
+    for (const row of existingDealWins) {
+      const owner = userMap.get(row.user_id);
+      const rankingRow = rankingMap.get(row.user_id) ?? {
+        user_id: row.user_id,
+        name: owner?.name ?? '未設定',
+        department: owner?.department ?? '',
+        total_count: 0,
+        new_count: 0,
+        existing_count: 0,
+        won_count: 0,
+      };
+
+      rankingRow.won_count += 1;
+      rankingMap.set(row.user_id, rankingRow);
+    }
+
     const rankings = Array.from(rankingMap.values())
       .sort((left, right) => {
         if (right.total_count !== left.total_count) {
@@ -376,7 +395,7 @@ export default async function handler(req: any, res: any) {
     const totalNewDeals = scopedDeals.filter((row) => row.prospect_customer_id).length;
     const totalExistingDeals = scopedDeals.filter((row) => !row.prospect_customer_id).length;
     const newWonCount = scopedMergedProspects.length;
-    const existingWonCount = scopedDeals.filter((row) => !row.prospect_customer_id && resolveStage(row) === 'won').length;
+    const existingWonCount = existingDealWins.length;
     const totalWonCount = newWonCount + existingWonCount;
 
     const temperaturePortfolio = Array.from(temperatureCounts.entries())

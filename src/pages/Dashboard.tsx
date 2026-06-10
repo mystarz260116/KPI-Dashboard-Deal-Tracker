@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { KPIData, Granularity, Period } from '../types';
@@ -6,7 +6,7 @@ import { toDateString } from '../lib/dateUtils';
 import { authFetch } from '../lib/authFetch';
 import { isPerfEnabled, perfNow } from '../lib/perf';
 import {
-  PlusCircle, Filter, Calendar, Users,
+  PlusCircle, Filter, Calendar, Users, Building2,
   TrendingUp, Target, LogOut, Search, BellRing, ChevronDown
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -25,14 +25,22 @@ interface DepartmentOption {
 }
 
 interface PerfStats {
-  usersMs: number;
-  usersStatus: number;
-  departmentsMs: number;
-  departmentsStatus: number;
   kpiMs: number;
   kpiStatus: number;
   totalMs: number;
 }
+
+type DashboardFetchResult = {
+  kpiResult: {
+    res: Response;
+    data: any;
+    ms: number;
+    contentType: string;
+  };
+  totalMs: number;
+};
+
+const dashboardFetchInFlight = new Map<string, Promise<DashboardFetchResult>>();
 
 interface ImportMonthClosureItem {
   target_year_month: string;
@@ -284,14 +292,11 @@ export default function Dashboard() {
   const [commentNotificationError, setCommentNotificationError] = useState('');
   const [isCommentNotificationsOpen, setIsCommentNotificationsOpen] = useState(false);
   const [perfStats, setPerfStats] = useState<{
-    usersMs: number;
-    usersStatus: number;
-    departmentsMs: number;
-    departmentsStatus: number;
     kpiMs: number;
     kpiStatus: number;
     totalMs: number;
   } | null>(null);
+  const latestDashboardRequestKeyRef = useRef('');
 
   const userDepartmentOptions = Array.from(
     new Map(
@@ -550,7 +555,6 @@ export default function Dashboard() {
       setError('');
 
       try {
-        const totalStart = perfNow();
         const readPayload = async (res: Response) => {
           const contentType = res.headers.get('content-type') ?? '';
 
@@ -563,7 +567,16 @@ export default function Dashboard() {
 
         const fetchWithTiming = async (url: string) => {
           const start = perfNow();
-          const res = await authFetch(url);
+          console.info(`[debug] dashboard request start ${url}`);
+          const progressTimer = window.setInterval(() => {
+            console.info(`[debug] dashboard still loading ${url} ${(perfNow() - start).toFixed(0)}ms`);
+          }, 1000);
+          let res: Response;
+          try {
+            res = await authFetch(url);
+          } finally {
+            window.clearInterval(progressTimer);
+          }
           const payload = await readPayload(res);
 
           return {
@@ -585,24 +598,36 @@ export default function Dashboard() {
         if (appliedDept) params.set('departmentId', appliedDept);
         if (appliedUser) params.set('userId', appliedUser);
 
-        const usersPromise = fetchWithTiming('/api/users');
-        const departmentsPromise = fetchWithTiming('/api/departments');
-        const kpiPromise = fetchWithTiming(`/api/kpi?${params.toString()}`);
+        const requestKey = params.toString();
+        latestDashboardRequestKeyRef.current = requestKey;
 
-        const [usersResult, departmentsResult, kpiResult] = await Promise.all([
-          usersPromise,
-          departmentsPromise,
-          kpiPromise,
-        ]);
+        const runFetch = async (): Promise<DashboardFetchResult> => {
+          const totalStart = perfNow();
+          const kpiResult = await fetchWithTiming(`/api/kpi?${params.toString()}`);
 
-        const totalMs = perfNow() - totalStart;
+          const totalMs = perfNow() - totalStart;
+          return { kpiResult, totalMs };
+        };
+
+        const existingRequest = dashboardFetchInFlight.get(requestKey);
+        const requestPromise = existingRequest ?? runFetch().finally(() => {
+          dashboardFetchInFlight.delete(requestKey);
+        });
+
+        if (!existingRequest) {
+          dashboardFetchInFlight.set(requestKey, requestPromise);
+        } else {
+          console.info(`[perf] dashboard reused in-flight request key=${requestKey}`);
+        }
+
+        const { kpiResult, totalMs } = await requestPromise;
+
+        if (latestDashboardRequestKeyRef.current !== requestKey) {
+          return;
+        }
 
         if (isPerfEnabled()) {
           const nextPerfStats: PerfStats = {
-            usersMs: usersResult.ms,
-            usersStatus: usersResult.res.status,
-            departmentsMs: departmentsResult.ms,
-            departmentsStatus: departmentsResult.res.status,
             kpiMs: kpiResult.ms,
             kpiStatus: kpiResult.res.status,
             totalMs,
@@ -610,26 +635,41 @@ export default function Dashboard() {
 
           setPerfStats(nextPerfStats);
           console.info(
-            `[perf] dashboard users=${usersResult.ms.toFixed(1)}ms (${usersResult.res.status}) departments=${departmentsResult.ms.toFixed(1)}ms (${departmentsResult.res.status}) kpi=${kpiResult.ms.toFixed(1)}ms (${kpiResult.res.status}) total=${totalMs.toFixed(1)}ms`
+            `[perf] dashboard kpi=${kpiResult.ms.toFixed(1)}ms (${kpiResult.res.status}) total=${totalMs.toFixed(1)}ms`
           );
         }
 
-        if (!usersResult.res.ok) {
-          throw new Error('users fetch failed');
-        }
-        if (!departmentsResult.res.ok) {
-          throw new Error('departments fetch failed');
-        }
         if (!kpiResult.res.ok) {
           throw new Error('kpi fetch failed');
         }
 
-        const usersData: User[] = usersResult.data;
-        const departmentsData: DepartmentOption[] = (departmentsResult.data ?? []).map((department: any) => ({
+        const kpiData = kpiResult.data;
+        const usersData: User[] = Array.isArray((kpiData as any)?.filter_options?.users)
+          ? (kpiData as any).filter_options.users
+          : [];
+        const departmentsData: DepartmentOption[] = ((kpiData as any)?.filter_options?.departments ?? []).map((department: any) => ({
           id: String(department.id),
           name: department.name,
         }));
-        const kpiData = kpiResult.data;
+        if ((kpiData as any)?.debug) {
+          const debugSteps = ((kpiData as any).debug.steps ?? []) as Array<{
+            stage: string;
+            ms: number;
+            rows?: number;
+          }>;
+          const slowestSteps = [...debugSteps]
+            .sort((a, b) => Number(b.ms ?? 0) - Number(a.ms ?? 0))
+            .slice(0, 4)
+            .map((step) => `${step.stage}:${Number(step.ms ?? 0).toFixed(0)}ms/${step.rows ?? '-'}rows`)
+            .join(' | ');
+          console.groupCollapsed(
+            `[debug] dashboard-kpi api total=${kpiResult.ms.toFixed(1)}ms server=${Number((kpiData as any).debug.totalMs ?? 0).toFixed(0)}ms`
+          );
+          console.info(`[debug] dashboard-kpi slowest ${slowestSteps}`);
+          console.table(debugSteps);
+          console.info('[debug] dashboard-kpi counts', (kpiData as any).debug.counts ?? {});
+          console.groupEnd();
+        }
 
         setUsers(usersData);
         setDepartments(departmentsData);
@@ -950,6 +990,11 @@ export default function Dashboard() {
               <TrendingUp className="h-4 w-4" />営業パフォーマンス
             </button>
 
+            <button onClick={() => navigate('/clinic-assets')}
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              <Building2 className="h-4 w-4" />医院アセット
+            </button>
+
             <button onClick={() => navigate('/crm')}
               className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
               <Search className="h-4 w-4" />CRM検索
@@ -983,7 +1028,7 @@ export default function Dashboard() {
       <main className="mx-auto max-w-7xl px-6 py-8">
         {perfStats && (
           <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 shadow-sm">
-            users API: {perfStats.usersMs.toFixed(0)}ms ({perfStats.usersStatus}) / departments API: {perfStats.departmentsMs.toFixed(0)}ms ({perfStats.departmentsStatus}) / kpi API: {perfStats.kpiMs.toFixed(0)}ms ({perfStats.kpiStatus}) / total: {perfStats.totalMs.toFixed(0)}ms
+            kpi API: {perfStats.kpiMs.toFixed(0)}ms ({perfStats.kpiStatus}) / total: {perfStats.totalMs.toFixed(0)}ms
           </div>
         )}
         {importResultMessage && (
