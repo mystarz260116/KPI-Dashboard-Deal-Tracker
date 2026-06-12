@@ -9,11 +9,6 @@ type AuthenticatedProfile = {
   role: string;
   department_id: string | null;
   can_view_dashboard: boolean;
-  authenticator_assurance_level: 'aal1' | 'aal2' | null;
-};
-
-type RequireAuthenticatedProfileOptions = {
-  allowMfaIncomplete?: boolean;
 };
 
 type AuthCacheEntry = {
@@ -61,8 +56,7 @@ function getBearerToken(req: VercelRequest) {
 
 export async function requireAuthenticatedProfile(
   req: VercelRequest,
-  res: VercelResponse,
-  options: RequireAuthenticatedProfileOptions = {}
+  res: VercelResponse
 ): Promise<AuthenticatedProfile | null> {
   const accessToken = getBearerToken(req);
 
@@ -71,7 +65,7 @@ export async function requireAuthenticatedProfile(
     return null;
   }
 
-  const cacheKey = `${accessToken}:${options.allowMfaIncomplete ? 'allow-incomplete' : 'aal2'}`;
+  const cacheKey = accessToken;
   const cached = authProfileCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.profile;
@@ -97,13 +91,6 @@ export async function requireAuthenticatedProfile(
       return { profile: null, status: 401, payload: { error: 'Unauthorized' } };
     }
 
-    const { data: aalData, error: aalError } = await supabaseAuth.auth.mfa.getAuthenticatorAssuranceLevel(accessToken);
-
-    if (aalError || !aalData) {
-      console.error('api auth mfa lookup error:', aalError);
-      return { profile: null, status: 401, payload: { error: 'Unauthorized' } };
-    }
-
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .select('id, name, email, role, department_id, can_view_dashboard')
@@ -115,10 +102,6 @@ export async function requireAuthenticatedProfile(
       return { profile: null, status: 403, payload: { error: 'Forbidden' } };
     }
 
-    if (!options.allowMfaIncomplete && aalData.currentLevel !== 'aal2') {
-      return { profile: null, status: 403, payload: { error: 'MFA required', code: 'MFA_REQUIRED' } };
-    }
-
     const authenticatedProfile = {
       id: profile.id,
       email: profile.email ?? user.email ?? '',
@@ -126,7 +109,6 @@ export async function requireAuthenticatedProfile(
       role: profile.role ?? 'sales',
       department_id: profile.department_id ?? null,
       can_view_dashboard: profile.can_view_dashboard ?? false,
-      authenticator_assurance_level: aalData.currentLevel,
     };
 
     authProfileCache.set(cacheKey, {
