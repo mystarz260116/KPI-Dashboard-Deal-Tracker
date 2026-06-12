@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
-import { toDateString } from '../../lib/dateUtils.js';
+import { expandYearMonthFormats, toDateString } from '../../lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
@@ -15,6 +15,8 @@ type SalesRow = {
   order_date: string | null;
 };
 
+type ExcludedSalesReason = '得意先コードなし' | '担当紐付け漏れ' | '医院アセット対象外';
+
 type ProfileRow = {
   id: string;
   name: string;
@@ -22,7 +24,18 @@ type ProfileRow = {
   departments?: { name?: string | null } | null;
 };
 
+type ClinicAssetCareRow = {
+  customer_code: string;
+  care_status: string | null;
+  next_care_date: string | null;
+  care_memo: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+};
+
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
+const EXCLUDED_SALES_EXTERNAL_STAFF_CODES = new Set(['100', '102', '9999']);
+const CLINIC_CARE_STATUSES = new Set(['未対応', '確認中', '提案中', '維持完了', '離反懸念', '対象外']);
 
 type DebugStep = {
   stage: string;
@@ -70,6 +83,11 @@ function addMonths(date: Date, diff: number) {
   return new Date(date.getFullYear(), date.getMonth() + diff, 1);
 }
 
+function fiscalYearStart(date: Date) {
+  const fiscalYear = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return new Date(fiscalYear, 3, 1);
+}
+
 function getDisplayMonths(targetMonth: string, period: AssetPeriod) {
   const count = getMonthCount(period);
   const end = monthStart(targetMonth);
@@ -86,6 +104,26 @@ function normalizeTargetMonth(value: unknown) {
 function amountOf(row: SalesRow) {
   const amount = Number(row.amount ?? 0);
   return Number.isFinite(amount) ? amount : 0;
+}
+
+function normalizeCareStatus(value: unknown) {
+  const status = String(value ?? '').trim();
+  if (status === '失注懸念') return '離反懸念';
+  return CLINIC_CARE_STATUSES.has(status) ? status : '未対応';
+}
+
+function normalizeOptionalDate(value: unknown) {
+  const raw = String(value ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function normalizeMemo(value: unknown) {
+  return String(value ?? '').slice(0, 2000);
+}
+
+function formatStaffDisplayName(staffCode: string | null, name: string) {
+  const code = String(staffCode ?? '').trim();
+  return code ? `${code} ${name}` : name;
 }
 
 async function fetchSalesRowsFallback({
@@ -159,29 +197,48 @@ async function fetchSalesRows({
   console.info(
     `[debug] clinic-assets sales rpc start kind=${dataKind} start=${startDate} end=${endExclusiveDate} departments=${departmentIds.length} staffCodes=${externalStaffCodes.length}`
   );
-  const { data, error } = await supabaseAdmin.rpc('clinic_asset_sales_aggregates', {
-    p_start_date: startDate,
-    p_end_date: endExclusiveDate,
-    p_department_ids: departmentIds,
-    p_external_staff_codes: externalStaffCodes,
-    p_data_kind: dataKind,
-  });
-  console.info(
-    `[debug] clinic-assets sales rpc end kind=${dataKind} ms=${Date.now() - rpcStartedAt} rows=${data?.length ?? 0} error=${error?.message ?? '-'}`
-  );
 
-  if (error) {
-    console.warn('clinic asset aggregate rpc fallback:', error.message ?? error);
-    return fetchSalesRowsFallback({
-      startDate,
-      endExclusiveDate,
-      departmentIds,
-      externalStaffCodes,
-      dataKind,
-    });
+  const rows: any[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseAdmin
+      .rpc('clinic_asset_sales_aggregates', {
+        p_start_date: startDate,
+        p_end_date: endExclusiveDate,
+        p_department_ids: departmentIds,
+        p_external_staff_codes: externalStaffCodes,
+        p_data_kind: dataKind,
+      })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.info(
+        `[debug] clinic-assets sales rpc end kind=${dataKind} ms=${Date.now() - rpcStartedAt} rows=${rows.length} error=${error.message ?? '-'}`
+      );
+      console.warn('clinic asset aggregate rpc fallback:', error.message ?? error);
+      return fetchSalesRowsFallback({
+        startDate,
+        endExclusiveDate,
+        departmentIds,
+        externalStaffCodes,
+        dataKind,
+      });
+    }
+
+    const batch = data ?? [];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
   }
 
-  return (data ?? []).map((row: any) => ({
+  console.info(
+    `[debug] clinic-assets sales rpc end kind=${dataKind} ms=${Date.now() - rpcStartedAt} rows=${rows.length} error=-`
+  );
+
+  return rows.map((row: any) => ({
     department_id: row.department_id,
     customer_code: row.customer_code,
     customer_name: row.customer_name,
@@ -192,8 +249,50 @@ async function fetchSalesRows({
   })) as SalesRow[];
 }
 
+async function fetchSalesRowsForAudit({
+  startDate,
+  endExclusiveDate,
+  departmentIds,
+  dataKind,
+}: {
+  startDate: string;
+  endExclusiveDate: string;
+  departmentIds: number[];
+  dataKind: 'delivery' | 'order';
+}) {
+  if (departmentIds.length === 0) {
+    return [];
+  }
+
+  const rows: SalesRow[] = [];
+  const pageSize = 1000;
+  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from('sales_import_rows')
+      .select('department_id, customer_code, customer_name, external_staff_code, amount, delivery_date, order_date')
+      .eq('data_kind', dataKind)
+      .gte(dateColumn, startDate)
+      .lt(dateColumn, endExclusiveDate)
+      .in('department_id', departmentIds)
+      .not('external_staff_code', 'in', `(${Array.from(EXCLUDED_SALES_EXTERNAL_STAFF_CODES).join(',')})`)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as SalesRow[];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
+}
+
 export default async function handler(req: any, res: any) {
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.method !== 'PATCH') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -229,18 +328,69 @@ export default async function handler(req: any, res: any) {
     if (!requireDashboardAccess(profile, res)) return;
     markDebug('auth');
 
+    if (req.method === 'PATCH') {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body ?? {});
+      const customerCode = String(body.customer_code ?? '').trim();
+
+      if (!customerCode) {
+        return res.status(400).json({ error: 'customer_code is required' });
+      }
+
+      const payload = {
+        customer_code: customerCode,
+        care_status: normalizeCareStatus(body.care_status ?? body.status),
+        next_care_date: normalizeOptionalDate(body.next_care_date ?? body.next_action_date),
+        care_memo: normalizeMemo(body.care_memo ?? body.memo),
+        department_id: Number.isFinite(Number(body.department_id)) ? Number(body.department_id) : null,
+        user_id: String(body.user_id ?? '').trim() || null,
+        updated_by: profile.id,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: savedAction, error: saveError } = await supabaseAdmin
+        .from('clinic_asset_cares')
+        .upsert(payload, { onConflict: 'customer_code' })
+        .select('customer_code, care_status, next_care_date, care_memo, updated_at, updated_by')
+        .single();
+
+      if (saveError) {
+        console.error('clinic asset care save error:', saveError);
+        return res.status(500).json({ error: 'clinic asset care save failed' });
+      }
+
+      return res.status(200).json({
+        management: {
+          status: savedAction?.care_status ?? '未対応',
+          next_action_date: savedAction?.next_care_date ?? null,
+          memo: savedAction?.care_memo ?? '',
+          updated_at: savedAction?.updated_at ?? null,
+          updated_by: savedAction?.updated_by ?? null,
+        },
+      });
+    }
+
     const targetMonth = normalizeTargetMonth(req.query.month);
     const period = parsePeriod(req.query.period);
     const dataKind = normalizeSalesImportDataKind(req.query.data_kind);
     const departmentId = parseDepartmentId(req.query.departmentId);
     const userId = String(req.query.userId ?? '').trim();
     const months = getDisplayMonths(targetMonth, period);
+    const budgetMonthKeys = expandYearMonthFormats(months);
+    const targetMonthBudgetKeys = new Set(expandYearMonthFormats([targetMonth]));
+    const targetDate = monthStart(targetMonth);
     const displayStart = monthStart(months[0]);
     const displayEndExclusive = addMonths(monthStart(months[months.length - 1]), 1);
-    const lookbackStart = addMonths(displayStart, -12);
-    const previousYearStart = addMonths(displayStart, -12);
-    const previousYearEndExclusive = addMonths(displayEndExclusive, -12);
+    const currentFiscalStart = fiscalYearStart(targetDate);
+    const previousFiscalStart = addMonths(currentFiscalStart, -12);
+    const previousFiscalEndExclusive = currentFiscalStart;
+    const previousSameMonthStart = addMonths(targetDate, -12);
+    const previousSameMonthKey = monthKey(previousSameMonthStart);
     const threeMonthStart = addMonths(displayStart, -3);
+    const lookbackStart = new Date(Math.min(
+      previousFiscalStart.getTime(),
+      previousSameMonthStart.getTime(),
+      threeMonthStart.getTime()
+    ));
 
     const { data: profilesData, error: profilesError } = await supabaseAdmin
       .from('profiles')
@@ -282,13 +432,25 @@ export default async function handler(req: any, res: any) {
     }, staffMapsData?.length ?? 0);
 
     const staffCodeToProfileId = new Map<string, string>();
+    const anyStaffCodeToProfileId = new Map<string, string>();
+    const primaryStaffCodeByProfileId = new Map<string, string>();
     const allowedExternalStaffCodes = new Set<string>();
     (staffMapsData ?? []).forEach((row: any) => {
       const profileId = String(row.profile_id ?? '');
       const departmentKey = String(row.department_id ?? '');
       const staffCode = String(row.external_staff_code ?? '').trim();
+      if (EXCLUDED_SALES_EXTERNAL_STAFF_CODES.has(staffCode)) {
+        return;
+      }
+
+      if (profileId && departmentKey && staffCode) {
+        anyStaffCodeToProfileId.set(`${departmentKey}|${staffCode}`, profileId);
+      }
       if (profileId && departmentKey && staffCode && allowedUserIds.has(profileId)) {
         staffCodeToProfileId.set(`${departmentKey}|${staffCode}`, profileId);
+        if (!primaryStaffCodeByProfileId.has(profileId)) {
+          primaryStaffCodeByProfileId.set(profileId, staffCode);
+        }
         allowedExternalStaffCodes.add(staffCode);
       }
     });
@@ -298,7 +460,7 @@ export default async function handler(req: any, res: any) {
       return staffCodeToProfileId.get(key) ?? null;
     };
 
-    const [salesRows, previousYearRows, budgetsResult] = await Promise.all([
+    const [salesRows, auditSalesRows, budgetsResult] = await Promise.all([
       fetchSalesRows({
         startDate: toDateString(lookbackStart),
         endExclusiveDate: toDateString(displayEndExclusive),
@@ -306,30 +468,31 @@ export default async function handler(req: any, res: any) {
         externalStaffCodes: Array.from(allowedExternalStaffCodes),
         dataKind,
       }),
-      fetchSalesRows({
-        startDate: toDateString(previousYearStart),
-        endExclusiveDate: toDateString(previousYearEndExclusive),
+      fetchSalesRowsForAudit({
+        startDate: toDateString(displayStart),
+        endExclusiveDate: toDateString(displayEndExclusive),
         departmentIds: allowedDepartmentIds,
-        externalStaffCodes: Array.from(allowedExternalStaffCodes),
         dataKind,
       }),
       supabaseAdmin
         .from('budgets')
         .select('user_id, department_id, target_year_month, target_amount')
-        .in('target_year_month', months)
+        .in('target_year_month', budgetMonthKeys)
         .in('department_id', allowedDepartmentIds.length > 0 ? allowedDepartmentIds : [-1]),
     ]);
     markDebug('sales_rows_and_budgets', {
       salesRows: salesRows.length,
-      previousYearRows: previousYearRows.length,
+      auditSalesRows: auditSalesRows.length,
       budgetsRows: budgetsResult.data?.length ?? 0,
       allowedExternalStaffCodes: allowedExternalStaffCodes.size,
       months: months.length,
+      budgetMonthKeys: budgetMonthKeys.length,
       lookbackStart: toDateString(lookbackStart),
       displayEndExclusive: toDateString(displayEndExclusive),
-      previousYearStart: toDateString(previousYearStart),
-      previousYearEndExclusive: toDateString(previousYearEndExclusive),
-    }, salesRows.length + previousYearRows.length);
+      previousSameMonth: previousSameMonthKey,
+      previousFiscalStart: toDateString(previousFiscalStart),
+      previousFiscalEndExclusive: toDateString(previousFiscalEndExclusive),
+    }, salesRows.length + auditSalesRows.length);
 
     if (budgetsResult.error) {
       console.error('clinic assets budgets error:', budgetsResult.error);
@@ -340,27 +503,29 @@ export default async function handler(req: any, res: any) {
       const resolvedUserId = resolveUserId(row);
       return resolvedUserId ? allowedUserIds.has(resolvedUserId) : false;
     });
-    const scopedPreviousYearRows = previousYearRows.filter((row) => {
-      const resolvedUserId = resolveUserId(row);
-      return resolvedUserId ? allowedUserIds.has(resolvedUserId) : false;
-    });
     markDebug('scope_rows', {
       scopedRows: scopedRows.length,
-      scopedPreviousYearRows: scopedPreviousYearRows.length,
-    }, scopedRows.length + scopedPreviousYearRows.length);
+    }, scopedRows.length);
 
     const userById = new Map(users.map((row) => [row.id, row]));
+    const departmentNameById = new Map(
+      users
+        .filter((row) => row.department_id != null)
+        .map((row) => [String(row.department_id), row.departments?.name ?? ''])
+    );
     const rowsByClinic = new Map<string, {
       customer_code: string;
       customer_name: string;
       department_id: number | null;
       user_id: string | null;
       user_name: string;
+      external_staff_code: string | null;
       monthly: Map<string, number>;
       lookback_total: number;
       last_seen_month: string | null;
     }>();
-    const previousYearByClinic = new Map<string, number>();
+    const previousSameMonthByClinic = new Map<string, number>();
+    const previousFiscalByClinic = new Map<string, number>();
 
     const upsertClinic = (row: SalesRow) => {
       const code = String(row.customer_code ?? '').trim();
@@ -368,12 +533,17 @@ export default async function handler(req: any, res: any) {
 
       const resolvedUserId = resolveUserId(row);
       const user = resolvedUserId ? userById.get(resolvedUserId) : null;
+      const externalStaffCode = String(row.external_staff_code ?? '').trim()
+        || (resolvedUserId ? primaryStaffCodeByProfileId.get(resolvedUserId) : '')
+        || null;
+      const staffDisplayName = formatStaffDisplayName(externalStaffCode, user?.name ?? '担当未設定');
       const current = rowsByClinic.get(code) ?? {
         customer_code: code,
         customer_name: String(row.customer_name ?? '').trim() || code,
         department_id: row.department_id,
         user_id: resolvedUserId,
-        user_name: user?.name ?? '担当未設定',
+        user_name: staffDisplayName,
+        external_staff_code: externalStaffCode,
         monthly: new Map<string, number>(),
         lookback_total: 0,
         last_seen_month: null,
@@ -381,7 +551,11 @@ export default async function handler(req: any, res: any) {
 
       if (!current.user_id && resolvedUserId) {
         current.user_id = resolvedUserId;
-        current.user_name = user?.name ?? current.user_name;
+        current.user_name = staffDisplayName;
+      }
+      if (!current.external_staff_code && externalStaffCode) {
+        current.external_staff_code = externalStaffCode;
+        current.user_name = formatStaffDisplayName(externalStaffCode, user?.name ?? current.user_name);
       }
       if (!current.customer_name || current.customer_name === current.customer_code) {
         current.customer_name = String(row.customer_name ?? '').trim() || current.customer_code;
@@ -404,6 +578,21 @@ export default async function handler(req: any, res: any) {
 
       clinic.monthly.set(key, (clinic.monthly.get(key) ?? 0) + amount);
 
+      if (key === previousSameMonthKey) {
+        previousSameMonthByClinic.set(
+          clinic.customer_code,
+          (previousSameMonthByClinic.get(clinic.customer_code) ?? 0) + amount
+        );
+      }
+
+      const rowMonthStart = monthStart(key);
+      if (rowMonthStart >= previousFiscalStart && rowMonthStart < previousFiscalEndExclusive) {
+        previousFiscalByClinic.set(
+          clinic.customer_code,
+          (previousFiscalByClinic.get(clinic.customer_code) ?? 0) + amount
+        );
+      }
+
       if (key < months[0]) {
         clinic.last_seen_month = !clinic.last_seen_month || key > clinic.last_seen_month
           ? key
@@ -411,14 +600,10 @@ export default async function handler(req: any, res: any) {
       }
     });
 
-    scopedPreviousYearRows.forEach((row) => {
-      const code = String(row.customer_code ?? '').trim();
-      if (!code) return;
-      previousYearByClinic.set(code, (previousYearByClinic.get(code) ?? 0) + amountOf(row));
-    });
     markDebug('aggregate_clinic_months', {
       clinics: rowsByClinic.size,
-      previousYearClinics: previousYearByClinic.size,
+      previousSameMonthClinics: previousSameMonthByClinic.size,
+      previousFiscalClinics: previousFiscalByClinic.size,
     }, rowsByClinic.size);
 
     const scopedBudgets = (budgetsResult.data ?? []).filter((row: any) => {
@@ -427,6 +612,11 @@ export default async function handler(req: any, res: any) {
       return allowedUserIds.has(row.user_id);
     });
     const budgetTotal = scopedBudgets.reduce((sum: number, row: any) => {
+      const amount = Number(row.target_amount ?? 0);
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0);
+    const targetMonthBudgetTotal = scopedBudgets.reduce((sum: number, row: any) => {
+      if (!targetMonthBudgetKeys.has(String(row.target_year_month ?? '').trim())) return sum;
       const amount = Number(row.target_amount ?? 0);
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0);
@@ -443,17 +633,20 @@ export default async function handler(req: any, res: any) {
           (sum, key) => sum + (clinic.monthly.get(key) ?? 0),
           0
         ) / 3;
-        const previousYearTotal = previousYearByClinic.get(clinic.customer_code) ?? 0;
+        const previousYearTotal = previousSameMonthByClinic.get(clinic.customer_code) ?? 0;
+        const previousFiscalTotal = previousFiscalByClinic.get(clinic.customer_code) ?? 0;
         const isNew = total > 0 && !clinic.last_seen_month;
         const isChurnRisk = total === 0 && trailingAverage > 0;
 
         return {
           user_id: clinic.user_id,
           user_name: clinic.user_name,
+          external_staff_code: clinic.external_staff_code,
           department_id: clinic.department_id,
           customer_code: clinic.customer_code,
           customer_name: clinic.customer_name,
           previous_year_total: Math.round(previousYearTotal),
+          previous_fiscal_total: Math.round(previousFiscalTotal),
           three_month_average: Math.round(trailingAverage),
           total: Math.round(total),
           year_over_year_delta: Math.round(total - previousYearTotal),
@@ -463,16 +656,145 @@ export default async function handler(req: any, res: any) {
           monthly,
         };
       })
-      .filter((row) => row.total > 0 || row.three_month_average > 0 || row.previous_year_total > 0)
+      .filter((row) => row.total > 0 || row.three_month_average > 0 || row.previous_year_total > 0 || row.previous_fiscal_total > 0)
       .sort((a, b) => b.total - a.total || a.customer_name.localeCompare(b.customer_name, 'ja'));
-    markDebug('build_asset_rows', undefined, assetRows.length);
 
-    const salesTotal = assetRows.reduce((sum, row) => sum + row.total, 0);
-    const previousYearTotal = assetRows.reduce((sum, row) => sum + row.previous_year_total, 0);
-    const newOrderAmount = assetRows.reduce((sum, row) => sum + row.new_order_amount, 0);
-    const activeClinicCount = assetRows.filter((row) => row.total > 0).length;
-    const baseClinicCount = assetRows.filter((row) => row.three_month_average > 0).length;
-    const churnClinicCount = assetRows.filter((row) => row.is_churn_risk).length;
+    const assetCustomerCodes = assetRows.map((row) => row.customer_code).filter(Boolean);
+    const { data: actionRows, error: actionRowsError } = assetCustomerCodes.length > 0
+      ? await supabaseAdmin
+        .from('clinic_asset_cares')
+        .select('customer_code, care_status, next_care_date, care_memo, updated_at, updated_by')
+        .in('customer_code', assetCustomerCodes)
+      : { data: [], error: null };
+
+    if (actionRowsError) {
+      console.error('clinic asset cares error:', actionRowsError);
+      return res.status(500).json({ error: 'clinic asset cares fetch failed' });
+    }
+
+    const actionByCustomerCode = new Map(
+      ((actionRows ?? []) as ClinicAssetCareRow[]).map((row) => [row.customer_code, row])
+    );
+    const rowsWithActions = assetRows.map((row) => {
+      const action = actionByCustomerCode.get(row.customer_code);
+      return {
+        ...row,
+        management: {
+          status: action?.care_status ?? '未対応',
+          next_action_date: action?.next_care_date ?? null,
+          memo: action?.care_memo ?? '',
+          updated_at: action?.updated_at ?? null,
+          updated_by: action?.updated_by ?? null,
+        },
+      };
+    });
+    markDebug('build_asset_rows', {
+      actionRows: actionRows?.length ?? 0,
+    }, rowsWithActions.length);
+
+    const excludedSalesMap = new Map<string, {
+      reason: ExcludedSalesReason;
+      month: string;
+      department_id: number | null;
+      department_name: string;
+      external_staff_code: string;
+      staff_name: string;
+      customer_code: string;
+      customer_name: string;
+      amount: number;
+      row_count: number;
+    }>();
+    const excludedSalesSummary = new Map<ExcludedSalesReason, { amount: number; row_count: number }>();
+
+    auditSalesRows.forEach((row) => {
+      const rawDate = dataKind === 'order' ? row.order_date : row.delivery_date;
+      if (!rawDate) return;
+
+      const amount = amountOf(row);
+      if (amount === 0) return;
+
+      const month = String(rawDate).slice(0, 7);
+      const departmentKey = String(row.department_id ?? '');
+      const staffCode = String(row.external_staff_code ?? '').trim();
+      const customerCode = String(row.customer_code ?? '').trim();
+      const customerName = String(row.customer_name ?? '').trim();
+      if (EXCLUDED_SALES_EXTERNAL_STAFF_CODES.has(staffCode)) return;
+
+      const profileId = staffCode ? anyStaffCodeToProfileId.get(`${departmentKey}|${staffCode}`) : null;
+      let reason: ExcludedSalesReason | null = null;
+
+      if (!customerCode) {
+        reason = '得意先コードなし';
+      } else if (!staffCode || !profileId) {
+        reason = '担当紐付け漏れ';
+      } else if (!allowedUserIds.has(profileId)) {
+        reason = '医院アセット対象外';
+      }
+
+      if (!reason) return;
+
+      const staffName = profileId ? userById.get(profileId)?.name ?? '' : '';
+      const key = [
+        reason,
+        month,
+        departmentKey,
+        staffCode,
+        customerCode,
+        customerName,
+      ].join('|');
+      const current = excludedSalesMap.get(key) ?? {
+        reason,
+        month,
+        department_id: row.department_id,
+        department_name: departmentNameById.get(departmentKey) ?? '',
+        external_staff_code: staffCode,
+        staff_name: staffName,
+        customer_code: customerCode,
+        customer_name: customerName,
+        amount: 0,
+        row_count: 0,
+      };
+
+      current.amount += amount;
+      current.row_count += 1;
+      excludedSalesMap.set(key, current);
+
+      const summary = excludedSalesSummary.get(reason) ?? { amount: 0, row_count: 0 };
+      summary.amount += amount;
+      summary.row_count += 1;
+      excludedSalesSummary.set(reason, summary);
+    });
+
+    const excludedSalesRows = Array.from(excludedSalesMap.values())
+      .map((row) => ({
+        ...row,
+        amount: Math.round(row.amount),
+      }))
+      .sort((a, b) => b.amount - a.amount || a.reason.localeCompare(b.reason, 'ja'))
+      .slice(0, 500);
+    const excludedSalesTotal = Array.from(excludedSalesSummary.values())
+      .reduce((sum, row) => sum + row.amount, 0);
+    markDebug('excluded_sales_audit', {
+      auditSalesRows: auditSalesRows.length,
+      excludedGroups: excludedSalesMap.size,
+      returnedRows: excludedSalesRows.length,
+    }, excludedSalesRows.length);
+
+    const previousYearTotal = rowsWithActions.reduce((sum, row) => sum + row.previous_year_total, 0);
+    const previousFiscalTotal = rowsWithActions.reduce((sum, row) => sum + row.previous_fiscal_total, 0);
+    const currentMonthTotal = rowsWithActions.reduce((sum, row) => {
+      const targetMonthAmount = row.monthly.find((entry) => entry.month === targetMonth)?.amount ?? 0;
+      return sum + targetMonthAmount;
+    }, 0);
+    const newOrderAmount = rowsWithActions.reduce((sum, row) => {
+      const targetMonthAmount = row.monthly.find((entry) => entry.month === targetMonth)?.amount ?? 0;
+      return sum + (row.is_new ? targetMonthAmount : 0);
+    }, 0);
+    const activeClinicCount = rowsWithActions.filter((row) => (
+      (row.monthly.find((entry) => entry.month === targetMonth)?.amount ?? 0) > 0
+    )).length;
+    const baseClinicCount = rowsWithActions.filter((row) => row.three_month_average > 0).length;
+    const churnClinicCount = rowsWithActions.filter((row) => row.is_churn_risk).length;
     const churnRate = baseClinicCount > 0
       ? Number(((churnClinicCount / baseClinicCount) * 100).toFixed(1))
       : 0;
@@ -503,18 +825,31 @@ export default async function handler(req: any, res: any) {
         ),
       },
       summary: {
-        sales_total: Math.round(salesTotal),
-        budget_total: Math.round(budgetTotal),
-        budget_rate: budgetTotal > 0 ? Number(((salesTotal / budgetTotal) * 100).toFixed(1)) : 0,
+        sales_total: Math.round(currentMonthTotal),
+        budget_total: Math.round(targetMonthBudgetTotal),
+        budget_rate: targetMonthBudgetTotal > 0 ? Number(((currentMonthTotal / targetMonthBudgetTotal) * 100).toFixed(1)) : 0,
+        current_month_total: Math.round(currentMonthTotal),
         previous_year_total: Math.round(previousYearTotal),
-        year_over_year_delta: Math.round(salesTotal - previousYearTotal),
+        previous_fiscal_total: Math.round(previousFiscalTotal),
+        year_over_year_delta: Math.round(currentMonthTotal - previousYearTotal),
         churn_rate: churnRate,
         churn_clinic_count: churnClinicCount,
         base_clinic_count: baseClinicCount,
         active_clinic_count: activeClinicCount,
         new_order_amount: Math.round(newOrderAmount),
       },
-      rows: assetRows,
+      rows: rowsWithActions,
+      excluded_sales: {
+        total_amount: Math.round(excludedSalesTotal),
+        total_groups: excludedSalesMap.size,
+        returned_groups: excludedSalesRows.length,
+        summary: Array.from(excludedSalesSummary.entries()).map(([reason, value]) => ({
+          reason,
+          amount: Math.round(value.amount),
+          row_count: value.row_count,
+        })),
+        rows: excludedSalesRows,
+      },
       debug: {
         endpoint: 'clinic-assets',
         totalMs: Date.now() - debugStartedAt,
@@ -526,10 +861,11 @@ export default async function handler(req: any, res: any) {
           staffMaps: staffMapsData?.length ?? 0,
           allowedExternalStaffCodes: allowedExternalStaffCodes.size,
           salesRows: salesRows.length,
-          previousYearRows: previousYearRows.length,
+          auditSalesRows: auditSalesRows.length,
           scopedRows: scopedRows.length,
-          scopedPreviousYearRows: scopedPreviousYearRows.length,
-          assetRows: assetRows.length,
+          actionRows: actionRows?.length ?? 0,
+          assetRows: rowsWithActions.length,
+          excludedSalesGroups: excludedSalesMap.size,
         },
       },
     });

@@ -7,7 +7,11 @@ const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 
 export default async function handler(_req: VercelRequest, res: VercelResponse) {
   try {
-    const profile = await requireAuthenticatedProfile(_req, res);
+    const isRecordLoginRequest = _req.method === 'POST'
+      && String((_req.body as any)?.action ?? '').trim() === 'record-login';
+    const profile = await requireAuthenticatedProfile(_req, res, {
+      allowMfaIncomplete: isRecordLoginRequest,
+    });
     if (!profile) return;
 
     if (_req.method === 'POST') {

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
 import {
+  expandYearMonthFormats,
   getPeriodRange,
   getYearMonthsBetween,
   toDateString,
@@ -15,12 +16,14 @@ import { detectExistingDealWins } from './_lib/existingDealWins.js';
 import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
 import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performance.js';
 import clinicAssetsHandler from '../src/server-handlers/kpi/clinic-assets.js';
+import detectedNewOrderHandler from '../src/server-handlers/kpi/detected-new-order.js';
 
 
 type Granularity = 'all' | 'department' | 'individual';
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 const HEAD_OFFICE_SALES_NAME = '本社売上';
 const UNCLASSIFIED_PRODUCT_LABEL = '未分類';
+const EXCLUDED_SALES_EXTERNAL_STAFF_CODES = new Set(['100', '102', '9999']);
 
 type DebugStep = {
   stage: string;
@@ -39,32 +42,19 @@ type ProductMetadataCacheEntry = {
 const PRODUCT_METADATA_CACHE_TTL_MS = 5 * 60_000;
 const productMetadataCache = new Map<string, ProductMetadataCacheEntry>();
 
-function expandBudgetYearMonthFormats(yearMonths: string[]) {
-  const variants = new Set<string>();
+function amountOfSalesRow(row: any) {
+  const amount = Number(row.amount ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
 
-  yearMonths.forEach((value) => {
-    const normalized = String(value).trim();
-    if (!normalized) return;
+function normalizeSalesRowDate(value: unknown) {
+  const raw = String(value ?? '').trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return `${raw}-01`;
+  return raw.slice(0, 10);
+}
 
-    variants.add(normalized);
-
-    const [year, monthRaw] = normalized.split('-');
-    const monthNumber = Number.parseInt(monthRaw ?? '', 10);
-
-    if (year && Number.isFinite(monthNumber)) {
-      const paddedMonth = String(monthNumber).padStart(2, '0');
-      const shortMonth = new Date(Number(year), monthNumber - 1, 1).toLocaleString('en-US', { month: 'short' });
-      const shortYear = year.slice(-2);
-      variants.add(`${year}/${monthNumber}`);
-      variants.add(`${year}/${paddedMonth}`);
-      variants.add(`${year}-${monthNumber}`);
-      variants.add(`${year}-${paddedMonth}`);
-      variants.add(`${shortMonth}-${shortYear}`);
-      variants.add(`${shortMonth}-${year}`);
-    }
-  });
-
-  return Array.from(variants);
+function uniqueValues<T>(values: T[]) {
+  return Array.from(new Set(values));
 }
 
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
@@ -93,6 +83,15 @@ function getPreviousYearRange(start: Date, endExclusive: Date) {
   prevEnd.setFullYear(prevEnd.getFullYear() - 1);
 
   return { prevStart, prevEnd };
+}
+
+function addMonths(date: Date, diff: number) {
+  return new Date(date.getFullYear(), date.getMonth() + diff, 1);
+}
+
+function fiscalYearStart(date: Date) {
+  const fiscalYear = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return new Date(fiscalYear, 3, 1);
 }
 
 async function fetchProductMetadata(salesRowDepartmentIds: number[]) {
@@ -220,26 +219,40 @@ async function fetchDashboardSalesRows({
     return [];
   }
 
-  const { data, error } = await supabaseAdmin.rpc('dashboard_sales_import_aggregates', {
-    p_start_date: startDate,
-    p_end_date: endExclusiveDate,
-    p_department_ids: departmentIds,
-    p_external_staff_codes: externalStaffCodes,
-    p_data_kind: dataKind,
-  });
+  const rows: any[] = [];
+  const pageSize = 1000;
 
-  if (error) {
-    console.warn('dashboard sales aggregate rpc fallback:', error.message ?? error);
-    return fetchDashboardSalesRowsFallback({
-      startDate,
-      endExclusiveDate,
-      departmentIds,
-      externalStaffCodes,
-      dataKind,
-    });
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseAdmin
+      .rpc('dashboard_sales_import_aggregates', {
+        p_start_date: startDate,
+        p_end_date: endExclusiveDate,
+        p_department_ids: departmentIds,
+        p_external_staff_codes: externalStaffCodes,
+        p_data_kind: dataKind,
+      })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.warn('dashboard sales aggregate rpc fallback:', error.message ?? error);
+      return fetchDashboardSalesRowsFallback({
+        startDate,
+        endExclusiveDate,
+        departmentIds,
+        externalStaffCodes,
+        dataKind,
+      });
+    }
+
+    const batch = data ?? [];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
   }
 
-  return (data ?? []).map((row: any) => ({
+  return rows.map((row: any) => ({
     department_id: row.department_id,
     data_kind: dataKind,
     customer_code: null,
@@ -249,6 +262,122 @@ async function fetchDashboardSalesRows({
     external_staff_code: row.external_staff_code,
     normalized_product_code: row.normalized_product_code,
     normalized_product_name: null,
+  }));
+}
+
+async function fetchDashboardClinicSalesRowsFallback({
+  startDate,
+  endExclusiveDate,
+  departmentIds,
+  externalStaffCodes,
+  dataKind,
+}: {
+  startDate: string;
+  endExclusiveDate: string;
+  departmentIds: number[];
+  externalStaffCodes: string[];
+  dataKind: 'delivery' | 'order';
+}) {
+  if (departmentIds.length === 0 || externalStaffCodes.length === 0) {
+    return [];
+  }
+
+  const rows: any[] = [];
+  const pageSize = 1000;
+  const staffCodeChunkSize = 80;
+  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+
+  for (let staffCodeIndex = 0; staffCodeIndex < externalStaffCodes.length; staffCodeIndex += staffCodeChunkSize) {
+    const staffCodeChunk = externalStaffCodes.slice(staffCodeIndex, staffCodeIndex + staffCodeChunkSize);
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabaseAdmin
+        .from('sales_import_rows')
+        .select('department_id, customer_code, customer_name, amount, delivery_date, order_date, external_staff_code')
+        .eq('data_kind', dataKind)
+        .gte(dateColumn, startDate)
+        .lt(dateColumn, endExclusiveDate)
+        .in('department_id', departmentIds)
+        .in('external_staff_code', staffCodeChunk)
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        throw error;
+      }
+
+      const batch = data ?? [];
+      rows.push(...batch);
+
+      if (batch.length < pageSize) {
+        break;
+      }
+
+      from += pageSize;
+    }
+  }
+
+  return rows;
+}
+
+async function fetchDashboardClinicSalesRows({
+  startDate,
+  endExclusiveDate,
+  departmentIds,
+  externalStaffCodes,
+  dataKind,
+}: {
+  startDate: string;
+  endExclusiveDate: string;
+  departmentIds: number[];
+  externalStaffCodes: string[];
+  dataKind: 'delivery' | 'order';
+}) {
+  if (departmentIds.length === 0 || externalStaffCodes.length === 0) {
+    return [];
+  }
+
+  const rows: any[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseAdmin
+      .rpc('clinic_asset_sales_aggregates', {
+        p_start_date: startDate,
+        p_end_date: endExclusiveDate,
+        p_department_ids: departmentIds,
+        p_external_staff_codes: externalStaffCodes,
+        p_data_kind: dataKind,
+      })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.warn('dashboard clinic sales aggregate rpc fallback:', error.message ?? error);
+      return fetchDashboardClinicSalesRowsFallback({
+        startDate,
+        endExclusiveDate,
+        departmentIds,
+        externalStaffCodes,
+        dataKind,
+      });
+    }
+
+    const batch = data ?? [];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
+  }
+
+  return rows.map((row: any) => ({
+    department_id: row.department_id,
+    customer_code: row.customer_code,
+    customer_name: row.customer_name,
+    amount: Number(row.sales_total ?? 0),
+    delivery_date: dataKind === 'delivery' ? row.sales_month : null,
+    order_date: dataKind === 'order' ? row.sales_month : null,
+    external_staff_code: row.external_staff_code,
   }));
 }
 
@@ -265,6 +394,10 @@ export default async function handler(req: any, res: any) {
 
   if (route === 'clinic-assets') {
     return clinicAssetsHandler(req, res);
+  }
+
+  if (route === 'detected-new-order') {
+    return detectedNewOrderHandler(req, res);
   }
 
   if (req.method !== 'GET') {
@@ -337,7 +470,7 @@ export default async function handler(req: any, res: any) {
     const endForBudget = new Date(end);
     endForBudget.setDate(endForBudget.getDate() - 1);
     const targetYearMonths = getYearMonthsBetween(start, endForBudget);
-    const budgetMonthKeys = expandBudgetYearMonthFormats(targetYearMonths);
+    const budgetMonthKeys = expandYearMonthFormats(targetYearMonths);
 
     const { data: profilesData, error: profilesError } = await supabaseAdmin
       .from('profiles')
@@ -536,7 +669,7 @@ export default async function handler(req: any, res: any) {
     const headOfficeSalesUserId = users.find(
       (user) => user.name === HEAD_OFFICE_SALES_NAME || user.department === HEAD_OFFICE_SALES_NAME
     )?.id ?? null;
-    const mappableUsers = filteredUsers.filter((u) => u.id !== headOfficeSalesUserId);
+    const mappableUsers = filteredUsers;
     const profileIdsByDepartment = new Map<number, string[]>();
     mappableUsers.forEach((u) => {
       if (!u.department_id) return;
@@ -565,8 +698,13 @@ export default async function handler(req: any, res: any) {
       profileStaffMapRows += profileStaffMapsData?.length ?? 0;
       (profileStaffMapsData ?? []).forEach((row: any) => {
         const departmentId = Number(row.department_id);
-        if (row.profile_id && row.external_staff_code && Number.isFinite(departmentId)) {
-          const code = String(row.external_staff_code);
+        const code = String(row.external_staff_code ?? '').trim();
+        if (
+          row.profile_id
+          && code
+          && Number.isFinite(departmentId)
+          && !EXCLUDED_SALES_EXTERNAL_STAFF_CODES.has(code)
+        ) {
           profileStaffCodeMap.set(
             `${departmentId}|${code}`,
             String(row.profile_id)
@@ -815,6 +953,113 @@ export default async function handler(req: any, res: any) {
     const currentProductDepartmentMap = buildProductDepartmentMap(currentSalesRows);
     const previousProductDepartmentMap = buildProductDepartmentMap(previousSalesRows);
 
+    const productDepartmentOptions = productDepartments
+      .map((row: any) => ({
+        id: String(row.id ?? ''),
+        department_id: Number(row.department_id),
+        name: String(row.name ?? '').trim(),
+      }))
+      .filter((row) => row.id && Number.isFinite(row.department_id) && row.name)
+      .sort((a, b) => a.department_id - b.department_id || a.name.localeCompare(b.name, 'ja'));
+
+    const unclassifiedProductMap = new Map<string, {
+      key: string;
+      department_id: number;
+      department_name: string;
+      normalized_product_code: string;
+      normalized_product_name: string;
+      sales: number;
+    }>();
+
+    currentSalesRows.forEach((row: any) => {
+      const profileId = resolveSalesRowProfileId(row);
+      if (!profileId || !allowedUserIds.has(profileId)) return;
+
+      const amount = Number(row.amount ?? 0);
+      if (!Number.isFinite(amount) || amount === 0) return;
+
+      const departmentId = Number(row.department_id);
+      const productCode = String(row.normalized_product_code ?? '').trim();
+      if (!Number.isFinite(departmentId) || !productCode) return;
+
+      const productDepartmentId = productCategoryDepartmentMap.get(`${departmentId}|${productCode}`) ?? '';
+      if (productDepartmentId) return;
+
+      const key = `${departmentId}|${productCode}`;
+      const current = unclassifiedProductMap.get(key) ?? {
+        key,
+        department_id: departmentId,
+        department_name: users.find((user) => user.department_id === departmentId)?.department ?? '',
+        normalized_product_code: productCode,
+        normalized_product_name: '',
+        sales: 0,
+      };
+
+      current.sales += amount;
+      unclassifiedProductMap.set(key, current);
+    });
+
+    const unclassifiedProductCodes = uniqueValues(
+      Array.from(unclassifiedProductMap.values()).map((row) => row.normalized_product_code)
+    );
+
+    if (unclassifiedProductCodes.length > 0 && allowedDepartmentIds.length > 0) {
+      const productNameByKey = new Map<string, string>();
+      const codeChunkSize = 80;
+      const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+
+      for (let codeIndex = 0; codeIndex < unclassifiedProductCodes.length; codeIndex += codeChunkSize) {
+        const codeChunk = unclassifiedProductCodes.slice(codeIndex, codeIndex + codeChunkSize);
+        let from = 0;
+
+        while (true) {
+          const { data: productNameRows, error: productNameError } = await supabaseAdmin
+            .from('sales_import_rows')
+            .select('department_id, normalized_product_code, normalized_product_name')
+            .eq('data_kind', dataKind)
+            .gte(dateColumn, currentStart)
+            .lt(dateColumn, currentEnd)
+            .in('department_id', allowedDepartmentIds)
+            .in('external_staff_code', Array.from(allowedExternalStaffCodes))
+            .in('normalized_product_code', codeChunk)
+            .range(from, from + 999);
+
+          if (productNameError) {
+            throw productNameError;
+          }
+
+          (productNameRows ?? []).forEach((row: any) => {
+            const departmentId = Number(row.department_id);
+            const productCode = String(row.normalized_product_code ?? '').trim();
+            const productName = String(row.normalized_product_name ?? '').trim();
+            const key = `${departmentId}|${productCode}`;
+
+            if (Number.isFinite(departmentId) && productCode && productName && !productNameByKey.has(key)) {
+              productNameByKey.set(key, productName);
+            }
+          });
+
+          if ((productNameRows ?? []).length < 1000) break;
+          from += 1000;
+        }
+      }
+
+      productNameByKey.forEach((productName, key) => {
+        const current = unclassifiedProductMap.get(key);
+        if (current) {
+          current.normalized_product_name = productName;
+        }
+      });
+    }
+
+    const unclassified_products = Array.from(unclassifiedProductMap.values())
+      .map((row) => ({
+        ...row,
+        sales: Math.round(row.sales),
+      }))
+      .sort((a, b) => b.sales - a.sales || a.department_name.localeCompare(b.department_name, 'ja') || a.normalized_product_code.localeCompare(b.normalized_product_code, 'ja'))
+      .slice(0, 100);
+
     const sumSalesMap = (salesMap: Map<string, number>) =>
       Array.from(salesMap.entries()).reduce((sum, [userId, amount]) => {
         if (!allowedUserIds.has(userId)) return sum;
@@ -858,7 +1103,7 @@ export default async function handler(req: any, res: any) {
       .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
       .filter((item) => item.name)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+      .slice(0, 50);
 
     const won_ranking = Array.from(wonRankingMap.entries())
       .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
@@ -889,7 +1134,7 @@ export default async function handler(req: any, res: any) {
       .filter((row) => row.user_id !== headOfficeSalesUserId)
       .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
 
-    const new_orders = scopedMergedProspectsInPeriod
+    const prospectNewOrders = scopedMergedProspectsInPeriod
       .slice()
       .sort((a: any, b: any) => {
         const leftCode = String(a.merged_customer_code ?? '');
@@ -897,10 +1142,10 @@ export default async function handler(req: any, res: any) {
         return new Date(firstOrderDateByCustomerCode.get(rightCode) ?? b.merged_at).getTime()
           - new Date(firstOrderDateByCustomerCode.get(leftCode) ?? a.merged_at).getTime();
       })
-      .slice(0, 10)
       .map((p: any) => {
         const user = users.find((u) => u.id === p.created_by);
         const customerCode = p.merged_customer_code;
+        const orderedAt = firstOrderDateByCustomerCode.get(customerCode) ?? p.merged_at;
         return {
           clinic: mergedCustomerNameMap.get(customerCode) ?? p.name ?? customerCode,
           clinic_kind: 'customer',
@@ -908,12 +1153,73 @@ export default async function handler(req: any, res: any) {
           customer_code: customerCode,
           prospect_customer_id: p.id,
           sales: user?.name ?? '',
+          source: 'prospect',
+          source_label: '商談',
+          ordered_at: orderedAt,
         };
       });
+
+    let approvedDetectedNewOrders: any[] = [];
+    const approvedDetectedQuery = supabaseAdmin
+      .from('detected_new_orders')
+      .select('customer_code, customer_name, user_id, department_id, amount, ordered_at, detected_month, created_deal_id')
+      .eq('status', 'approved')
+      .eq('data_kind', dataKind)
+      .gte('ordered_at', currentStart)
+      .lt('ordered_at', currentEnd);
+
+    const { data: approvedDetectedRows, error: approvedDetectedError } = await approvedDetectedQuery;
+    if (approvedDetectedError) {
+      console.warn('dashboard approved detected new orders lookup skipped:', approvedDetectedError.message ?? approvedDetectedError);
+    } else {
+      const prospectCustomerCodes = new Set(
+        prospectNewOrders.map((row: any) => String(row.customer_code ?? '').trim()).filter(Boolean)
+      );
+
+      approvedDetectedNewOrders = (approvedDetectedRows ?? [])
+        .filter((row: any) => {
+          const detectedUserId = String(row.user_id ?? '').trim();
+          if (!detectedUserId || !allowedUserIds.has(detectedUserId)) return false;
+          if (detectedUserId === headOfficeSalesUserId) return false;
+          if (granularity === 'department' && selectedDepartment && Number(row.department_id) !== selectedDepartment) return false;
+          if (granularity === 'individual' && userId && detectedUserId !== userId) return false;
+          return true;
+        })
+        .filter((row: any) => !prospectCustomerCodes.has(String(row.customer_code ?? '').trim()))
+        .map((row: any) => {
+          const detectedUserId = String(row.user_id ?? '').trim();
+          const user = userById.get(detectedUserId);
+          const customerCode = String(row.customer_code ?? '').trim();
+          return {
+            clinic: row.customer_name ?? customerCode,
+            clinic_kind: 'customer',
+            clinic_id: customerCode,
+            customer_code: customerCode,
+            prospect_customer_id: null,
+            sales: user?.name ?? '',
+            amount: Math.round(Number(row.amount ?? 0)),
+            source: 'detected_new_order',
+            source_label: '受注確認',
+            ordered_at: row.ordered_at ?? `${row.detected_month ?? currentStart.slice(0, 7)}-01`,
+            created_deal_id: row.created_deal_id ?? null,
+          };
+        });
+    }
+
+    const new_orders = [...prospectNewOrders, ...approvedDetectedNewOrders]
+      .sort((a: any, b: any) => {
+        const left = new Date(a.ordered_at ?? '').getTime();
+        const right = new Date(b.ordered_at ?? '').getTime();
+        return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0)
+          || String(a.clinic ?? '').localeCompare(String(b.clinic ?? ''), 'ja');
+      })
+      .slice(0, 10);
     markDebug('build_response', {
       performanceRanking: performance_ranking.length,
       productDepartmentSales: product_department_sales.length,
       newOrders: new_orders.length,
+      prospectNewOrders: prospectNewOrders.length,
+      approvedDetectedNewOrders: approvedDetectedNewOrders.length,
     });
 
     return res.status(200).json({
@@ -952,6 +1258,8 @@ export default async function handler(req: any, res: any) {
       merged_new_orders_count: mergedProspectsCount,
       avg_order_value: avgOrderValue,
       product_department_sales,
+      product_department_options: productDepartmentOptions,
+      unclassified_products,
       new_orders,
       debug: {
         endpoint: 'dashboard-kpi',

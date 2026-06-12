@@ -1,15 +1,25 @@
 // src/contexts/AuthContext.tsx
 import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Session } from '@supabase/supabase-js';
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { User } from '../types';
 import { perfMark, perfMeasure } from '../lib/perf';
 import { authFetch } from '../lib/authFetch';
+
+type MfaStatus = {
+  currentLevel: 'aal1' | 'aal2' | null;
+  nextLevel: 'aal1' | 'aal2' | null;
+  isEnrolled: boolean;
+  isVerified: boolean;
+};
 
 interface AuthContextType {
   user: User | null;
   logout: () => Promise<void>;
   isLoading: boolean;
+  mfaStatus: MfaStatus | null;
+  isMfaLoading: boolean;
+  refreshMfaStatus: () => Promise<MfaStatus | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,7 +33,11 @@ export function useAuth() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+  const [isMfaLoading] = useState(false);
   const recordedLoginKeyRef = useRef<string | null>(null);
+  const loadedSessionKeyRef = useRef<string | null>(null);
+  const authLoadSeqRef = useRef(0);
 
   const recordLoginUsage = async (session: Session | null) => {
     if (!session?.user) return;
@@ -81,38 +95,99 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   };
 
+  const refreshMfaStatus = async () => {
+    setMfaStatus(null);
+    return null;
+  };
+
+  const getSessionKey = (session: Session | null) => (
+    session?.user ? `${session.user.id}:${session.access_token}` : 'signed-out'
+  );
+
+  const applyAuthSession = async (
+    session: Session | null,
+    label: 'auth:init' | 'auth:change',
+    options: { force?: boolean; trackLogin?: boolean } = {}
+  ) => {
+    const sessionKey = getSessionKey(session);
+
+    if (!options.force && loadedSessionKeyRef.current === sessionKey) {
+      return;
+    }
+
+    loadedSessionKeyRef.current = sessionKey;
+    const loadSeq = authLoadSeqRef.current + 1;
+    authLoadSeqRef.current = loadSeq;
+
+    perfMark(`${label}:start`);
+
+    if (!session?.user) {
+      setUser(null);
+      setMfaStatus(null);
+      setIsLoading(false);
+      perfMark(`${label}:end`);
+      perfMeasure(label, `${label}:start`, `${label}:end`);
+      return;
+    }
+
+    const nextUser = await buildUserFromSession(session);
+
+    if (authLoadSeqRef.current !== loadSeq) {
+      return;
+    }
+
+    setUser(nextUser);
+    setMfaStatus(null);
+    setIsLoading(false);
+    perfMark(`${label}:end`);
+    perfMeasure(label, `${label}:start`, `${label}:end`);
+
+    if (options.trackLogin) {
+      void recordLoginUsage(session);
+    }
+  };
+
+  const shouldHandleAuthChange = (event: AuthChangeEvent, session: Session | null) => {
+    if (event === 'SIGNED_OUT') {
+      return true;
+    }
+
+    if (!session?.user) {
+      return true;
+    }
+
+    if (event === 'TOKEN_REFRESHED') {
+      return false;
+    }
+
+    const sessionKey = getSessionKey(session);
+    return loadedSessionKeyRef.current !== sessionKey;
+  };
+
   useEffect(() => {
     let isMounted = true;
 
     const initializeAuth = async () => {
-      perfMark('auth:init:start');
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
       if (!isMounted) return;
 
-      const user = await buildUserFromSession(session);
-      await recordLoginUsage(session);
-      setUser(user);
-      setIsLoading(false);
-      perfMark('auth:init:end');
-      perfMeasure('auth:init', 'auth:init:start', 'auth:init:end');
+      await applyAuthSession(session, 'auth:init', { trackLogin: true });
     };
 
     initializeAuth();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!shouldHandleAuthChange(event, session)) {
+        return;
+      }
+
       const load = async () => {
-        perfMark('auth:change:start');
-        const user = await buildUserFromSession(session);
-        await recordLoginUsage(session);
-        setUser(user);
-        setIsLoading(false);
-        perfMark('auth:change:end');
-        perfMeasure('auth:change', 'auth:change:start', 'auth:change:end');
+        await applyAuthSession(session, 'auth:change', { trackLogin: event === 'SIGNED_IN' });
       };
 
       load();
@@ -127,10 +202,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     await supabase.auth.signOut();
     setUser(null);
+    setMfaStatus(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, logout, isLoading, mfaStatus, isMfaLoading, refreshMfaStatus }}>
       {children}
     </AuthContext.Provider>
   );

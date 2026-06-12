@@ -31,6 +31,8 @@ content-type: application/json
 | 納品ID | `ireba_delivery_headers` | `内部コード` | upsert |
 | 納品明細 | `ireba_delivery_details` | `内部コード` + `行No` | `内部コード` で削除後 insert |
 
+DBテーブルの業務カラム名は、ファインシステム様のCSV/Excelに記載された `JSONキー` と同じ日本語名にしています。
+
 ## 受注 新規登録・更新
 
 `受注ID` と `受注明細` を同時に送信します。
@@ -138,7 +140,7 @@ content-type: application/json
 ```json
 {
   "success": true,
-  "internal_code": 1001,
+  "内部コード": 1001,
   "detail_count": 1
 }
 ```

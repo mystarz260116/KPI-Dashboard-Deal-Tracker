@@ -1,9 +1,11 @@
 // src/App.tsx
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ReactNode, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import DealInput from './pages/DealInput';
 import DealHistory from './pages/DealHistory';
@@ -16,25 +18,32 @@ import ClinicAssetsDashboard from './pages/ClinicAssetsDashboard';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
+  const from = `${location.pathname}${location.search}`;
+
   if (isLoading) return (
     <div className="flex h-screen items-center justify-center">
       Loading...
     </div>
   );
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace state={{ from }} />;
   return <>{children}</>;
 }
 
 function AuthRedirect({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const redirectPath = typeof location.state?.from === 'string' ? location.state.from : '';
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  const homePath = isMobile || !user?.can_view_dashboard ? '/deals/new' : '/dashboard';
+  const homePath = redirectPath || (isMobile || !user?.can_view_dashboard ? '/deals/new' : '/dashboard');
 
   useEffect(() => {
-    if (!isLoading && user) {
-      navigate(homePath);
+    if (isLoading || !user) {
+      return;
     }
+
+    navigate(homePath);
   }, [user, isLoading, navigate, homePath]);
 
   if (isLoading) return (
@@ -53,6 +62,10 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<AuthRedirect><Login /></AuthRedirect>} />
           <Route path="/signup" element={<AuthRedirect><Signup /></AuthRedirect>} />
+          <Route path="/forgot-password" element={<AuthRedirect><ForgotPassword /></AuthRedirect>} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/mfa/setup" element={<Navigate to="/login" replace />} />
+          <Route path="/mfa/verify" element={<Navigate to="/login" replace />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/deals/new" element={<ProtectedRoute><DealInput /></ProtectedRoute>} />
           <Route path="/deals/history" element={<ProtectedRoute><DealHistory /></ProtectedRoute>} />

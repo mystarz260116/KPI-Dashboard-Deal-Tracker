@@ -112,7 +112,10 @@ export default function Login() {
             ログイン
           </button>
         </form>
-        <div className="mt-6 text-center">
+        <div className="mt-6 space-y-3 text-center">
+          <Link to="/forgot-password" className="block text-sm font-medium text-zinc-600 hover:text-indigo-600">
+            パスワードをお忘れですか？
+          </Link>
           <Link to="/signup" className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
             アカウントをお持ちでない方はこちら（新規登録）
           </Link>

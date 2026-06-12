@@ -29,6 +29,34 @@ export function getYearMonthsBetween(start: Date, end: Date): string[] {
   return months;
 }
 
+export function expandYearMonthFormats(yearMonths: string[]) {
+  const variants = new Set<string>();
+
+  yearMonths.forEach((value) => {
+    const normalized = String(value).trim();
+    if (!normalized) return;
+
+    variants.add(normalized);
+
+    const [year, monthRaw] = normalized.split('-');
+    const monthNumber = Number.parseInt(monthRaw ?? '', 10);
+
+    if (year && Number.isFinite(monthNumber)) {
+      const paddedMonth = String(monthNumber).padStart(2, '0');
+      const shortMonth = new Date(Number(year), monthNumber - 1, 1).toLocaleString('en-US', { month: 'short' });
+      const shortYear = year.slice(-2);
+      variants.add(`${year}/${monthNumber}`);
+      variants.add(`${year}/${paddedMonth}`);
+      variants.add(`${year}-${monthNumber}`);
+      variants.add(`${year}-${paddedMonth}`);
+      variants.add(`${shortMonth}-${shortYear}`);
+      variants.add(`${shortMonth}-${year}`);
+    }
+  });
+
+  return Array.from(variants);
+}
+
 export function getPeriodRange(period: Period) {
   const now = new Date();
 

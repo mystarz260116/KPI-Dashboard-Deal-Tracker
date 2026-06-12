@@ -385,6 +385,7 @@ export default function DealProgressDashboard() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [deals, setDeals] = useState<BoardDeal[]>([]);
+  const [newOrderAmountGoal, setNewOrderAmountGoal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isClosed, setIsClosed] = useState(false);
@@ -477,10 +478,12 @@ export default function DealProgressDashboard() {
         const payload = await response.json();
         setDeals(Array.isArray(payload.deals) ? payload.deals : []);
         setIsClosed(Boolean(payload.is_closed));
+        setNewOrderAmountGoal(Number(payload.new_order_amount_goal ?? 0));
       } catch (loadDealsError) {
         console.error('progress dashboard deals error:', loadDealsError);
         setError('商談進捗の取得に失敗しました');
         setDeals([]);
+        setNewOrderAmountGoal(0);
         setIsClosed(false);
       } finally {
         setIsLoading(false);
@@ -572,6 +575,8 @@ export default function DealProgressDashboard() {
     const totalAmount = COLUMNS.reduce((sum, column) => sum + columnAmountTotals[column.key], 0);
     return {
       totalAmount,
+      goalAmount: newOrderAmountGoal,
+      goalRate: newOrderAmountGoal > 0 ? Math.round((totalAmount / newOrderAmountGoal) * 100) : 0,
       columns: COLUMNS.map((column) => ({
         ...column,
         count: groupedDeals[column.key].length,
@@ -579,7 +584,7 @@ export default function DealProgressDashboard() {
         ratio: totalAmount > 0 ? Math.round((columnAmountTotals[column.key] / totalAmount) * 100) : 0,
       })),
     };
-  }, [columnAmountTotals, groupedDeals]);
+  }, [columnAmountTotals, groupedDeals, newOrderAmountGoal]);
 
   const canEditDeal = (deal: BoardDeal) => (
     !isClosed
@@ -851,6 +856,19 @@ export default function DealProgressDashboard() {
                 <p className="pb-1 text-xs font-semibold text-zinc-500">
                   受注予定額/月 合計
                 </p>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold">
+                <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">
+                  目標 ¥{portfolioSummary.goalAmount.toLocaleString()}
+                </span>
+                <span className={`rounded-full px-3 py-1 ${
+                  portfolioSummary.goalAmount > 0 && portfolioSummary.goalRate >= 100
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-zinc-100 text-zinc-600'
+                }`}
+                >
+                  達成率 {portfolioSummary.goalAmount > 0 ? `${portfolioSummary.goalRate}%` : '-'}
+                </span>
               </div>
             </div>
 

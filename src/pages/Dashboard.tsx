@@ -64,6 +64,21 @@ interface ProductDepartmentPanelItem {
   change_rate?: number | null;
 }
 
+interface ProductDepartmentOption {
+  id: string;
+  department_id: number;
+  name: string;
+}
+
+interface UnclassifiedProductItem {
+  key: string;
+  department_id: number;
+  department_name: string;
+  normalized_product_code: string;
+  normalized_product_name: string;
+  sales: number;
+}
+
 interface DealCommentNotification {
   id: string;
   deal_id: string;
@@ -291,6 +306,10 @@ export default function Dashboard() {
   const [isLoadingCommentNotifications, setIsLoadingCommentNotifications] = useState(false);
   const [commentNotificationError, setCommentNotificationError] = useState('');
   const [isCommentNotificationsOpen, setIsCommentNotificationsOpen] = useState(false);
+  const [productDepartmentAssignments, setProductDepartmentAssignments] = useState<Record<string, string>>({});
+  const [savingProductAssignmentKey, setSavingProductAssignmentKey] = useState('');
+  const [productAssignmentMessage, setProductAssignmentMessage] = useState('');
+  const [dashboardReloadKey, setDashboardReloadKey] = useState(0);
   const [perfStats, setPerfStats] = useState<{
     kpiMs: number;
     kpiStatus: number;
@@ -310,6 +329,8 @@ export default function Dashboard() {
   );
   const departmentOptions = departments.length > 0 ? departments : userDepartmentOptions;
   const productDepartmentSales: ProductDepartmentPanelItem[] = data?.product_department_sales ?? [];
+  const productDepartmentOptions: ProductDepartmentOption[] = data?.product_department_options ?? [];
+  const unclassifiedProducts: UnclassifiedProductItem[] = data?.unclassified_products ?? [];
   const performanceRanking: PerformanceRankingItem[] = data?.performance_ranking ?? [];
   const scopedUsers = selectedDept
     ? users.filter((u) => String(u.department_id ?? '') === selectedDept)
@@ -686,7 +707,7 @@ export default function Dashboard() {
     };
 
     fetchDashboardData();
-  }, [appliedPeriod, appliedGranularity, appliedDept, appliedUser, appliedFromDate, appliedToDate, appliedSalesImportDataKind]);
+  }, [appliedPeriod, appliedGranularity, appliedDept, appliedUser, appliedFromDate, appliedToDate, appliedSalesImportDataKind, dashboardReloadKey]);
   const handleApplyFilters = () => {
     setAppliedPeriod(period);
     setAppliedGranularity(granularity);
@@ -695,6 +716,53 @@ export default function Dashboard() {
     setAppliedDept(selectedDept);
     setAppliedUser(selectedUser);
     setAppliedSalesImportDataKind(salesImportDataKind);
+  };
+
+  const assignProductDepartment = async (item: UnclassifiedProductItem) => {
+    const productDepartmentId = productDepartmentAssignments[item.key];
+    if (!productDepartmentId) {
+      setProductAssignmentMessage('商品部門を選択してください。');
+      return;
+    }
+
+    setSavingProductAssignmentKey(item.key);
+    setProductAssignmentMessage('');
+
+    try {
+      const response = await authFetch('/api/import/product-categories/upsert', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rows: [{
+            department_id: item.department_id,
+            product_department_id: productDepartmentId,
+            normalized_product_code: item.normalized_product_code,
+            normalized_product_name: item.normalized_product_name || item.normalized_product_code,
+            sort_order: 0,
+          }],
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error ?? '商品部門マスタへの追加に失敗しました。');
+      }
+
+      setProductAssignmentMessage('商品部門マスタに追加しました。');
+      setProductDepartmentAssignments((current) => {
+        const next = { ...current };
+        delete next[item.key];
+        return next;
+      });
+      setDashboardReloadKey((current) => current + 1);
+    } catch (err: any) {
+      console.error('product department assignment error:', err);
+      setProductAssignmentMessage(err?.message ?? '商品部門マスタへの追加に失敗しました。');
+    } finally {
+      setSavingProductAssignmentKey('');
+    }
   };
 
   const parseCsvLine = (line: string) => {
@@ -1285,7 +1353,10 @@ export default function Dashboard() {
               className="rounded-xl bg-white p-6 shadow-sm">
               <SectionTitle title={appliedSalesImportDataKind === 'order' ? '受注額合計' : '売上合計'} color="#10b981" />
               <p className="text-4xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
-              <p className="mt-2 text-sm text-zinc-500">前期間比 {formatChangeRate(data?.sales.change_rate)}%</p>
+              <p className="mt-2 text-sm text-zinc-500">
+                前年同期間比 {formatChangeRate(data?.sales.change_rate)}%
+                <span className="ml-2">前年同期間 ¥{(data?.sales.prev_sales ?? 0).toLocaleString()}</span>
+              </p>
             </motion.div>
 
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
@@ -1304,7 +1375,7 @@ export default function Dashboard() {
         </section>
 
         <section className="mb-8">
-          <SectionGroupTitle title="商品部門別" description="商品マスターにひもづく部門別に、売上の構成と前期間比を見られるようにしています。" />
+          <SectionGroupTitle title="商品部門別" description="商品マスターにひもづく部門別に、売上の構成と前年同期間比を見られるようにしています。" />
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
             className="rounded-xl bg-white p-6 shadow-sm">
             <SectionTitle title="商品部門別売上" color="#14b8a6" />
@@ -1316,7 +1387,7 @@ export default function Dashboard() {
                     <p className="mt-2 text-3xl font-bold text-zinc-900">¥{(item.sales ?? 0).toLocaleString()}</p>
                     <div className="mt-3 flex items-center justify-between text-sm text-zinc-500">
                       <span>構成比 {(item.share ?? 0).toFixed(1)}%</span>
-                      <span>前期間比 {formatChangeRate(item.change_rate)}%</span>
+                      <span>前年同期間比 {formatChangeRate(item.change_rate)}%</span>
                     </div>
                   </div>
                 ))}
@@ -1324,6 +1395,77 @@ export default function Dashboard() {
             ) : (
               <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-5 py-8 text-sm text-zinc-500">
                 商品マスターにひもづく売上がまだありません。商品分類マスターの設定後に、部門名ごとの売上・構成比・前期間比が表示されます。
+              </div>
+            )}
+            {unclassifiedProducts.length > 0 && (
+              <div className="mt-6 border-t border-zinc-100 pt-5">
+                <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <h3 className="text-sm font-black text-zinc-900">未分類商品の割当</h3>
+                    <p className="mt-1 text-xs text-zinc-500">選択した内容は商品部門マスタへ追加されます</p>
+                  </div>
+                  {productAssignmentMessage && (
+                    <p className="text-xs font-semibold text-zinc-600">{productAssignmentMessage}</p>
+                  )}
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-zinc-200">
+                  <table className="min-w-full divide-y divide-zinc-200 text-sm">
+                    <thead className="bg-zinc-50 text-left text-xs font-bold text-zinc-500">
+                      <tr>
+                        <th className="px-4 py-3">部署</th>
+                        <th className="px-4 py-3">商品コード</th>
+                        <th className="px-4 py-3">商品名</th>
+                        <th className="px-4 py-3 text-right">売上</th>
+                        <th className="px-4 py-3">商品部門</th>
+                        <th className="px-4 py-3 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100 bg-white">
+                      {unclassifiedProducts.map((item) => {
+                        const scopedProductDepartments = productDepartmentOptions.filter(
+                          (option) => option.department_id === item.department_id
+                        );
+                        const isSaving = savingProductAssignmentKey === item.key;
+
+                        return (
+                          <tr key={item.key}>
+                            <td className="px-4 py-3 font-semibold text-zinc-700">{item.department_name || item.department_id}</td>
+                            <td className="px-4 py-3 font-mono text-zinc-700">{item.normalized_product_code}</td>
+                            <td className="max-w-[280px] truncate px-4 py-3 font-semibold text-zinc-900">
+                              {item.normalized_product_name || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right font-black text-zinc-900">¥{item.sales.toLocaleString()}</td>
+                            <td className="px-4 py-3">
+                              <select
+                                value={productDepartmentAssignments[item.key] ?? ''}
+                                onChange={(event) => setProductDepartmentAssignments((current) => ({
+                                  ...current,
+                                  [item.key]: event.target.value,
+                                }))}
+                                className="w-full min-w-[180px] rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                              >
+                                <option value="">選択</option>
+                                {scopedProductDepartments.map((option) => (
+                                  <option key={option.id} value={option.id}>{option.name}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                disabled={isSaving || !productDepartmentAssignments[item.key]}
+                                onClick={() => assignProductDepartment(item)}
+                                className="rounded-md bg-teal-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                              >
+                                {isSaving ? '保存中' : '追加'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </motion.div>
@@ -1400,6 +1542,8 @@ export default function Dashboard() {
                   <tr className="border-b border-zinc-200 text-left text-zinc-500">
                     <th className="pb-2 font-medium">医院名</th>
                     <th className="pb-2 font-medium">営業担当</th>
+                    <th className="pb-2 font-medium">種別</th>
+                    <th className="pb-2 text-right font-medium">金額</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1423,6 +1567,19 @@ export default function Dashboard() {
                           )}
                         </td>
                         <td className="py-2 text-zinc-700">{o.sales}</td>
+                        <td className="py-2">
+                          <span className={`rounded-full px-2 py-1 text-xs font-bold ${
+                            o.source === 'clinic_asset'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-violet-50 text-violet-700'
+                          }`}
+                          >
+                            {o.source_label ?? (o.source === 'clinic_asset' ? '受注明細' : '商談')}
+                          </span>
+                        </td>
+                        <td className="py-2 text-right font-semibold text-zinc-700">
+                          {Number(o.amount ?? 0) > 0 ? `¥${Number(o.amount).toLocaleString()}` : '-'}
+                        </td>
                       </tr>
                     );
                   })}

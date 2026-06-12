@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from '../../../api/_lib/newOrderDates.js';
+import { expandYearMonthFormats } from '../../lib/dateUtils.js';
 
 type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'won' | 'lost';
 type DealLifecycle = 'all' | 'new' | 'existing';
@@ -49,6 +50,7 @@ type DealBoardStateRow = {
 };
 
 type BoardDeal = ReturnType<typeof mapBoardDeal>;
+const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 
 const DEAL_BOARD_SELECT = `
   id,
@@ -249,6 +251,69 @@ async function fetchMergedCustomerNameMap(rows: DealRow[]) {
   return mergedCustomerNameMap;
 }
 
+async function fetchNewOrderAmountGoal({
+  month,
+  userId,
+  departmentId,
+}: {
+  month: string;
+  userId: string;
+  departmentId: number | null;
+}) {
+  const monthKeys = expandYearMonthFormats([month]);
+  let query = supabaseAdmin
+    .from('budgets')
+    .select('user_id, department_id, target_year_month, "KPI_new_order_amount"')
+    .in('target_year_month', monthKeys);
+
+  if (userId) {
+    query = query.eq('user_id', userId);
+  }
+
+  if (departmentId !== null) {
+    query = query.eq('department_id', departmentId);
+  }
+
+  const { data: budgetRows, error: budgetError } = await query;
+  if (budgetError) {
+    throw budgetError;
+  }
+
+  const profileIds = Array.from(new Set(
+    (budgetRows ?? [])
+      .map((row: any) => String(row.user_id ?? '').trim())
+      .filter(Boolean)
+  ));
+
+  let allowedProfileIds = new Set(profileIds);
+  if (profileIds.length > 0) {
+    const { data: profileRows, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, departments(name)')
+      .in('id', profileIds);
+
+    if (profileError) {
+      throw profileError;
+    }
+
+    allowedProfileIds = new Set(
+      (profileRows ?? [])
+        .filter((row: any) => !EXCLUDED_DASHBOARD_DEPARTMENTS.has(row.departments?.name ?? ''))
+        .map((row: any) => String(row.id))
+    );
+  }
+
+  return (budgetRows ?? []).reduce((sum: number, row: any) => {
+    const profileId = String(row.user_id ?? '').trim();
+    if (profileId && !allowedProfileIds.has(profileId)) {
+      return sum;
+    }
+
+    const amount = Number(row.KPI_new_order_amount ?? 0);
+    return sum + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
 function mapBoardDeal(row: DealRow, mergedCustomerNameMap: Map<string, string>, pipelineStage: DealPipelineStage) {
   const lifecycleType: DealLifecycle = row.prospect_customer_id ? 'new' : 'existing';
   const assignedProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
@@ -326,6 +391,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userId = String(req.query.userId ?? '').trim();
     const departmentId = parseDepartmentId(req.query.departmentId);
     const monthStart = `${month}-01`;
+    const newOrderAmountGoal = await fetchNewOrderAmountGoal({ month, userId, departmentId });
 
     const { data: closure, error: closureError } = await supabaseAdmin
       .from('deal_board_month_closures')
@@ -356,7 +422,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ));
 
       if (baseDealIds.length === 0) {
-        return res.status(200).json({ month, lifecycle, is_closed: true, deals: [] });
+        return res.status(200).json({ month, lifecycle, is_closed: true, deals: [], new_order_amount_goal: Math.round(newOrderAmountGoal) });
       }
 
       const { data: dealRows, error: dealRowsError } = await supabaseAdmin
@@ -418,6 +484,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lifecycle,
         is_closed: true,
         deals: filteredDeals,
+        new_order_amount_goal: Math.round(newOrderAmountGoal),
       });
     }
 
@@ -582,6 +649,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       lifecycle,
       is_closed: false,
       deals: deals.filter((deal) => matchesFilters(deal, lifecycle, userId, departmentId)),
+      new_order_amount_goal: Math.round(newOrderAmountGoal),
     });
   } catch (error) {
     console.error('deals board api unexpected error:', error);
