@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
+import { normalizeCustomerCode, normalizeCustomerName } from '../../lib/customerCode.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
 const EXCLUDED_SALES_EXTERNAL_STAFF_CODES = new Set(['100', '102', '9999']);
@@ -166,42 +167,70 @@ async function fetchPriorSalesCustomerCodes({
     return new Set<string>();
   }
 
+  const dataKindsToCheck = Array.from(new Set([dataKind, dataKind === 'order' ? 'delivery' : 'order']));
+  const rpcResults = await Promise.all(
+    dataKindsToCheck.map((kind) => supabaseAdmin
+      .rpc('sales_prior_customer_codes', {
+        p_start_date: startDate,
+        p_end_date: endExclusiveDate,
+        p_department_ids: departmentIds,
+        p_external_staff_codes: externalStaffCodes,
+        p_customer_codes: customerCodes,
+        p_data_kind: kind,
+      }))
+  );
+
+  const rpcError = rpcResults.find((result) => result.error)?.error;
+  if (!rpcError) {
+    return new Set(
+      rpcResults
+        .flatMap((result) => result.data ?? [])
+        .map((row: any) => normalizeCustomerCode(row.customer_code))
+        .filter(Boolean)
+    );
+  }
+
+  console.warn('detected new order prior customer rpc fallback:', rpcError.message ?? rpcError);
+
   const result = new Set<string>();
-  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
   const customerChunkSize = 80;
 
-  for (let index = 0; index < customerCodes.length; index += customerChunkSize) {
-    const customerChunk = customerCodes.slice(index, index + customerChunkSize);
-    let from = 0;
+  for (const kind of dataKindsToCheck) {
+    const dateColumn = kind === 'order' ? 'order_date' : 'delivery_date';
 
-    while (true) {
-      const { data, error } = await supabaseAdmin
-        .from('sales_import_rows')
-        .select('customer_code')
-        .eq('data_kind', dataKind)
-        .gte(dateColumn, startDate)
-        .lt(dateColumn, endExclusiveDate)
-        .in('department_id', departmentIds)
-        .in('external_staff_code', externalStaffCodes)
-        .in('customer_code', customerChunk)
-        .range(from, from + 999);
+    for (let index = 0; index < customerCodes.length; index += customerChunkSize) {
+      const customerChunk = customerCodes.slice(index, index + customerChunkSize);
+      let from = 0;
 
-      if (error) {
-        throw error;
-      }
+      while (true) {
+        const { data, error } = await supabaseAdmin
+          .from('sales_import_rows')
+          .select('customer_code')
+          .eq('data_kind', kind)
+          .gte(dateColumn, startDate)
+          .lt(dateColumn, endExclusiveDate)
+          .in('department_id', departmentIds)
+          .in('external_staff_code', externalStaffCodes)
+          .in('customer_code', customerChunk)
+          .range(from, from + 999);
 
-      (data ?? []).forEach((row: any) => {
-        const customerCode = String(row.customer_code ?? '').trim();
-        if (customerCode) {
-          result.add(customerCode);
+        if (error) {
+          throw error;
         }
-      });
 
-      if ((data ?? []).length < 1000) {
-        break;
+        (data ?? []).forEach((row: any) => {
+          const customerCode = normalizeCustomerCode(row.customer_code);
+          if (customerCode) {
+            result.add(customerCode);
+          }
+        });
+
+        if ((data ?? []).length < 1000) {
+          break;
+        }
+
+        from += 1000;
       }
-
-      from += 1000;
     }
   }
 
@@ -318,7 +347,7 @@ export async function fetchDetectedNewOrderCandidates(profile: any, query: Recor
   }>();
 
   rows.forEach((row) => {
-    const customerCode = String(row.customer_code ?? '').trim();
+    const customerCode = normalizeCustomerCode(row.customer_code);
     if (!customerCode) return;
 
     const rawDate = normalizeSalesRowDate(dataKind === 'order' ? row.order_date : row.delivery_date);
@@ -329,7 +358,7 @@ export async function fetchDetectedNewOrderCandidates(profile: any, query: Recor
 
     const current = byCustomer.get(customerCode) ?? {
       customer_code: customerCode,
-      customer_name: String(row.customer_name ?? '').trim() || customerCode,
+      customer_name: normalizeCustomerName(row.customer_name, customerCode),
       department_id: Number.isFinite(Number(row.department_id)) ? Number(row.department_id) : null,
       user_id: profileIdByDepartmentStaffCode.get(`${row.department_id ?? ''}|${String(row.external_staff_code ?? '').trim()}`) ?? null,
       amount: 0,
@@ -342,7 +371,7 @@ export async function fetchDetectedNewOrderCandidates(profile: any, query: Recor
       current.ordered_at = rawDate;
     }
     if (!current.customer_name || current.customer_name === current.customer_code) {
-      current.customer_name = String(row.customer_name ?? '').trim() || current.customer_code;
+      current.customer_name = normalizeCustomerName(row.customer_name, current.customer_code);
     }
 
     byCustomer.set(customerCode, current);

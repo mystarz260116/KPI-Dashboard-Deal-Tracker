@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
+import { normalizeCustomerCode } from '../src/lib/customerCode.js';
 import { requireAuthenticatedProfile } from './_lib/auth.js';
 
 function parseClinicKind(value: unknown) {
@@ -25,7 +26,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!profile) return;
 
     const kind = parseClinicKind(req.query.kind);
-    const clinicId = String(req.query.id ?? '').trim();
+    const rawClinicId = String(req.query.id ?? '').trim();
+    const clinicId = kind === 'customer' ? normalizeCustomerCode(rawClinicId) : rawClinicId;
     const month = parseMonth(req.query.month);
 
     if (!kind || !clinicId) {
@@ -94,7 +96,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       delivery_date: string | null;
       product_name: string;
       detail_category: string | null;
-      patient_name: string | null;
       quantity: number;
       amount: number;
     }> = [];
@@ -184,7 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (sourceRawIds.length > 0) {
         const { data: rawRows, error: rawRowsError } = await supabaseAdmin
           .from('sales_import_raw_rows')
-          .select('id, 補綴物名, 明細区分, 数量, 患者名')
+          .select('id, 補綴物名, 明細区分, 数量')
           .in('id', sourceRawIds);
 
         if (rawRowsError) {
@@ -212,7 +213,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               || String(raw?.['明細区分'] ?? '').trim()
               || '未設定',
             detail_category: raw?.['明細区分'] ? String(raw['明細区分']) : null,
-            patient_name: raw?.['患者名'] ? String(raw['患者名']) : null,
             quantity: Number.isFinite(quantity) ? quantity : 0,
             amount: safeAmount,
           };

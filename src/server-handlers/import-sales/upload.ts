@@ -13,6 +13,17 @@ import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js
 // when inserted.
 type RawSalesImportRow = Record<string, any>;
 
+const REDACTED_RAW_COLUMNS = new Set(['患者名']);
+
+function redactSalesImportRow(row: RawSalesImportRow): RawSalesImportRow {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key,
+      REDACTED_RAW_COLUMNS.has(key) ? '' : value,
+    ])
+  );
+}
+
 async function insertSalesImportRawRows(rows: RawSalesImportRow[]) {
   if (!rows.length) {
     return { inserted_count: 0 };
@@ -22,7 +33,7 @@ async function insertSalesImportRawRows(rows: RawSalesImportRow[]) {
   let insertedCount = 0;
 
   for (let index = 0; index < rows.length; index += chunkSize) {
-    const chunk = rows.slice(index, index + chunkSize);
+    const chunk = rows.slice(index, index + chunkSize).map(redactSalesImportRow);
     const insertResult = await supabaseAdmin
       .from(SALES_IMPORT_RAW_TABLE)
       .insert(chunk);
@@ -65,7 +76,7 @@ export default async function handler(req: any, res: any) {
     const dataKind = normalizeSalesImportDataKind(req.body?.data_kind);
 
     const rowsWithBatch = rows.map((r) => ({
-      ...r,
+      ...redactSalesImportRow(r),
       data_kind: dataKind,
       department_id: departmentId,
       import_batch_id: batchId,

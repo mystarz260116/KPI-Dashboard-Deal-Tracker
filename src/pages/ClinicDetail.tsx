@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { motion } from 'motion/react';
 import { authFetch } from '../lib/authFetch';
+import { normalizeCustomerCode } from '../lib/customerCode';
 import {
   ArrowLeft, Building2, CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Link2, LogOut, MapPin, Phone, Trash2,
 } from 'lucide-react';
@@ -46,7 +47,6 @@ interface SalesDetail {
   delivery_date: string | null;
   product_name: string;
   detail_category: string | null;
-  patient_name: string | null;
   quantity: number;
   amount?: number;
 }
@@ -154,7 +154,8 @@ export default function ClinicDetail() {
       setError('');
 
       try {
-        const clinicId = decodeURIComponent(params.clinicId);
+        const rawClinicId = decodeURIComponent(params.clinicId);
+        const clinicId = params.kind === 'customer' ? normalizeCustomerCode(rawClinicId) : rawClinicId;
         const clinicApiPromise = authFetch(`/api/clinic?kind=${params.kind}&id=${encodeURIComponent(clinicId)}&month=${salesMonth}`);
 
         const dealsQuery = supabase
@@ -315,7 +316,8 @@ export default function ClinicDetail() {
       return;
     }
 
-    const clinicId = decodeURIComponent(params.clinicId);
+    const rawClinicId = decodeURIComponent(params.clinicId);
+    const clinicId = params.kind === 'customer' ? normalizeCustomerCode(rawClinicId) : rawClinicId;
     const recordKey = `${user.id}:${params.kind}:${clinicId}`;
     if (recordedViewKeyRef.current === recordKey) {
       return;
@@ -788,7 +790,6 @@ export default function ClinicDetail() {
                           <th className="px-4 py-3 font-medium">納品日</th>
                           <th className="px-4 py-3 font-medium">商品</th>
                           <th className="px-4 py-3 font-medium">区分</th>
-                          <th className="px-4 py-3 font-medium">患者名</th>
                           <th className="px-4 py-3 text-right font-medium">数量</th>
                           <th className="px-4 py-3 text-right font-medium">金額</th>
                         </tr>
@@ -799,7 +800,6 @@ export default function ClinicDetail() {
                             <td className="px-4 py-3 text-zinc-600">{row.delivery_date ?? '-'}</td>
                             <td className="px-4 py-3 font-medium text-zinc-900">{row.product_name}</td>
                             <td className="px-4 py-3 text-zinc-600">{row.detail_category ?? '-'}</td>
-                            <td className="px-4 py-3 text-zinc-600">{row.patient_name ?? '-'}</td>
                             <td className="px-4 py-3 text-right text-zinc-600">{row.quantity.toLocaleString()}</td>
                             <td className="px-4 py-3 text-right font-semibold text-zinc-900">¥{row.amount.toLocaleString()}</td>
                           </tr>

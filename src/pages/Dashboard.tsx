@@ -56,6 +56,8 @@ const IMPORT_DATA_KIND_LABEL: Record<ImportDataKind, string> = {
   order: '受注データ',
 };
 
+const SALES_IMPORT_REDACTED_COLUMNS = new Set(['患者名']);
+
 interface ProductDepartmentPanelItem {
   key: string;
   label: string;
@@ -861,7 +863,7 @@ export default function Dashboard() {
 
     const cells = parseCsvLine(trimmedLine);
     const row = headers.reduce<Record<string, string>>((result, header, index) => {
-      result[header] = cells[index] ?? '';
+      result[header] = SALES_IMPORT_REDACTED_COLUMNS.has(header) ? '' : cells[index] ?? '';
       return result;
     }, {});
 

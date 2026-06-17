@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
+import { normalizeCustomerCode, normalizeCustomerName } from '../../lib/customerCode.js';
 import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
@@ -20,6 +21,105 @@ function normalizeAmount(value: unknown) {
   return Number.isFinite(amount) ? Math.round(amount) : 0;
 }
 
+function addMonths(value: string, diff: number) {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1 + diff, day || 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function monthStart(value: string) {
+  return `${value.slice(0, 7)}-01`;
+}
+
+async function fetchExistingCustomerDeal(customerCode: string) {
+  const { data, error } = await supabaseAdmin
+    .from('deals')
+    .select('id, notes')
+    .eq('customer_code', customerCode)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  return (data ?? [])[0] ?? null;
+}
+
+async function hasPriorSales(customerCode: string, detectedMonth: string) {
+  const targetStart = monthStart(detectedMonth);
+  const lookbackStart = addMonths(targetStart, -12);
+
+  const [deliveryResult, orderResult] = await Promise.all([
+    supabaseAdmin
+      .from('sales_import_rows')
+      .select('source_raw_id')
+      .eq('customer_code', customerCode)
+      .eq('data_kind', 'delivery')
+      .gte('delivery_date', lookbackStart)
+      .lt('delivery_date', targetStart)
+      .limit(1),
+    supabaseAdmin
+      .from('sales_import_rows')
+      .select('source_raw_id')
+      .eq('customer_code', customerCode)
+      .eq('data_kind', 'order')
+      .gte('order_date', lookbackStart)
+      .lt('order_date', targetStart)
+      .limit(1),
+  ]);
+
+  if (deliveryResult.error) throw deliveryResult.error;
+  if (orderResult.error) throw orderResult.error;
+
+  return (deliveryResult.data ?? []).length > 0 || (orderResult.data ?? []).length > 0;
+}
+
+async function rejectInvalidDetectedOrder({
+  dataKind,
+  detectedMonth,
+  customerCode,
+  customerName,
+  departmentId,
+  userId,
+  amount,
+  orderedAt,
+  profileId,
+}: {
+  dataKind: 'delivery' | 'order';
+  detectedMonth: string;
+  customerCode: string;
+  customerName: string;
+  departmentId: number;
+  userId: string;
+  amount: number;
+  orderedAt: string | null;
+  profileId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from('detected_new_orders')
+    .upsert({
+      source: 'sales_import',
+      data_kind: dataKind,
+      detected_month: detectedMonth,
+      customer_code: customerCode,
+      customer_name: customerName,
+      department_id: Number.isFinite(departmentId) ? departmentId : null,
+      user_id: userId || null,
+      amount,
+      ordered_at: orderedAt,
+      status: 'rejected',
+      approved_by: null,
+      approved_at: null,
+      rejected_by: profileId,
+      rejected_at: new Date().toISOString(),
+      created_deal_id: null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'source,data_kind,detected_month,customer_code' })
+    .select('id, status, created_deal_id')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -33,8 +133,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = String(body.action ?? 'approve').trim();
     const dataKind = normalizeSalesImportDataKind(body.data_kind);
     const detectedMonth = normalizeMonth(body.detected_month);
-    const customerCode = String(body.customer_code ?? '').trim();
-    const customerName = String(body.customer_name ?? body.clinic ?? '').trim() || customerCode;
+    const rawCustomerCode = String(body.customer_code ?? '').trim();
+    const customerCode = normalizeCustomerCode(rawCustomerCode);
+    const customerName = normalizeCustomerName(body.customer_name ?? body.clinic, customerCode);
     const userId = String(body.user_id ?? '').trim();
     const departmentId = Number(body.department_id);
     const amount = normalizeAmount(body.amount);
@@ -120,6 +221,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       return res.status(200).json({ ok: true, detected_new_order: existingCandidate, skipped: true });
+    }
+
+    const [existingDeal, hasPriorCustomerSales] = await Promise.all([
+      fetchExistingCustomerDeal(customerCode),
+      hasPriorSales(customerCode, detectedMonth),
+    ]);
+
+    if (existingDeal || hasPriorCustomerSales) {
+      const rejectedCandidate = await rejectInvalidDetectedOrder({
+        dataKind,
+        detectedMonth,
+        customerCode,
+        customerName,
+        departmentId,
+        userId,
+        amount,
+        orderedAt,
+        profileId: profile.id,
+      });
+
+      return res.status(200).json({
+        ok: true,
+        detected_new_order: rejectedCandidate,
+        skipped: true,
+        reason: existingDeal ? 'existing_deal' : 'prior_sales',
+      });
     }
 
     const { data: insertedDeal, error: dealInsertError } = await supabaseAdmin

@@ -298,12 +298,10 @@ export default function ClinicAssetsDashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const [period, setPeriod] = useState<AssetPeriod>('3m');
   const [targetMonth, setTargetMonth] = useState(getCurrentMonth);
   const [dataKind, setDataKind] = useState<ImportDataKind>('delivery');
   const [selectedDepartmentId, setSelectedDepartmentId] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
-  const [appliedPeriod, setAppliedPeriod] = useState<AssetPeriod>('3m');
   const [appliedTargetMonth, setAppliedTargetMonth] = useState(getCurrentMonth);
   const [appliedDataKind, setAppliedDataKind] = useState<ImportDataKind>('delivery');
   const [appliedDepartmentId, setAppliedDepartmentId] = useState('');
@@ -344,7 +342,6 @@ export default function ClinicAssetsDashboard() {
       try {
         const params = new URLSearchParams({
           path: 'clinic-assets',
-          period: appliedPeriod,
           month: appliedTargetMonth,
           data_kind: appliedDataKind,
         });
@@ -447,7 +444,7 @@ export default function ClinicAssetsDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [appliedDataKind, appliedDepartmentId, appliedPeriod, appliedTargetMonth, appliedUserId]);
+  }, [appliedDataKind, appliedDepartmentId, appliedTargetMonth, appliedUserId]);
 
   const sortedDepartments = useMemo(
     () => [...departments].sort((a, b) => a.name.localeCompare(b.name, 'ja')),
@@ -641,7 +638,6 @@ export default function ClinicAssetsDashboard() {
   };
 
   const handleApplyFilters = () => {
-    setAppliedPeriod(period);
     setAppliedTargetMonth(targetMonth);
     setAppliedDataKind(dataKind);
     setAppliedDepartmentId(selectedDepartmentId);
@@ -820,27 +816,6 @@ export default function ClinicAssetsDashboard() {
                     className={`rounded-md px-4 py-2 text-sm font-bold transition ${
                       dataKind === option.value
                         ? 'bg-white text-indigo-700 shadow-sm'
-                        : 'text-zinc-500 hover:text-zinc-800'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex gap-1 rounded-lg bg-zinc-100 p-1">
-                {([
-                  { value: '3m', label: '3か月' },
-                  { value: '6m', label: '6か月' },
-                  { value: '12m', label: '12か月' },
-                ] as const).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setPeriod(option.value)}
-                    className={`rounded-md px-4 py-2 text-sm font-bold transition ${
-                      period === option.value
-                        ? 'bg-zinc-900 text-white shadow-sm'
                         : 'text-zinc-500 hover:text-zinc-800'
                     }`}
                   >

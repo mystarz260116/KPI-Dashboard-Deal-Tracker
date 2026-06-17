@@ -19,8 +19,10 @@ content-type: application/json
 | --- | --- |
 | 受注 新規登録・更新 | `POST https://xgsusqvtjqwyhfcrssbg.supabase.co/functions/v1/ireba-sync/orders/upsert` |
 | 受注 削除 | `POST https://xgsusqvtjqwyhfcrssbg.supabase.co/functions/v1/ireba-sync/orders/delete` |
+| 受注 確認 | `POST https://xgsusqvtjqwyhfcrssbg.supabase.co/functions/v1/ireba-sync/orders/check` |
 | 納品 新規登録・更新 | `POST https://xgsusqvtjqwyhfcrssbg.supabase.co/functions/v1/ireba-sync/deliveries/upsert` |
 | 納品 削除 | `POST https://xgsusqvtjqwyhfcrssbg.supabase.co/functions/v1/ireba-sync/deliveries/delete` |
+| 納品 確認 | `POST https://xgsusqvtjqwyhfcrssbg.supabase.co/functions/v1/ireba-sync/deliveries/check` |
 
 ## 保存先テーブル
 
@@ -72,6 +74,40 @@ DBテーブルの業務カラム名は、ファインシステム様のCSV/Excel
 2. `受注明細` は同じ `内部コード` の既存行を削除します。
 3. 送信された `受注明細` を insert します。
 
+大量差分を送信する場合もURLは同じです。`items` 配列に複数伝票を入れて送信できます。
+1リクエストあたりの上限は500件です。数千〜数万件の差分は、500件以下に分割して複数回送信してください。
+
+```json
+{
+  "items": [
+    {
+      "受注ID": {
+        "内部コード": 1001,
+        "受注番号": "ORD-001",
+        "受注日": "2026-06-15",
+        "得意先コード": "C001"
+      },
+      "受注明細": [
+        {
+          "内部コード": 1001,
+          "行No": 1,
+          "補綴物コード": "P001"
+        }
+      ]
+    },
+    {
+      "受注ID": {
+        "内部コード": 1002,
+        "受注番号": "ORD-002",
+        "受注日": "2026-06-15",
+        "得意先コード": "C002"
+      },
+      "受注明細": []
+    }
+  ]
+}
+```
+
 ## 納品 新規登録・更新
 
 `納品ID` と `納品明細` を同時に送信します。
@@ -111,9 +147,34 @@ DBテーブルの業務カラム名は、ファインシステム様のCSV/Excel
 2. `納品明細` は同じ `内部コード` の既存行を削除します。
 3. 送信された `納品明細` を insert します。
 
+大量差分を送信する場合もURLは同じです。`items` 配列に複数伝票を入れて送信できます。
+1リクエストあたりの上限は500件です。数千〜数万件の差分は、500件以下に分割して複数回送信してください。
+
+```json
+{
+  "items": [
+    {
+      "納品ID": {
+        "内部コード": 2001,
+        "納品日": "2026-06-15",
+        "得意先コード": "C001"
+      },
+      "納品明細": [
+        {
+          "内部コード": 2001,
+          "行No": 1,
+          "補綴物コード": "P001"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ## 削除
 
 削除対象の `内部コード` をJSON配列で送信します。
+大量削除の場合もURLは同じで、`内部コード` 配列に複数件を指定します。
 
 受注削除:
 
@@ -133,15 +194,123 @@ DBテーブルの業務カラム名は、ファインシステム様のCSV/Excel
 
 削除時はヘッダーテーブルを削除します。明細テーブルは外部キーの cascade により削除されます。
 
-## レスポンス例
+## 登録内容確認
 
-成功:
+登録・更新・削除後の確認用に、`内部コード` を指定して登録済みデータを取得できます。
+
+受注確認:
+
+```json
+{
+  "内部コード": 1001
+}
+```
+
+レスポンス例:
 
 ```json
 {
   "success": true,
+  "exists": true,
   "内部コード": 1001,
-  "detail_count": 1
+  "受注ID": {
+    "内部コード": 1001,
+    "受注番号": "ORD-001"
+  },
+  "受注明細": [
+    {
+      "内部コード": 1001,
+      "行No": 1
+    }
+  ]
+}
+```
+
+納品確認:
+
+```json
+{
+  "内部コード": 2001
+}
+```
+
+レスポンス例:
+
+```json
+{
+  "success": true,
+  "exists": true,
+  "内部コード": 2001,
+  "納品ID": {
+    "内部コード": 2001,
+    "納品日": "2026-06-15"
+  },
+  "納品明細": [
+    {
+      "内部コード": 2001,
+      "行No": 1
+    }
+  ]
+}
+```
+
+対象データが存在しない場合:
+
+```json
+{
+  "success": true,
+  "exists": false,
+  "内部コード": 1001
+}
+```
+
+## レスポンス例
+
+新規登録・更新成功:
+
+```json
+{
+  "success": true,
+  "request_mode": "single",
+  "received_count": 1,
+  "success_count": 1,
+  "failed_count": 0,
+  "results": [
+    {
+      "success": true,
+      "index": 0,
+      "内部コード": 1001,
+      "detail_count": 1
+    }
+  ],
+  "errors": []
+}
+```
+
+バッチ時に一部失敗した場合:
+
+```json
+{
+  "success": false,
+  "request_mode": "batch",
+  "received_count": 2,
+  "success_count": 1,
+  "failed_count": 1,
+  "results": [
+    {
+      "success": true,
+      "index": 0,
+      "内部コード": 1001,
+      "detail_count": 1
+    }
+  ],
+  "errors": [
+    {
+      "success": false,
+      "index": 1,
+      "error": "受注日 is required"
+    }
+  ]
 }
 ```
 
