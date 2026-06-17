@@ -2,7 +2,6 @@
 
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
-import { fetchDetectedNewOrderCandidates } from './detected-new-orders.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
@@ -31,12 +30,10 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'merge candidates count failed' });
     }
 
-    const detectedCandidates = await fetchDetectedNewOrderCandidates(profile, req.query ?? {});
-
     return res.status(200).json({
-      pending_count: (count ?? 0) + detectedCandidates.length,
+      pending_count: count ?? 0,
       merge_candidate_count: count ?? 0,
-      detected_new_order_count: detectedCandidates.length,
+      detected_new_order_count: 0,
     });
   } catch (error) {
     console.error('merge candidates count unexpected error:', error);

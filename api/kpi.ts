@@ -222,6 +222,33 @@ async function fetchDashboardSalesRows({
   const rows: any[] = [];
   const pageSize = 1000;
 
+  const { data: jsonRows, error: jsonError } = await supabaseAdmin
+    .rpc('dashboard_sales_import_aggregates_json', {
+      p_start_date: startDate,
+      p_end_date: endExclusiveDate,
+      p_department_ids: departmentIds,
+      p_external_staff_codes: externalStaffCodes,
+      p_data_kind: dataKind,
+    });
+
+  if (!jsonError && Array.isArray(jsonRows)) {
+    return jsonRows.map((row: any) => ({
+      department_id: row.department_id,
+      data_kind: dataKind,
+      customer_code: null,
+      amount: Number(row.sales_total ?? 0),
+      delivery_date: dataKind === 'delivery' ? startDate : null,
+      order_date: dataKind === 'order' ? startDate : null,
+      external_staff_code: row.external_staff_code,
+      normalized_product_code: row.normalized_product_code,
+      normalized_product_name: row.normalized_product_name ?? null,
+    }));
+  }
+
+  if (jsonError) {
+    console.warn('dashboard sales aggregate json rpc fallback:', jsonError.message ?? jsonError);
+  }
+
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseAdmin
       .rpc('dashboard_sales_import_aggregates', {
@@ -991,66 +1018,16 @@ export default async function handler(req: any, res: any) {
         department_id: departmentId,
         department_name: users.find((user) => user.department_id === departmentId)?.department ?? '',
         normalized_product_code: productCode,
-        normalized_product_name: '',
+        normalized_product_name: String(row.normalized_product_name ?? '').trim(),
         sales: 0,
       };
 
+      if (!current.normalized_product_name) {
+        current.normalized_product_name = String(row.normalized_product_name ?? '').trim();
+      }
       current.sales += amount;
       unclassifiedProductMap.set(key, current);
     });
-
-    const unclassifiedProductCodes = uniqueValues(
-      Array.from(unclassifiedProductMap.values()).map((row) => row.normalized_product_code)
-    );
-
-    if (unclassifiedProductCodes.length > 0 && allowedDepartmentIds.length > 0) {
-      const productNameByKey = new Map<string, string>();
-      const codeChunkSize = 80;
-      const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
-
-      for (let codeIndex = 0; codeIndex < unclassifiedProductCodes.length; codeIndex += codeChunkSize) {
-        const codeChunk = unclassifiedProductCodes.slice(codeIndex, codeIndex + codeChunkSize);
-        let from = 0;
-
-        while (true) {
-          const { data: productNameRows, error: productNameError } = await supabaseAdmin
-            .from('sales_import_rows')
-            .select('department_id, normalized_product_code, normalized_product_name')
-            .eq('data_kind', dataKind)
-            .gte(dateColumn, currentStart)
-            .lt(dateColumn, currentEnd)
-            .in('department_id', allowedDepartmentIds)
-            .in('external_staff_code', Array.from(allowedExternalStaffCodes))
-            .in('normalized_product_code', codeChunk)
-            .range(from, from + 999);
-
-          if (productNameError) {
-            throw productNameError;
-          }
-
-          (productNameRows ?? []).forEach((row: any) => {
-            const departmentId = Number(row.department_id);
-            const productCode = String(row.normalized_product_code ?? '').trim();
-            const productName = String(row.normalized_product_name ?? '').trim();
-            const key = `${departmentId}|${productCode}`;
-
-            if (Number.isFinite(departmentId) && productCode && productName && !productNameByKey.has(key)) {
-              productNameByKey.set(key, productName);
-            }
-          });
-
-          if ((productNameRows ?? []).length < 1000) break;
-          from += 1000;
-        }
-      }
-
-      productNameByKey.forEach((productName, key) => {
-        const current = unclassifiedProductMap.get(key);
-        if (current) {
-          current.normalized_product_name = productName;
-        }
-      });
-    }
 
     const unclassified_products = Array.from(unclassifiedProductMap.values())
       .map((row) => ({

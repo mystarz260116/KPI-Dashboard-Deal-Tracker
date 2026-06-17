@@ -15,8 +15,6 @@ type SalesRow = {
   order_date: string | null;
 };
 
-type ExcludedSalesReason = '得意先コードなし' | '担当紐付け漏れ' | '医院アセット対象外';
-
 type ProfileRow = {
   id: string;
   name: string;
@@ -104,6 +102,18 @@ function normalizeTargetMonth(value: unknown) {
 function amountOf(row: SalesRow) {
   const amount = Number(row.amount ?? 0);
   return Number.isFinite(amount) ? amount : 0;
+}
+
+function mapAggregateRows(rows: any[], dataKind: 'delivery' | 'order') {
+  return rows.map((row: any) => ({
+    department_id: row.department_id,
+    customer_code: row.customer_code,
+    customer_name: row.customer_name,
+    external_staff_code: row.external_staff_code,
+    amount: Number(row.sales_total ?? 0),
+    delivery_date: dataKind === 'delivery' ? `${row.sales_month}-01` : null,
+    order_date: dataKind === 'order' ? `${row.sales_month}-01` : null,
+  })) as SalesRow[];
 }
 
 function normalizeCareStatus(value: unknown) {
@@ -201,6 +211,27 @@ async function fetchSalesRows({
   const rows: any[] = [];
   const pageSize = 1000;
 
+  const jsonStartedAt = Date.now();
+  const { data: jsonRows, error: jsonError } = await supabaseAdmin
+    .rpc('clinic_asset_sales_aggregates_json', {
+      p_start_date: startDate,
+      p_end_date: endExclusiveDate,
+      p_department_ids: departmentIds,
+      p_external_staff_codes: externalStaffCodes,
+      p_data_kind: dataKind,
+    });
+
+  if (!jsonError && Array.isArray(jsonRows)) {
+    console.info(
+      `[debug] clinic-assets sales json rpc end kind=${dataKind} ms=${Date.now() - jsonStartedAt} rows=${jsonRows.length} error=-`
+    );
+    return mapAggregateRows(jsonRows, dataKind);
+  }
+
+  if (jsonError) {
+    console.warn('clinic asset aggregate json rpc fallback:', jsonError.message ?? jsonError);
+  }
+
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseAdmin
       .rpc('clinic_asset_sales_aggregates', {
@@ -238,57 +269,7 @@ async function fetchSalesRows({
     `[debug] clinic-assets sales rpc end kind=${dataKind} ms=${Date.now() - rpcStartedAt} rows=${rows.length} error=-`
   );
 
-  return rows.map((row: any) => ({
-    department_id: row.department_id,
-    customer_code: row.customer_code,
-    customer_name: row.customer_name,
-    external_staff_code: row.external_staff_code,
-    amount: Number(row.sales_total ?? 0),
-    delivery_date: dataKind === 'delivery' ? `${row.sales_month}-01` : null,
-    order_date: dataKind === 'order' ? `${row.sales_month}-01` : null,
-  })) as SalesRow[];
-}
-
-async function fetchSalesRowsForAudit({
-  startDate,
-  endExclusiveDate,
-  departmentIds,
-  dataKind,
-}: {
-  startDate: string;
-  endExclusiveDate: string;
-  departmentIds: number[];
-  dataKind: 'delivery' | 'order';
-}) {
-  if (departmentIds.length === 0) {
-    return [];
-  }
-
-  const rows: SalesRow[] = [];
-  const pageSize = 1000;
-  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
-  let from = 0;
-
-  while (true) {
-    const { data, error } = await supabaseAdmin
-      .from('sales_import_rows')
-      .select('department_id, customer_code, customer_name, external_staff_code, amount, delivery_date, order_date')
-      .eq('data_kind', dataKind)
-      .gte(dateColumn, startDate)
-      .lt(dateColumn, endExclusiveDate)
-      .in('department_id', departmentIds)
-      .not('external_staff_code', 'in', `(${Array.from(EXCLUDED_SALES_EXTERNAL_STAFF_CODES).join(',')})`)
-      .range(from, from + pageSize - 1);
-
-    if (error) throw error;
-
-    const batch = (data ?? []) as SalesRow[];
-    rows.push(...batch);
-    if (batch.length < pageSize) break;
-    from += pageSize;
-  }
-
-  return rows;
+  return mapAggregateRows(rows, dataKind);
 }
 
 export default async function handler(req: any, res: any) {
@@ -432,7 +413,6 @@ export default async function handler(req: any, res: any) {
     }, staffMapsData?.length ?? 0);
 
     const staffCodeToProfileId = new Map<string, string>();
-    const anyStaffCodeToProfileId = new Map<string, string>();
     const primaryStaffCodeByProfileId = new Map<string, string>();
     const allowedExternalStaffCodes = new Set<string>();
     (staffMapsData ?? []).forEach((row: any) => {
@@ -443,9 +423,6 @@ export default async function handler(req: any, res: any) {
         return;
       }
 
-      if (profileId && departmentKey && staffCode) {
-        anyStaffCodeToProfileId.set(`${departmentKey}|${staffCode}`, profileId);
-      }
       if (profileId && departmentKey && staffCode && allowedUserIds.has(profileId)) {
         staffCodeToProfileId.set(`${departmentKey}|${staffCode}`, profileId);
         if (!primaryStaffCodeByProfileId.has(profileId)) {
@@ -460,18 +437,12 @@ export default async function handler(req: any, res: any) {
       return staffCodeToProfileId.get(key) ?? null;
     };
 
-    const [salesRows, auditSalesRows, budgetsResult] = await Promise.all([
+    const [salesRows, budgetsResult] = await Promise.all([
       fetchSalesRows({
         startDate: toDateString(lookbackStart),
         endExclusiveDate: toDateString(displayEndExclusive),
         departmentIds: allowedDepartmentIds,
         externalStaffCodes: Array.from(allowedExternalStaffCodes),
-        dataKind,
-      }),
-      fetchSalesRowsForAudit({
-        startDate: toDateString(displayStart),
-        endExclusiveDate: toDateString(displayEndExclusive),
-        departmentIds: allowedDepartmentIds,
         dataKind,
       }),
       supabaseAdmin
@@ -482,7 +453,6 @@ export default async function handler(req: any, res: any) {
     ]);
     markDebug('sales_rows_and_budgets', {
       salesRows: salesRows.length,
-      auditSalesRows: auditSalesRows.length,
       budgetsRows: budgetsResult.data?.length ?? 0,
       allowedExternalStaffCodes: allowedExternalStaffCodes.size,
       months: months.length,
@@ -492,7 +462,7 @@ export default async function handler(req: any, res: any) {
       previousSameMonth: previousSameMonthKey,
       previousFiscalStart: toDateString(previousFiscalStart),
       previousFiscalEndExclusive: toDateString(previousFiscalEndExclusive),
-    }, salesRows.length + auditSalesRows.length);
+    }, salesRows.length);
 
     if (budgetsResult.error) {
       console.error('clinic assets budgets error:', budgetsResult.error);
@@ -508,11 +478,6 @@ export default async function handler(req: any, res: any) {
     }, scopedRows.length);
 
     const userById = new Map(users.map((row) => [row.id, row]));
-    const departmentNameById = new Map(
-      users
-        .filter((row) => row.department_id != null)
-        .map((row) => [String(row.department_id), row.departments?.name ?? ''])
-    );
     const rowsByClinic = new Map<string, {
       customer_code: string;
       customer_name: string;
@@ -692,94 +657,6 @@ export default async function handler(req: any, res: any) {
       actionRows: actionRows?.length ?? 0,
     }, rowsWithActions.length);
 
-    const excludedSalesMap = new Map<string, {
-      reason: ExcludedSalesReason;
-      month: string;
-      department_id: number | null;
-      department_name: string;
-      external_staff_code: string;
-      staff_name: string;
-      customer_code: string;
-      customer_name: string;
-      amount: number;
-      row_count: number;
-    }>();
-    const excludedSalesSummary = new Map<ExcludedSalesReason, { amount: number; row_count: number }>();
-
-    auditSalesRows.forEach((row) => {
-      const rawDate = dataKind === 'order' ? row.order_date : row.delivery_date;
-      if (!rawDate) return;
-
-      const amount = amountOf(row);
-      if (amount === 0) return;
-
-      const month = String(rawDate).slice(0, 7);
-      const departmentKey = String(row.department_id ?? '');
-      const staffCode = String(row.external_staff_code ?? '').trim();
-      const customerCode = String(row.customer_code ?? '').trim();
-      const customerName = String(row.customer_name ?? '').trim();
-      if (EXCLUDED_SALES_EXTERNAL_STAFF_CODES.has(staffCode)) return;
-
-      const profileId = staffCode ? anyStaffCodeToProfileId.get(`${departmentKey}|${staffCode}`) : null;
-      let reason: ExcludedSalesReason | null = null;
-
-      if (!customerCode) {
-        reason = '得意先コードなし';
-      } else if (!staffCode || !profileId) {
-        reason = '担当紐付け漏れ';
-      } else if (!allowedUserIds.has(profileId)) {
-        reason = '医院アセット対象外';
-      }
-
-      if (!reason) return;
-
-      const staffName = profileId ? userById.get(profileId)?.name ?? '' : '';
-      const key = [
-        reason,
-        month,
-        departmentKey,
-        staffCode,
-        customerCode,
-        customerName,
-      ].join('|');
-      const current = excludedSalesMap.get(key) ?? {
-        reason,
-        month,
-        department_id: row.department_id,
-        department_name: departmentNameById.get(departmentKey) ?? '',
-        external_staff_code: staffCode,
-        staff_name: staffName,
-        customer_code: customerCode,
-        customer_name: customerName,
-        amount: 0,
-        row_count: 0,
-      };
-
-      current.amount += amount;
-      current.row_count += 1;
-      excludedSalesMap.set(key, current);
-
-      const summary = excludedSalesSummary.get(reason) ?? { amount: 0, row_count: 0 };
-      summary.amount += amount;
-      summary.row_count += 1;
-      excludedSalesSummary.set(reason, summary);
-    });
-
-    const excludedSalesRows = Array.from(excludedSalesMap.values())
-      .map((row) => ({
-        ...row,
-        amount: Math.round(row.amount),
-      }))
-      .sort((a, b) => b.amount - a.amount || a.reason.localeCompare(b.reason, 'ja'))
-      .slice(0, 500);
-    const excludedSalesTotal = Array.from(excludedSalesSummary.values())
-      .reduce((sum, row) => sum + row.amount, 0);
-    markDebug('excluded_sales_audit', {
-      auditSalesRows: auditSalesRows.length,
-      excludedGroups: excludedSalesMap.size,
-      returnedRows: excludedSalesRows.length,
-    }, excludedSalesRows.length);
-
     const previousYearTotal = rowsWithActions.reduce((sum, row) => sum + row.previous_year_total, 0);
     const previousFiscalTotal = rowsWithActions.reduce((sum, row) => sum + row.previous_fiscal_total, 0);
     const currentMonthTotal = rowsWithActions.reduce((sum, row) => {
@@ -839,17 +716,6 @@ export default async function handler(req: any, res: any) {
         new_order_amount: Math.round(newOrderAmount),
       },
       rows: rowsWithActions,
-      excluded_sales: {
-        total_amount: Math.round(excludedSalesTotal),
-        total_groups: excludedSalesMap.size,
-        returned_groups: excludedSalesRows.length,
-        summary: Array.from(excludedSalesSummary.entries()).map(([reason, value]) => ({
-          reason,
-          amount: Math.round(value.amount),
-          row_count: value.row_count,
-        })),
-        rows: excludedSalesRows,
-      },
       debug: {
         endpoint: 'clinic-assets',
         totalMs: Date.now() - debugStartedAt,
@@ -861,11 +727,9 @@ export default async function handler(req: any, res: any) {
           staffMaps: staffMapsData?.length ?? 0,
           allowedExternalStaffCodes: allowedExternalStaffCodes.size,
           salesRows: salesRows.length,
-          auditSalesRows: auditSalesRows.length,
           scopedRows: scopedRows.length,
           actionRows: actionRows?.length ?? 0,
           assetRows: rowsWithActions.length,
-          excludedSalesGroups: excludedSalesMap.size,
         },
       },
     });
