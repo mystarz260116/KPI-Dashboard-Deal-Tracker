@@ -68,6 +68,15 @@ const COLUMNS: Array<{ key: DealPipelineStage; title: string; accent: string; bg
   { key: 'lost', title: '失注', accent: '#ef4444', bg: 'bg-rose-50', hint: '見送り・失注。担当者が手動で更新', editable: true },
 ];
 
+const DEAL_STAGE_TEMPERATURE_WEIGHTS: Record<DealPipelineStage, Record<'A' | 'B' | 'C' | 'D' | 'E' | 'unset', number>> = {
+  targeting: { A: 0.3, B: 0.2, C: 0.1, D: 0.05, E: 0, unset: 0.1 },
+  visiting: { A: 0.5, B: 0.35, C: 0.2, D: 0.1, E: 0, unset: 0.2 },
+  negotiating: { A: 0.8, B: 0.6, C: 0.4, D: 0.2, E: 0, unset: 0.4 },
+  accepted: { A: 1, B: 1, C: 1, D: 1, E: 1, unset: 1 },
+  won: { A: 1, B: 1, C: 1, D: 1, E: 1, unset: 1 },
+  lost: { A: 0, B: 0, C: 0, D: 0, E: 0, unset: 0 },
+};
+
 const TEMPERATURE_TONES: Record<string, TemperatureTone> = {
   A: {
     label: 'A すぐ案件化',
@@ -210,6 +219,24 @@ function getTemperatureTone(temperature: string | null) {
   }
 
   return TEMPERATURE_TONES[temperature] ?? DEFAULT_TEMPERATURE_TONE;
+}
+
+function normalizeTemperatureKey(temperature: string | null): 'A' | 'B' | 'C' | 'D' | 'E' | 'unset' {
+  const key = (temperature ?? '').trim().charAt(0).toUpperCase();
+  return TEMPERATURE_FILTER_VALUES.has(key) ? key as 'A' | 'B' | 'C' | 'D' | 'E' : 'unset';
+}
+
+function getDealAmount(deal: BoardDeal) {
+  const amount = Number(deal.amount);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function getDealWeight(deal: BoardDeal) {
+  return DEAL_STAGE_TEMPERATURE_WEIGHTS[deal.pipeline_stage][normalizeTemperatureKey(deal.deal_temperature)];
+}
+
+function getWeightedDealAmount(deal: BoardDeal) {
+  return Math.round(getDealAmount(deal) * getDealWeight(deal));
 }
 
 function normalizeMonth(value: string | null | undefined) {
@@ -499,6 +526,10 @@ export default function DealProgressDashboard() {
         return true;
       }
 
+      if (deal.pipeline_stage === 'won') {
+        return true;
+      }
+
       const rawTemperature = (deal.deal_temperature ?? '').trim();
       if (!rawTemperature) {
         return false;
@@ -552,7 +583,23 @@ export default function DealProgressDashboard() {
   const columnAmountTotals = useMemo(() => (
     COLUMNS.reduce<Record<DealPipelineStage, number>>((acc, column) => {
       acc[column.key] = groupedDeals[column.key].reduce((sum, deal) => (
-        sum + (Number.isFinite(Number(deal.amount)) ? Number(deal.amount) : 0)
+        sum + getDealAmount(deal)
+      ), 0);
+      return acc;
+    }, {
+      targeting: 0,
+      visiting: 0,
+      negotiating: 0,
+      accepted: 0,
+      won: 0,
+      lost: 0,
+    })
+  ), [groupedDeals]);
+
+  const weightedColumnAmountTotals = useMemo(() => (
+    COLUMNS.reduce<Record<DealPipelineStage, number>>((acc, column) => {
+      acc[column.key] = groupedDeals[column.key].reduce((sum, deal) => (
+        sum + getWeightedDealAmount(deal)
       ), 0);
       return acc;
     }, {
@@ -572,19 +619,22 @@ export default function DealProgressDashboard() {
   }), [filteredDeals]);
 
   const portfolioSummary = useMemo(() => {
-    const totalAmount = COLUMNS.reduce((sum, column) => sum + columnAmountTotals[column.key], 0);
+    const totalAmount = COLUMNS.reduce((sum, column) => sum + weightedColumnAmountTotals[column.key], 0);
+    const rawTotalAmount = COLUMNS.reduce((sum, column) => sum + columnAmountTotals[column.key], 0);
     return {
       totalAmount,
+      rawTotalAmount,
       goalAmount: newOrderAmountGoal,
       goalRate: newOrderAmountGoal > 0 ? Math.round((totalAmount / newOrderAmountGoal) * 100) : 0,
       columns: COLUMNS.map((column) => ({
         ...column,
         count: groupedDeals[column.key].length,
-        amount: columnAmountTotals[column.key],
-        ratio: totalAmount > 0 ? Math.round((columnAmountTotals[column.key] / totalAmount) * 100) : 0,
+        amount: weightedColumnAmountTotals[column.key],
+        rawAmount: columnAmountTotals[column.key],
+        ratio: totalAmount > 0 ? Math.round((weightedColumnAmountTotals[column.key] / totalAmount) * 100) : 0,
       })),
     };
-  }, [columnAmountTotals, groupedDeals, newOrderAmountGoal]);
+  }, [columnAmountTotals, groupedDeals, newOrderAmountGoal, weightedColumnAmountTotals]);
 
   const canEditDeal = (deal: BoardDeal) => (
     !isClosed
@@ -854,12 +904,15 @@ export default function DealProgressDashboard() {
                   ¥{portfolioSummary.totalAmount.toLocaleString()}
                 </p>
                 <p className="pb-1 text-xs font-semibold text-zinc-500">
-                  受注予定額/月 合計
+                  加重予定額/月 合計
                 </p>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold">
                 <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">
                   目標 ¥{portfolioSummary.goalAmount.toLocaleString()}
+                </span>
+                <span className="rounded-full bg-zinc-100 px-3 py-1 text-zinc-600">
+                  見込総額 ¥{portfolioSummary.rawTotalAmount.toLocaleString()}
                 </span>
                 <span className={`rounded-full px-3 py-1 ${
                   portfolioSummary.goalAmount > 0 && portfolioSummary.goalRate >= 100
@@ -880,6 +933,9 @@ export default function DealProgressDashboard() {
                     <span className="text-[10px] font-bold text-zinc-400">{item.count}件</span>
                   </div>
                   <p className="text-sm font-black text-zinc-900">¥{item.amount.toLocaleString()}</p>
+                  <p className="mt-0.5 text-[10px] font-semibold text-zinc-400">
+                    見込総額 ¥{item.rawAmount.toLocaleString()}
+                  </p>
                   <div className="mt-2 h-1.5 rounded-full bg-white">
                     <div
                       className="h-full rounded-full"
@@ -933,8 +989,9 @@ export default function DealProgressDashboard() {
                       <p className="mt-0.5 text-sm font-black text-zinc-900">{groupedDeals[column.key].length}件</p>
                     </div>
                     <div className="rounded-2xl bg-white/75 px-3 py-2">
-                      <p className="text-[10px] font-bold text-zinc-400">予定額/月</p>
-                      <p className="mt-0.5 text-sm font-black text-zinc-900">¥{columnAmountTotals[column.key].toLocaleString()}</p>
+                      <p className="text-[10px] font-bold text-zinc-400">加重予定額/月</p>
+                      <p className="mt-0.5 text-sm font-black text-zinc-900">¥{weightedColumnAmountTotals[column.key].toLocaleString()}</p>
+                      <p className="mt-0.5 text-[10px] font-semibold text-zinc-400">見込総額 ¥{columnAmountTotals[column.key].toLocaleString()}</p>
                     </div>
                   </div>
                 </div>
@@ -954,6 +1011,8 @@ export default function DealProgressDashboard() {
                       const temperatureTone = getTemperatureTone(deal.deal_temperature);
                       const nextActionParts = buildNextActionParts(deal);
                       const amountLines = buildExpectedAmountLines(deal);
+                      const dealWeight = getDealWeight(deal);
+                      const weightedDealAmount = getWeightedDealAmount(deal);
                       const { cleanNotes } = parseExpectedAmountNotes(deal.notes);
                       const metaBadges = [
                         deal.contact_role ? `接触: ${deal.contact_role}` : null,
@@ -1056,11 +1115,15 @@ export default function DealProgressDashboard() {
                               <div className="rounded-xl border border-purple-100 bg-purple-50/70 px-3 py-2 text-purple-900">
                                 <div className="flex items-center justify-between gap-3">
                                   <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-purple-400">
-                                    予定額/月
+                                    加重予定額/月
                                   </p>
                                   <p className="shrink-0 text-sm font-bold">
-                                    ¥{deal.amount.toLocaleString()}
+                                    ¥{weightedDealAmount.toLocaleString()}
                                   </p>
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5 text-[11px] font-semibold text-purple-600">
+                                  <span>見込額 ¥{deal.amount.toLocaleString()}</span>
+                                  <span>掛け目 {Math.round(dealWeight * 100)}%</span>
                                 </div>
                                 {amountLines.length > 0 && (
                                   <div className="mt-2 space-y-1">
