@@ -4,11 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch } from '../lib/authFetch';
 import {
-  ArrowDownRight, ArrowLeft, ArrowUpDown, ArrowUpRight, Building2, CalendarDays, Download,
+  ArrowDownRight, ArrowLeft, ArrowUpDown, ArrowUpRight, CalendarDays, Download,
   Loader2, LogOut, Search, Target, TrendingDown, TrendingUp, Users,
 } from 'lucide-react';
 import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Cell, Pie, PieChart, ResponsiveContainer, Tooltip,
 } from 'recharts';
 
 type AssetPeriod = '3m' | '6m' | '12m';
@@ -40,7 +40,7 @@ type DepartmentOption = {
   name: string;
 };
 
-type ClinicCareStatus = '未対応' | '確認中' | '提案中' | '維持完了' | '離反懸念' | '対象外';
+type ClinicCareStatus = '未対応' | '訪問中' | '交渉中' | '応諾済み' | '受注';
 
 type ClinicAssetRow = {
   user_id: string | null;
@@ -139,8 +139,16 @@ type ClinicAssetsFetchResult = {
 
 const clinicAssetsFetchInFlight = new Map<string, Promise<ClinicAssetsFetchResult>>();
 const CLINIC_ASSETS_TIMEOUT_MS = 30_000;
-const CARE_STATUSES: ClinicCareStatus[] = ['未対応', '確認中', '提案中', '維持完了', '離反懸念', '対象外'];
+const CARE_STATUSES: ClinicCareStatus[] = ['未対応', '訪問中', '交渉中', '応諾済み', '受注'];
 const RISK_FILTER_OPTIONS = ['新規', '離反', '危険', '減少注意', '成長', '維持'] as const;
+const ATTENTION_RISK_LABELS = new Set(['離反', '危険', '減少注意']);
+const CARE_STATUS_COLORS: Record<ClinicCareStatus, string> = {
+  未対応: '#dc2626',
+  訪問中: '#d97706',
+  交渉中: '#0891b2',
+  応諾済み: '#65a30d',
+  受注: '#059669',
+};
 const DEFAULT_MANAGEMENT: ClinicAssetRow['management'] = {
   status: '未対応',
   next_action_date: null,
@@ -192,12 +200,11 @@ function getRiskState(row: ClinicAssetRow, months: Array<{ key: string; label: s
 }
 
 function getCareStatusClass(status: ClinicCareStatus) {
-  if (status === '維持完了') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (status === '離反懸念') return 'border-rose-200 bg-rose-50 text-rose-700';
-  if (status === '提案中') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
-  if (status === '確認中') return 'border-amber-200 bg-amber-50 text-amber-700';
-  if (status === '対象外') return 'border-zinc-200 bg-zinc-100 text-zinc-500';
-  return 'border-zinc-200 bg-white text-zinc-700';
+  if (status === '受注') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (status === '応諾済み') return 'border-lime-200 bg-lime-50 text-lime-700';
+  if (status === '交渉中') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
+  if (status === '訪問中') return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-rose-200 bg-rose-50 text-rose-700';
 }
 
 function normalizeManagement(row: ClinicAssetRow): ClinicAssetRow {
@@ -312,7 +319,6 @@ export default function ClinicAssetsDashboard() {
   const [data, setData] = useState<ClinicAssetData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [savingRows, setSavingRows] = useState<Record<string, boolean>>({});
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
   const [tableFilters, setTableFilters] = useState<{
     staffKey: string;
@@ -545,14 +551,41 @@ export default function ClinicAssetsDashboard() {
     tableFilters,
   ]);
 
-  const chartData = useMemo(() => (
-    (data?.months ?? []).map((month) => ({
-      month: month.label,
-      sales: (data?.rows ?? []).reduce((sum, row) => (
-        sum + (row.monthly.find((entry) => entry.month === month.key)?.amount ?? 0)
-      ), 0),
-    }))
-  ), [data]);
+  const attentionCareSummary = useMemo(() => {
+    const riskCounts = new Map<string, number>();
+    const targetRows = (data?.rows ?? []).filter((row) => {
+      const label = getRiskState(row, data?.months ?? []).label;
+      if (!ATTENTION_RISK_LABELS.has(label)) return false;
+      riskCounts.set(label, (riskCounts.get(label) ?? 0) + 1);
+      return true;
+    });
+    const counts = new Map<ClinicCareStatus, number>();
+    targetRows.forEach((row) => {
+      const status = row.management?.status ?? DEFAULT_MANAGEMENT.status;
+      counts.set(status, (counts.get(status) ?? 0) + 1);
+    });
+    const chartRows = CARE_STATUSES
+      .map((status) => ({
+        status,
+        value: counts.get(status) ?? 0,
+        fill: CARE_STATUS_COLORS[status],
+      }))
+      .filter((entry) => entry.value > 0);
+    const unresolvedCount = counts.get('未対応') ?? 0;
+
+    return {
+      total: targetRows.length,
+      unresolvedCount,
+      unresolvedRate: targetRows.length > 0
+        ? Number(((unresolvedCount / targetRows.length) * 100).toFixed(1))
+        : 0,
+      riskRows: Array.from(ATTENTION_RISK_LABELS).map((status) => ({
+        status,
+        value: riskCounts.get(status) ?? 0,
+      })),
+      chartRows,
+    };
+  }, [data?.months, data?.rows]);
   const displayRows = useMemo(() => {
     if (!sortConfig) return filteredRows;
 
@@ -647,83 +680,6 @@ export default function ClinicAssetsDashboard() {
   const handleLogout = async () => {
     await logout();
     navigate('/login');
-  };
-
-  const updateLocalManagement = (
-    customerCode: string,
-    patch: Partial<ClinicAssetRow['management']>
-  ) => {
-    setData((current) => {
-      if (!current) return current;
-
-      return {
-        ...current,
-        rows: current.rows.map((row) => (
-          row.customer_code === customerCode
-            ? {
-              ...row,
-              management: {
-                ...row.management,
-                ...patch,
-              },
-            }
-            : row
-        )),
-      };
-    });
-  };
-
-  const saveManagement = async (
-    row: ClinicAssetRow,
-    patch: Partial<ClinicAssetRow['management']>
-  ) => {
-    const nextManagement = {
-      ...DEFAULT_MANAGEMENT,
-      ...(row.management ?? {}),
-      ...patch,
-    };
-
-    updateLocalManagement(row.customer_code, patch);
-    setSavingRows((current) => ({ ...current, [row.customer_code]: true }));
-
-    try {
-      const response = await authFetch('/api/kpi?path=clinic-assets', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_code: row.customer_code,
-          department_id: row.department_id,
-          user_id: row.user_id,
-          care_status: nextManagement.status,
-          next_care_date: nextManagement.next_action_date,
-          care_memo: nextManagement.memo,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('clinic asset action save failed');
-      }
-
-      const payload = await response.json();
-      if (payload?.management) {
-        updateLocalManagement(row.customer_code, {
-          status: payload.management.status ?? nextManagement.status,
-          next_action_date: payload.management.next_action_date ?? null,
-          memo: payload.management.memo ?? '',
-          updated_at: payload.management.updated_at ?? null,
-          updated_by: payload.management.updated_by ?? null,
-        });
-      }
-    } catch (saveError) {
-      console.error('clinic asset action save error:', saveError);
-      setError('ケア状況の保存に失敗しました');
-    } finally {
-      setSavingRows((current) => {
-        const next = { ...current };
-        delete next[row.customer_code];
-        return next;
-      });
-    }
   };
 
   const downloadCsv = () => {
@@ -921,52 +877,119 @@ export default function ClinicAssetsDashboard() {
           />
         </div>
 
-        <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.2fr]">
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-indigo-600" />
-              <h2 className="text-lg font-bold text-zinc-900">医院資産サマリー</h2>
+        <div className="mb-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="lg:w-[340px]">
+              <div className="flex items-center gap-2">
+                <TrendingDown className="h-5 w-5 text-rose-600" />
+                <h2 className="text-lg font-bold text-zinc-900">要対応医院のケア状況</h2>
+              </div>
+              <p className="mt-2 text-sm text-zinc-500">離反・危険・減少注意</p>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-lg bg-zinc-50 p-4">
+                  <p className="text-xs font-bold text-zinc-500">要対応</p>
+                  <p className="mt-2 text-2xl font-black text-zinc-900">
+                    {attentionCareSummary.total.toLocaleString()}件
+                  </p>
+                </div>
+                <div className="rounded-lg bg-rose-50 p-4">
+                  <p className="text-xs font-bold text-rose-600">未対応率</p>
+                  <p className="mt-2 text-2xl font-black text-rose-700">
+                    {attentionCareSummary.unresolvedRate}%
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-black text-zinc-500">ステータス別フィルタ</p>
+                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
+                  {attentionCareSummary.riskRows.map((entry) => (
+                    <button
+                      key={entry.status}
+                      type="button"
+                      onClick={() => setTableFilters((current) => ({ ...current, riskState: entry.status }))}
+                      disabled={entry.value === 0}
+                      className={`flex h-10 items-center justify-between gap-3 rounded-lg border px-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${
+                        tableFilters.riskState === entry.status
+                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                          : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                      }`}
+                    >
+                      <span className="truncate text-sm font-bold">{entry.status}</span>
+                      <span className="shrink-0 text-sm font-black">{entry.value.toLocaleString()}件</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg bg-zinc-50 p-4">
-                <p className="text-xs font-bold text-zinc-500">表示医院</p>
-                <p className="mt-2 text-2xl font-black text-zinc-900">{filteredRows.length}</p>
-              </div>
-              <div className="rounded-lg bg-zinc-50 p-4">
-                <p className="text-xs font-bold text-zinc-500">新規医院</p>
-                <p className="mt-2 text-2xl font-black text-emerald-600">
-                  {filteredRows.filter((row) => row.is_new && getTargetMonthAmount(row) > 0).length}
-                </p>
-              </div>
-              <div className="rounded-lg bg-zinc-50 p-4">
-                <p className="text-xs font-bold text-zinc-500">離反リスク</p>
-                <p className="mt-2 text-2xl font-black text-rose-600">
-                  {filteredRows.filter((row) => row.is_churn_risk).length}
-                </p>
-              </div>
-              <div className="rounded-lg bg-zinc-50 p-4">
-                <p className="text-xs font-bold text-zinc-500">平均医院売上</p>
-                <p className="mt-2 text-2xl font-black text-zinc-900">
-                  {formatCurrency(filteredRows.length > 0 ? (filteredRows.reduce((sum, row) => sum + getTargetMonthAmount(row), 0) / filteredRows.length) : 0)}
-                </p>
-              </div>
-            </div>
-          </div>
 
-          <div className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-cyan-600" />
-              <h2 className="text-lg font-bold text-zinc-900">月別推移</h2>
+            <div className="min-h-[220px] flex-1">
+              {attentionCareSummary.chartRows.length > 0 ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie
+                      data={attentionCareSummary.chartRows}
+                      dataKey="value"
+                      nameKey="status"
+                      innerRadius={58}
+                      outerRadius={92}
+                      paddingAngle={2}
+                    >
+                      {attentionCareSummary.chartRows.map((entry) => (
+                        <Cell key={entry.status} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value, name) => [`${Number(value).toLocaleString()}件`, String(name)]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-[220px] items-center justify-center rounded-lg bg-zinc-50 text-sm font-semibold text-zinc-400">
+                  要対応医院はありません
+                </div>
+              )}
             </div>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 10000)}万`} width={56} />
-                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                <Bar dataKey="sales" name="売上" fill="#4f46e5" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+
+            <div className="grid gap-4 lg:w-[360px]">
+              <div>
+                <p className="mb-2 text-xs font-black text-zinc-500">ケア状況別フィルタ</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                  {CARE_STATUSES.map((status) => {
+                    const item = attentionCareSummary.chartRows.find((entry) => entry.status === status);
+                    const value = item?.value ?? 0;
+                    const rate = attentionCareSummary.total > 0
+                      ? Number(((value / attentionCareSummary.total) * 100).toFixed(1))
+                      : 0;
+
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setTableFilters((current) => ({ ...current, careStatus: status }))}
+                        disabled={value === 0}
+                        className={`flex h-11 items-center justify-between gap-3 rounded-lg border px-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${
+                          tableFilters.careStatus === status
+                            ? 'border-indigo-300 bg-indigo-50'
+                            : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                        }`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: CARE_STATUS_COLORS[status] }}
+                          />
+                          <span className="truncate text-sm font-bold text-zinc-700">{status}</span>
+                        </span>
+                        <span className="shrink-0 text-sm font-black text-zinc-900">
+                          {value.toLocaleString()}件
+                          <span className="ml-2 text-xs font-bold text-zinc-400">{rate}%</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1134,7 +1157,6 @@ export default function ClinicAssetsDashboard() {
               <tbody>
                 {displayRows.map((row) => {
                   const riskState = getRiskState(row, data?.months ?? []);
-                  const isSaving = savingRows[row.customer_code];
                   const management = row.management ?? DEFAULT_MANAGEMENT;
 
                   return (
@@ -1166,37 +1188,18 @@ export default function ClinicAssetsDashboard() {
                           {riskState.label}
                         </span>
                       </td>
-                      <td className="border-b border-zinc-100 px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                        <select
-                          value={management.status}
-                          onChange={(event) => saveManagement(row, { status: event.target.value as ClinicCareStatus })}
-                          className={`w-full rounded-md border px-2 py-2 text-xs font-bold outline-none ${getCareStatusClass(management.status)}`}
-                        >
-                          {CARE_STATUSES.map((status) => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
+                      <td className="border-b border-zinc-100 px-4 py-3">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${getCareStatusClass(management.status)}`}>
+                          {management.status}
+                        </span>
                       </td>
-                      <td className="border-b border-zinc-100 px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="date"
-                          value={management.next_action_date ?? ''}
-                          onChange={(event) => saveManagement(row, { next_action_date: event.target.value || null })}
-                          className="w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-xs font-semibold text-zinc-700 outline-none focus:border-indigo-300"
-                        />
+                      <td className="border-b border-zinc-100 px-4 py-3 text-xs font-semibold text-zinc-600">
+                        {management.next_action_date ?? '-'}
                       </td>
-                      <td className="border-b border-zinc-100 px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                        <div className="flex items-start gap-2">
-                          <textarea
-                            value={management.memo}
-                            onChange={(event) => updateLocalManagement(row.customer_code, { memo: event.target.value })}
-                            onBlur={() => saveManagement(row, { memo: management.memo })}
-                            rows={2}
-                            placeholder="ケアメモ"
-                            className="min-h-[42px] w-full resize-y rounded-md border border-zinc-200 bg-white px-2 py-2 text-xs text-zinc-700 outline-none placeholder:text-zinc-300 focus:border-indigo-300"
-                          />
-                          {isSaving && <Loader2 className="mt-2 h-4 w-4 animate-spin text-indigo-500" />}
-                        </div>
+                      <td className="border-b border-zinc-100 px-4 py-3 text-xs text-zinc-600">
+                        <p className="line-clamp-2 min-w-[220px] whitespace-pre-wrap">
+                          {management.memo || '-'}
+                        </p>
                       </td>
                     </tr>
                   );

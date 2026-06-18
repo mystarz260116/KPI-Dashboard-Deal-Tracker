@@ -41,7 +41,7 @@ type DecisionMakerContact = 'yes' | 'no' | 'unknown';
 type DealTemperature = 'A' | 'B' | 'C' | 'D' | 'E';
 type NextActionType = '見積提出' | 'サンプル持参' | '再訪問' | '電話フォロー' | 'メール・資料送付' | '院長面談設定' | '保留' | 'なし';
 type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'lost';
-type ExecutedActionType = '訪問' | '電話' | 'メール・資料送付';
+type ExecutedActionType = '訪問' | '電話' | 'メール・資料送付' | 'ケア';
 
 const PROPOSAL_CATEGORIES = [
   'CADCAM冠',
@@ -105,6 +105,7 @@ const EXECUTED_ACTION_OPTIONS: { value: ExecutedActionType; rule: string }[] = [
   { value: '訪問', rule: '対面訪問や面談を実施した場合' },
   { value: '電話', rule: '電話で接触・提案・確認を行った場合' },
   { value: 'メール・資料送付', rule: 'メール連絡や資料送付を主に行った場合' },
+  { value: 'ケア', rule: '医院アセットの離反・減少リスクに対する対応を行った場合' },
 ];
 
 function pipelineStageToActivityType(stage: DealPipelineStage) {

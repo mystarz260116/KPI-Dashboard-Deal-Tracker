@@ -31,6 +31,24 @@ type ClinicAssetCareRow = {
   updated_by: string | null;
 };
 
+type CareDealRow = {
+  id: string;
+  customer_code: string;
+  deal_date: string | null;
+  pipeline_stage: string | null;
+  activity_type: string | null;
+  next_action_date: string | null;
+  notes: string | null;
+  created_at: string | null;
+  user_id: string | null;
+};
+
+type DealBoardStateRow = {
+  base_deal_id: string;
+  month_start: string;
+  pipeline_stage: string;
+};
+
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
 const EXCLUDED_SALES_EXTERNAL_STAFF_CODES = new Set(['100', '102', '9999']);
 const CLINIC_CARE_STATUSES = new Set(['未対応', '確認中', '提案中', '維持完了', '離反懸念', '対象外']);
@@ -134,6 +152,17 @@ function normalizeMemo(value: unknown) {
 function formatStaffDisplayName(staffCode: string | null, name: string) {
   const code = String(staffCode ?? '').trim();
   return code ? `${code} ${name}` : name;
+}
+
+function mapCareStatusFromDeal(row: CareDealRow, overrideStage?: string | null) {
+  const stage = String(overrideStage ?? row.pipeline_stage ?? '').trim();
+  const activityType = String(row.activity_type ?? '').trim();
+
+  if (stage === 'won' || activityType === 'won') return '受注';
+  if (stage === 'accepted') return '応諾済み';
+  if (stage === 'negotiating') return '交渉中';
+  if (stage === 'visiting' || stage === 'targeting') return '訪問中';
+  return '訪問中';
 }
 
 async function fetchSalesRowsFallback({
@@ -625,36 +654,66 @@ export default async function handler(req: any, res: any) {
       .sort((a, b) => b.total - a.total || a.customer_name.localeCompare(b.customer_name, 'ja'));
 
     const assetCustomerCodes = assetRows.map((row) => row.customer_code).filter(Boolean);
-    const { data: actionRows, error: actionRowsError } = assetCustomerCodes.length > 0
+    const { data: careDealRows, error: careDealRowsError } = assetCustomerCodes.length > 0
       ? await supabaseAdmin
-        .from('clinic_asset_cares')
-        .select('customer_code, care_status, next_care_date, care_memo, updated_at, updated_by')
+        .from('deals')
+        .select('id, customer_code, deal_date, pipeline_stage, activity_type, next_action_date, notes, created_at, user_id')
         .in('customer_code', assetCustomerCodes)
+        .eq('executed_action_type', 'ケア')
+        .lt('deal_date', toDateString(displayEndExclusive))
+        .order('deal_date', { ascending: false })
+        .order('created_at', { ascending: false })
       : { data: [], error: null };
 
-    if (actionRowsError) {
-      console.error('clinic asset cares error:', actionRowsError);
-      return res.status(500).json({ error: 'clinic asset cares fetch failed' });
+    if (careDealRowsError) {
+      console.error('clinic asset care deals error:', careDealRowsError);
+      return res.status(500).json({ error: 'clinic asset care deals fetch failed' });
     }
 
-    const actionByCustomerCode = new Map(
-      ((actionRows ?? []) as ClinicAssetCareRow[]).map((row) => [row.customer_code, row])
-    );
+    const careDeals = (careDealRows ?? []) as CareDealRow[];
+    const careDealIds = careDeals.map((row) => row.id).filter(Boolean);
+    const { data: careDealStateRows, error: careDealStateRowsError } = careDealIds.length > 0
+      ? await supabaseAdmin
+        .from('deal_board_states')
+        .select('base_deal_id, month_start, pipeline_stage')
+        .in('base_deal_id', careDealIds)
+        .lte('month_start', `${targetMonth}-01`)
+        .order('month_start', { ascending: false })
+      : { data: [], error: null };
+
+    if (careDealStateRowsError) {
+      console.error('clinic asset care deal states error:', careDealStateRowsError);
+      return res.status(500).json({ error: 'clinic asset care deal states fetch failed' });
+    }
+
+    const latestStateByDealId = new Map<string, DealBoardStateRow>();
+    ((careDealStateRows ?? []) as DealBoardStateRow[]).forEach((row) => {
+      if (!latestStateByDealId.has(row.base_deal_id)) {
+        latestStateByDealId.set(row.base_deal_id, row);
+      }
+    });
+    const careDealByCustomerCode = new Map<string, CareDealRow>();
+    careDeals.forEach((row) => {
+      if (!row.customer_code || careDealByCustomerCode.has(row.customer_code)) return;
+      careDealByCustomerCode.set(row.customer_code, row);
+    });
     const rowsWithActions = assetRows.map((row) => {
-      const action = actionByCustomerCode.get(row.customer_code);
+      const careDeal = careDealByCustomerCode.get(row.customer_code);
+      const careDealState = careDeal ? latestStateByDealId.get(careDeal.id) : null;
       return {
         ...row,
         management: {
-          status: action?.care_status ?? '未対応',
-          next_action_date: action?.next_care_date ?? null,
-          memo: action?.care_memo ?? '',
-          updated_at: action?.updated_at ?? null,
-          updated_by: action?.updated_by ?? null,
+          status: careDeal ? mapCareStatusFromDeal(careDeal, careDealState?.pipeline_stage) : '未対応',
+          next_action_date: careDeal?.next_action_date ?? null,
+          memo: careDeal?.notes ?? '',
+          updated_at: careDeal?.deal_date ?? careDeal?.created_at ?? null,
+          updated_by: careDeal?.user_id ?? null,
         },
       };
     });
     markDebug('build_asset_rows', {
-      actionRows: actionRows?.length ?? 0,
+      careDealRows: careDealRows?.length ?? 0,
+      careDealStateRows: careDealStateRows?.length ?? 0,
     }, rowsWithActions.length);
 
     const previousYearTotal = rowsWithActions.reduce((sum, row) => sum + row.previous_year_total, 0);
@@ -728,7 +787,8 @@ export default async function handler(req: any, res: any) {
           allowedExternalStaffCodes: allowedExternalStaffCodes.size,
           salesRows: salesRows.length,
           scopedRows: scopedRows.length,
-          actionRows: actionRows?.length ?? 0,
+          careDealRows: careDealRows?.length ?? 0,
+          careDealStateRows: careDealStateRows?.length ?? 0,
           assetRows: rowsWithActions.length,
         },
       },
