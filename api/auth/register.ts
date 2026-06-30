@@ -70,7 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         email,
         role: 'user',
         department_id: departmentId,
-        can_view_dashboard: false,
+        can_view_dashboard: true,
       }, {
         onConflict: 'id',
         ignoreDuplicates: false,

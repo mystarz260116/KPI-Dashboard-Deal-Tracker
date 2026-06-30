@@ -40,6 +40,7 @@ type ExistingDealWinOptions = {
   startDate: string;
   endExclusiveDate: string;
   allowedUserIds: Set<string>;
+  proposalCategories?: Set<string>;
 };
 
 const BEFORE_MONTHS = 3;
@@ -75,20 +76,30 @@ function compareDeals(left: ExistingDealRow, right: ExistingDealRow) {
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
 
-function normalizeCategories(row: ExistingDealRow) {
+function normalizeCategory(value: unknown) {
+  return String(value ?? '').trim();
+}
+
+function normalizeCategories(row: ExistingDealRow, allowedCategories?: Set<string>) {
   const categories = Array.isArray(row.proposal_categories) && row.proposal_categories.length > 0
     ? row.proposal_categories
     : row.proposal_category
       ? [row.proposal_category]
       : [];
 
-  return Array.from(
+  const normalized = Array.from(
     new Set(
       categories
-        .map((category) => String(category ?? '').trim())
+        .map(normalizeCategory)
         .filter(Boolean)
     )
   );
+
+  if (!allowedCategories || allowedCategories.size === 0) {
+    return normalized;
+  }
+
+  return normalized.filter((category) => allowedCategories.has(category));
 }
 
 function buildSalesAmountLookup(
@@ -153,6 +164,10 @@ export async function detectExistingDealWins(options: ExistingDealWinOptions) {
     return [];
   }
 
+  const allowedProposalCategories = options.proposalCategories && options.proposalCategories.size > 0
+    ? new Set(Array.from(options.proposalCategories).map(normalizeCategory).filter(Boolean))
+    : undefined;
+
   const warmupStartDate = addMonths(options.startDate, -WARMUP_MONTHS);
   const salesStartDate = addMonths(warmupStartDate, -BEFORE_MONTHS);
   const salesEndExclusiveDate = addMonths(options.endExclusiveDate, AFTER_MONTHS);
@@ -171,7 +186,7 @@ export async function detectExistingDealWins(options: ExistingDealWinOptions) {
   }
 
   const candidateDeals = ((dealsData ?? []) as ExistingDealRow[])
-    .filter((deal) => normalizeCategories(deal).length > 0)
+    .filter((deal) => normalizeCategories(deal, allowedProposalCategories).length > 0)
     .sort(compareDeals);
 
   if (candidateDeals.length === 0) {
@@ -220,8 +235,12 @@ export async function detectExistingDealWins(options: ExistingDealWinOptions) {
   for (const row of (categoryMastersData ?? []) as ProductCategoryMasterRow[]) {
     const departmentId = Number(row.department_id);
     const productCode = String(row.normalized_product_code ?? '').trim();
-    const category = String(row.proposal_category ?? '').trim();
+    const category = normalizeCategory(row.proposal_category);
     if (!Number.isFinite(departmentId) || !productCode || !category) {
+      continue;
+    }
+
+    if (allowedProposalCategories && !allowedProposalCategories.has(category)) {
       continue;
     }
 
@@ -238,7 +257,7 @@ export async function detectExistingDealWins(options: ExistingDealWinOptions) {
       continue;
     }
 
-    for (const category of normalizeCategories(deal)) {
+    for (const category of normalizeCategories(deal, allowedProposalCategories)) {
       const dedupeKey = `${customerCode}|${category}`;
       const lastWonDate = lastWonDateByCustomerAndCategory.get(dedupeKey);
       if (lastWonDate && deal.deal_date < addMonths(lastWonDate, DEDUPE_MONTHS)) {

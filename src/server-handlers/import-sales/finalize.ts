@@ -1,9 +1,10 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
-import { similarity } from '../../lib/mergeUtils.js';
+import { evaluateMergeMatch } from '../../lib/mergeUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { parseDepartmentId, SALES_IMPORT_RAW_TABLE } from '../../../api/_lib/regions.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 import { syncRegionalSalesImportArtifacts } from '../../../api/_lib/salesImport.js';
+import { normalizeCustomerCode } from '../../lib/customerCode.js';
 import {
   discardImportBatch,
   getBatchTargetMonths,
@@ -81,7 +82,11 @@ export default async function handler(req: any, res: any) {
       }
 
       batchCustomerCodes = Array.from(
-        new Set((batchRows ?? []).map((r: any) => String(r['得意先コード'])).filter(Boolean))
+        new Set(
+          (batchRows ?? [])
+            .map((r: any) => normalizeCustomerCode(r['得意先コード']))
+            .filter(Boolean)
+        )
       );
     }
 
@@ -141,8 +146,8 @@ export default async function handler(req: any, res: any) {
       const prospectName = prospect.name ?? '';
 
       (customers ?? []).forEach((customer: any) => {
-        const score = similarity(prospectName, customer.name ?? '');
-        if (score < 0.95) return;
+        const match = evaluateMergeMatch(prospectName, customer.name ?? '');
+        if (!match) return;
 
         const pairKey = `${prospect.id}::${customer.code}`;
         if (rejectedPairs.has(pairKey)) return;
@@ -150,8 +155,8 @@ export default async function handler(req: any, res: any) {
         candidateRows.push({
           prospect_customer_id: prospect.id,
           customer_code: customer.code,
-          match_score: Number(score.toFixed(4)),
-          match_reason: 'name_similarity',
+          match_score: Number(match.score.toFixed(4)),
+          match_reason: match.reason,
           decision: 'pending',
         });
       });

@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { toDateString } from '../lib/dateUtils';
 import { authFetch } from '../lib/authFetch';
+import { normalizeCustomerCode, normalizeCustomerName } from '../lib/customerCode';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, Plus, Check, ChevronRight, ArrowLeft,
@@ -107,6 +108,30 @@ const EXECUTED_ACTION_OPTIONS: { value: ExecutedActionType; rule: string }[] = [
   { value: 'メール・資料送付', rule: 'メール連絡や資料送付を主に行った場合' },
   { value: 'ケア', rule: '医院アセットの離反・減少リスクに対する対応を行った場合' },
 ];
+
+function buildClinicSearchKeywords(value: string) {
+  const trimmed = value.trim();
+  const normalizedParentheses = trimmed
+    .replace(/（/g, '(')
+    .replace(/）/g, ')');
+
+  return Array.from(new Set([trimmed, normalizedParentheses].filter(Boolean)));
+}
+
+function buildCustomerSearchOrFilter(keywords: string[]) {
+  return keywords
+    .flatMap((keyword) => [
+      `name.ilike.%${keyword}%`,
+      `code.ilike.%${keyword}%`,
+    ])
+    .join(',');
+}
+
+function buildNameSearchOrFilter(keywords: string[]) {
+  return keywords
+    .map((keyword) => `name.ilike.%${keyword}%`)
+    .join(',');
+}
 
 function pipelineStageToActivityType(stage: DealPipelineStage) {
   if (stage === 'negotiating' || stage === 'accepted') return 'negotiating';
@@ -235,11 +260,13 @@ export default function DealInput() {
         return;
       }
 
+      const searchKeywords = buildClinicSearchKeywords(keyword);
+
       let prospectQuery = supabase
         .from('prospect_customers')
         .select('id, name, status')
         .or('status.is.null,status.neq.merged')
-        .ilike('name', `%${keyword}%`)
+        .or(buildNameSearchOrFilter(searchKeywords))
         .order('name', { ascending: true })
         .limit(20);
 
@@ -251,7 +278,7 @@ export default function DealInput() {
         supabase
           .from('customers')
           .select('code, name')
-          .or(`name.ilike.%${keyword}%,code.ilike.%${keyword}%`)
+          .or(buildCustomerSearchOrFilter(searchKeywords))
           .order('name', { ascending: true })
           .limit(20),
         prospectQuery,
@@ -272,11 +299,19 @@ export default function DealInput() {
 
       setError('');
 
-      const customerResults: Clinic[] = (customerData ?? []).map((c: any) => ({
-        id: c.code,
-        name: c.name,
-        kind: 'customer',
-      }));
+      const customerResultsById = new Map<string, Clinic>();
+      (customerData ?? []).forEach((c: any) => {
+        const id = normalizeCustomerCode(c.code);
+        if (!id || customerResultsById.has(id)) return;
+
+        customerResultsById.set(id, {
+          id,
+          name: normalizeCustomerName(c.name, id),
+          kind: 'customer',
+        });
+      });
+
+      const customerResults = Array.from(customerResultsById.values());
 
       const prospectResults: Clinic[] = (prospectData ?? []).map((c: any) => ({
         id: c.id,

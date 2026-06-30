@@ -43,6 +43,54 @@ async function fetchExistingCustomerDeal(customerCode: string) {
   return (data ?? [])[0] ?? null;
 }
 
+async function fetchCustomerName(customerCode: string) {
+  const { data, error } = await supabaseAdmin
+    .from('customers')
+    .select('name')
+    .eq('code', customerCode)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.name ?? customerCode;
+}
+
+async function customerExists(customerCode: string) {
+  const { data, error } = await supabaseAdmin
+    .from('customers')
+    .select('code')
+    .eq('code', customerCode)
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data?.code);
+}
+
+async function fetchProspectName(prospectCustomerId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('prospect_customers')
+    .select('name')
+    .eq('id', prospectCustomerId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.name ?? prospectCustomerId;
+}
+
+async function createProspectCustomer(name: string, profileId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('prospect_customers')
+    .insert({
+      name,
+      created_by: profileId,
+      status: 'new',
+    })
+    .select('id, name')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 async function hasPriorSales(customerCode: string, detectedMonth: string) {
   const targetStart = monthStart(detectedMonth);
   const lookbackStart = addMonths(targetStart, -12);
@@ -136,6 +184,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const rawCustomerCode = String(body.customer_code ?? '').trim();
     const customerCode = normalizeCustomerCode(rawCustomerCode);
     const customerName = normalizeCustomerName(body.customer_name ?? body.clinic, customerCode);
+    const rawTargetKind = String(body.target_kind ?? 'customer').trim();
+    const targetKind = ['customer', 'prospect', 'new_prospect', 'unlinked'].includes(rawTargetKind)
+      ? rawTargetKind as 'customer' | 'prospect' | 'new_prospect' | 'unlinked'
+      : 'customer';
+    const targetCustomerCode = normalizeCustomerCode(body.target_customer_code ?? customerCode);
+    const targetProspectCustomerId = String(body.target_prospect_customer_id ?? '').trim();
     const userId = String(body.user_id ?? '').trim();
     const departmentId = Number(body.department_id);
     const amount = normalizeAmount(body.amount);
@@ -189,6 +243,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!userId) {
       return res.status(400).json({ error: 'user_id is required for approval' });
+    }
+
+    if (targetKind === 'customer' && !targetCustomerCode) {
+      return res.status(400).json({ error: 'target_customer_code is required' });
+    }
+
+    if (targetKind === 'prospect' && !targetProspectCustomerId) {
+      return res.status(400).json({ error: 'target_prospect_customer_id is required' });
     }
 
     const { data: existingCandidate, error: existingCandidateError } = await supabaseAdmin
@@ -249,19 +311,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    let finalTargetKind = targetKind;
+    let finalTargetCustomerCode = targetCustomerCode;
+    let finalTargetProspectCustomerId = targetProspectCustomerId;
+    let targetName = '';
+
+    if (targetKind === 'customer') {
+      targetName = await fetchCustomerName(targetCustomerCode);
+    } else if (targetKind === 'prospect') {
+      targetName = await fetchProspectName(targetProspectCustomerId);
+    } else if (targetKind === 'new_prospect') {
+      if (await customerExists(customerCode)) {
+        return res.status(400).json({ error: '検知元コードは既存取引先に存在するため、見込み顧客として登録できません' });
+      }
+      const prospect = await createProspectCustomer(customerName, profile.id);
+      finalTargetKind = 'prospect';
+      finalTargetCustomerCode = '';
+      finalTargetProspectCustomerId = prospect.id;
+      targetName = prospect.name ?? customerName;
+    }
+
+    const targetDescription = finalTargetKind === 'customer'
+      ? `既存取引先 ${finalTargetCustomerCode} ${targetName}`
+      : finalTargetKind === 'prospect'
+        ? `見込み顧客 ${finalTargetProspectCustomerId} ${targetName}`
+        : '紐づけなし';
+
     const { data: insertedDeal, error: dealInsertError } = await supabaseAdmin
       .from('deals')
       .insert({
         user_id: userId,
-        customer_code: customerCode,
-        prospect_customer_id: null,
+        customer_code: finalTargetKind === 'customer' ? finalTargetCustomerCode : null,
+        prospect_customer_id: finalTargetKind === 'prospect' ? finalTargetProspectCustomerId : null,
         deal_date: orderedAt,
         activity_type: 'won',
         executed_action_type: '受注確認',
         pipeline_stage: 'won',
         amount,
         notes: [
-          '売上明細から新規受注候補として検知し、承認により自動追加',
+          '売上明細から新規受注候補として検知し、承認により追加',
+          `検知元: ${customerCode} ${customerName}`,
+          `紐づけ先: ${targetDescription}`,
           body.notes ? String(body.notes).trim() : '',
         ].filter(Boolean).join('\n'),
       })

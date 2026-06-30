@@ -963,9 +963,10 @@ export default function DealProgressDashboard() {
             商談進捗を読み込み中です...
           </div>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-6">
-            {COLUMNS.map((column) => (
-              <div
+          <div className="overflow-x-auto pb-2">
+            <div className="grid gap-4 md:min-w-[1280px] md:grid-cols-6 2xl:min-w-0">
+              {COLUMNS.map((column) => (
+                <div
                 key={column.key}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={() => {
@@ -1166,8 +1167,9 @@ export default function DealProgressDashboard() {
                     })
                   )}
                 </div>
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

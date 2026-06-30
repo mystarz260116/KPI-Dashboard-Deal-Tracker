@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch } from '../lib/authFetch';
+import { supabase } from '../lib/supabase';
+import { normalizeCustomerCode, normalizeCustomerName } from '../lib/customerCode';
 import { motion } from 'motion/react';
 import { GitMerge, LayoutDashboard, CheckCircle, XCircle, LogOut, TrendingUp } from 'lucide-react';
 
@@ -21,6 +23,13 @@ interface MergeCandidate {
   ordered_at?: string;
 }
 
+interface LinkTarget {
+  kind: 'customer' | 'prospect' | 'new_prospect' | 'unlinked';
+  id: string;
+  name: string;
+  subtitle: string;
+}
+
 type ImportDataKind = 'delivery' | 'order';
 const candidateListInFlight = new Map<string, Promise<MergeCandidate[]>>();
 
@@ -38,6 +47,12 @@ export default function CustomerMerge() {
   const [message, setMessage] = useState('');
   const [merging, setMerging] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
+  const [linkQueries, setLinkQueries] = useState<Record<string, string>>({});
+  const [linkResults, setLinkResults] = useState<Record<string, LinkTarget[]>>({});
+  const [linkLoading, setLinkLoading] = useState<Record<string, boolean>>({});
+  const [linkSearched, setLinkSearched] = useState<Record<string, boolean>>({});
+  const [sourceCustomerMatched, setSourceCustomerMatched] = useState<Record<string, boolean>>({});
+  const [selectedTargets, setSelectedTargets] = useState<Record<string, LinkTarget | undefined>>({});
   const [targetMonth, setTargetMonth] = useState(getCurrentMonth);
   const [dataKind, setDataKind] = useState<ImportDataKind>('delivery');
   const latestRequestKeyRef = useRef('');
@@ -193,6 +208,7 @@ export default function CustomerMerge() {
       month: candidate.detected_month ?? targetMonth,
     });
     const actionKey = `${action}:${candidate.customer_code}`;
+    const target = selectedTargets[candidateKey(candidate)];
     if (action === 'approve') {
       setMerging(actionKey);
     } else {
@@ -214,6 +230,9 @@ export default function CustomerMerge() {
           user_id: candidate.user_id,
           amount: candidate.amount,
           ordered_at: candidate.ordered_at,
+          target_kind: target?.kind,
+          target_customer_code: target?.kind === 'customer' ? target.id : undefined,
+          target_prospect_customer_id: target?.kind === 'prospect' ? target.id : undefined,
         }),
       });
       logTiming('detected-order response', requestStartedAt, { action, status: response.status });
@@ -266,20 +285,20 @@ export default function CustomerMerge() {
     init();
   }, [isAuthLoading, user?.id, targetMonth, dataKind]);
 
-  function getScoreColor(score: number) {
-    if (score >= 0.9) return 'text-emerald-600 bg-emerald-50';
-    if (score >= 0.8) return 'text-amber-600 bg-amber-50';
-    return 'text-red-500 bg-red-50';
-  }
-
   const handleLogout = async () => {
     await logout();
     navigate('/login');
   };
 
+  function formatAmount(value: unknown) {
+    const amount = Number(value ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) return '';
+    return `¥${Math.round(amount).toLocaleString()}`;
+  }
+
   function candidateKey(candidate: MergeCandidate) {
     return candidate.source === 'detected_new_order'
-      ? `detected:${candidate.customer_code}`
+      ? `detected:${candidate.data_kind ?? dataKind}:${candidate.detected_month ?? targetMonth}:${candidate.customer_code}`
       : `merge:${candidate.prospect_customer_id}:${candidate.customer_code}`;
   }
 
@@ -292,13 +311,23 @@ export default function CustomerMerge() {
   }
 
   function approveCandidate(candidate: MergeCandidate) {
+    const selectedTarget = selectedTargets[candidateKey(candidate)];
+    if (!selectedTarget) {
+      setError('紐づけ先を検索して選択してください');
+      return;
+    }
+
     if (candidate.source === 'detected_new_order') {
       void handleDetectedOrder(candidate, 'approve');
       return;
     }
 
     if (candidate.prospect_customer_id) {
-      void handleMerge(candidate.prospect_customer_id, candidate.customer_code);
+      if (selectedTarget.kind !== 'customer') {
+        setError('名寄せ候補の紐づけ先は既存取引先を選択してください');
+        return;
+      }
+      void handleMerge(candidate.prospect_customer_id, selectedTarget.id);
     }
   }
 
@@ -311,6 +340,237 @@ export default function CustomerMerge() {
     if (candidate.prospect_customer_id) {
       void handleReject(candidate.prospect_customer_id, candidate.customer_code);
     }
+  }
+
+  function buildLinkSearchKeywords(value: string) {
+    const trimmed = value.trim();
+    const normalizedParentheses = trimmed
+      .replace(/（/g, '(')
+      .replace(/）/g, ')');
+    return Array.from(new Set([trimmed, normalizedParentheses].filter(Boolean)));
+  }
+
+  function buildCustomerSearchOrFilter(keywords: string[]) {
+    return keywords
+      .flatMap((keyword) => [
+        `name.ilike.%${keyword}%`,
+        `code.ilike.%${keyword}%`,
+      ])
+      .join(',');
+  }
+
+  function buildNameSearchOrFilter(keywords: string[]) {
+    return keywords.map((keyword) => `name.ilike.%${keyword}%`).join(',');
+  }
+
+  async function searchLinkTargets(candidate: MergeCandidate) {
+    const key = candidateKey(candidate);
+    const searchText = (linkQueries[key] || '').trim();
+    if (!searchText) return;
+
+    setLinkLoading((current) => ({ ...current, [key]: true }));
+    setLinkSearched((current) => ({ ...current, [key]: true }));
+    setSourceCustomerMatched((current) => ({ ...current, [key]: false }));
+    setError('');
+
+    try {
+      const keywords = buildLinkSearchKeywords(searchText);
+      const customerPromise = supabase
+        .from('customers')
+        .select('code, name')
+        .or(buildCustomerSearchOrFilter(keywords))
+        .order('name', { ascending: true })
+        .limit(8);
+
+      let customerResult: { data: any[] | null; error: any } = { data: [], error: null };
+      let prospectResult: { data: any[] | null; error: any } = { data: [], error: null };
+      if (candidate.source === 'detected_new_order') {
+        let prospectQuery = supabase
+          .from('prospect_customers')
+          .select('id, name, status, created_by')
+          .or('status.is.null,status.neq.merged')
+          .or(buildNameSearchOrFilter(keywords))
+          .order('name', { ascending: true })
+          .limit(8);
+
+        if (!user?.can_view_dashboard) {
+          prospectQuery = prospectQuery.eq('created_by', user?.id);
+        }
+
+        const [resolvedCustomerResult, resolvedProspectResult] = await Promise.all([customerPromise, prospectQuery]);
+        if (resolvedCustomerResult.error || resolvedProspectResult.error) {
+          throw resolvedCustomerResult.error ?? resolvedProspectResult.error;
+        }
+        prospectResult = resolvedProspectResult;
+        customerResult = resolvedCustomerResult;
+      } else {
+        const resolvedCustomerResult = await customerPromise;
+        if (resolvedCustomerResult.error) {
+          throw resolvedCustomerResult.error;
+        }
+        customerResult = resolvedCustomerResult;
+      }
+
+      const targets: LinkTarget[] = [];
+      const seen = new Set<string>();
+
+      (prospectResult.data ?? []).forEach((row: any) => {
+        const id = String(row.id ?? '').trim();
+        const targetKey = `prospect:${id}`;
+        if (!id || seen.has(targetKey)) return;
+        seen.add(targetKey);
+        targets.push({
+          kind: 'prospect',
+          id,
+          name: row.name ?? id,
+          subtitle: `見込み顧客ID: ${id}`,
+        });
+      });
+
+      (customerResult.data ?? []).forEach((row: any) => {
+        const id = normalizeCustomerCode(row.code);
+        const targetKey = `customer:${id}`;
+        if (id === candidate.customer_code) {
+          setSourceCustomerMatched((current) => ({ ...current, [key]: true }));
+          return;
+        }
+        if (!id || seen.has(targetKey)) return;
+        seen.add(targetKey);
+        targets.push({
+          kind: 'customer',
+          id,
+          name: normalizeCustomerName(row.name, id),
+          subtitle: `顧客コード: ${id}`,
+        });
+      });
+
+      setLinkResults((current) => ({ ...current, [key]: targets }));
+    } catch (searchError) {
+      console.error('link target search failed', searchError);
+      setError('紐づけ先の検索に失敗しました');
+    } finally {
+      setLinkLoading((current) => ({ ...current, [key]: false }));
+    }
+  }
+
+  function renderLinkPicker(candidate: MergeCandidate) {
+    const key = candidateKey(candidate);
+    const selected = selectedTargets[key];
+    const results = linkResults[key] ?? [];
+    const query = linkQueries[key] ?? '';
+    const loadingTargets = Boolean(linkLoading[key]);
+    const searched = Boolean(linkSearched[key]);
+    const onlySourceCustomerMatched = Boolean(sourceCustomerMatched[key]) && results.length === 0;
+    const canRegisterProspect = searched && results.length === 0 && !onlySourceCustomerMatched;
+    const createProspectTarget: LinkTarget = {
+      kind: 'new_prospect',
+      id: `new:${candidate.customer_code}`,
+      name: candidate.customer_name,
+      subtitle: 'この入れ歯くん名称で見込み顧客を作成',
+    };
+    const unlinkedTarget: LinkTarget = {
+      kind: 'unlinked',
+      id: `unlinked:${candidate.customer_code}`,
+      name: '紐づけなし',
+      subtitle: 'CRM顧客に紐づけず受注確認だけ行う',
+    };
+
+    const selectedLabel = selected?.kind === 'customer'
+      ? '既存'
+      : selected?.kind === 'prospect'
+        ? '見込み'
+        : selected?.kind === 'new_prospect'
+          ? '見込み登録'
+          : '紐づけなし';
+
+    return (
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => setLinkQueries((current) => ({ ...current, [key]: event.target.value }))}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void searchLinkTargets(candidate);
+              }
+            }}
+            className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 outline-none focus:border-indigo-300"
+            placeholder="紐づけ先を検索"
+          />
+          <button
+            type="button"
+            onClick={() => void searchLinkTargets(candidate)}
+            className="h-10 rounded-lg border border-zinc-200 px-3 text-xs font-bold text-zinc-600 transition hover:bg-zinc-50"
+          >
+            {loadingTargets ? '検索中' : '検索'}
+          </button>
+        </div>
+
+        {selected && (
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700">
+            選択中: {selected.name}（{selectedLabel}）
+          </div>
+        )}
+
+        {results.length > 0 && (
+          <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-100">
+            {results.map((target) => (
+              <button
+                key={`${target.kind}:${target.id}`}
+                type="button"
+                onClick={() => setSelectedTargets((current) => ({ ...current, [key]: target }))}
+                className={`block w-full px-3 py-2 text-left text-xs transition hover:bg-zinc-50 ${
+                  selected?.kind === target.kind && selected?.id === target.id ? 'bg-indigo-50' : 'bg-white'
+                }`}
+              >
+                <div className="font-bold text-zinc-800">
+                  {target.name}
+                  <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500">
+                    {target.kind === 'customer' ? '既存' : '見込み'}
+                  </span>
+                </div>
+                <div className="mt-0.5 font-mono text-[10px] text-zinc-400">{target.subtitle}</div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {onlySourceCustomerMatched && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+            検知元と同じ既存取引先は紐づけ候補から除外しています。
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {canRegisterProspect && (
+            <button
+              type="button"
+              onClick={() => setSelectedTargets((current) => ({ ...current, [key]: createProspectTarget }))}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                selected?.kind === 'new_prospect'
+                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                  : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50'
+              }`}
+            >
+              見込みに登録
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setSelectedTargets((current) => ({ ...current, [key]: unlinkedTarget }))}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+              selected?.kind === 'unlinked'
+                ? 'border-zinc-300 bg-zinc-100 text-zinc-800'
+                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50'
+            }`}
+          >
+            紐づけなし
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -358,7 +618,7 @@ export default function CustomerMerge() {
             <div>
               <p className="text-base font-black text-zinc-900">確認対象</p>
               <p className="mt-2 text-sm font-medium text-zinc-500">
-                仮登録院の名寄せ候補と、売上明細から検知した商談未登録の新規受注候補を表示します。
+                入れ歯くん売上データから検知した受注候補を表示します。紐づけ先を検索して選択してください。
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -449,18 +709,16 @@ export default function CustomerMerge() {
             <div className="hidden overflow-x-auto sm:block">
               <table className="min-w-[1120px] w-full table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[150px]" />
-                  <col className="w-[310px]" />
-                  <col className="w-[320px]" />
+                  <col className="w-[350px]" />
+                  <col className="w-[370px]" />
                   <col className="w-[150px]" />
                   <col className="w-[250px]" />
                 </colgroup>
                 <thead>
                   <tr className="border-b border-zinc-100 bg-zinc-50 text-left text-xs font-black text-zinc-500">
-                    <th className="px-6 py-4">種別</th>
-                    <th className="px-6 py-4">候補</th>
-                    <th className="px-6 py-4">取引先</th>
-                    <th className="px-6 py-4 text-right">金額 / 一致度</th>
+                    <th className="px-6 py-4">入れ歯くんデータ</th>
+                    <th className="px-6 py-4">紐づけ先</th>
+                    <th className="px-6 py-4 text-right">金額</th>
                     <th className="px-6 py-4">操作</th>
                   </tr>
                 </thead>
@@ -473,40 +731,21 @@ export default function CustomerMerge() {
                       className="border-t border-zinc-100 text-zinc-800 hover:bg-zinc-50"
                     >
                       <td className="px-6 py-4">
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                          c.source === 'detected_new_order'
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-indigo-50 text-indigo-700'
-                        }`}
-                        >
-                          {c.source === 'detected_new_order' ? '受注明細' : '名寄せ'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
                         <div className="line-clamp-2 text-base font-bold leading-relaxed text-zinc-900">
                           {c.source === 'detected_new_order' ? c.customer_name : c.prospect_name}
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="line-clamp-2 text-base font-semibold leading-relaxed text-zinc-700">
-                          {c.customer_name}
-                        </div>
-                        <div className="mt-1 font-mono text-xs font-bold text-zinc-400">{c.customer_code}</div>
+                        {renderLinkPicker(c)}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {c.source === 'detected_new_order' ? (
-                          <span className="text-base font-black text-zinc-950">¥{Number(c.amount ?? 0).toLocaleString()}</span>
-                        ) : (
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${getScoreColor(c.match_score ?? 0)}`}>
-                            {((c.match_score ?? 0) * 100).toFixed(0)}%
-                          </span>
-                        )}
+                        <span className="text-base font-black text-zinc-950">{formatAmount(c.amount)}</span>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => approveCandidate(c)}
-                            disabled={isCandidateBusy(c, 'approve') || isCandidateBusy(c, 'reject')}
+                            disabled={isCandidateBusy(c, 'approve') || isCandidateBusy(c, 'reject') || !selectedTargets[candidateKey(c)]}
                             className="inline-flex h-10 min-w-[124px] items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 text-sm font-bold leading-none text-white transition hover:bg-indigo-700 disabled:opacity-50"
                           >
                             {isCandidateBusy(c, 'approve') ? (
@@ -514,7 +753,7 @@ export default function CustomerMerge() {
                             ) : (
                               <GitMerge className="h-3.5 w-3.5" />
                             )}
-                            {c.source === 'detected_new_order' ? '受注確認に追加' : '受注確認'}
+                            受注確認
                           </button>
 
                           <button
@@ -547,48 +786,30 @@ export default function CustomerMerge() {
                 >
                   <div className="space-y-3">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">種別</p>
-                      <p className="mt-1">
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                          c.source === 'detected_new_order'
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-indigo-50 text-indigo-700'
-                        }`}
-                        >
-                          {c.source === 'detected_new_order' ? '受注明細' : '名寄せ'}
-                        </span>
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">候補</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">入れ歯くんデータ</p>
                       <p className="mt-1 text-sm font-medium text-zinc-800">
                         {c.source === 'detected_new_order' ? c.customer_name : c.prospect_name}
                       </p>
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">取引先</p>
-                      <p className="mt-1 text-sm text-zinc-600">{c.customer_name}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">紐づけ先</p>
+                      <div className="mt-1 text-sm text-zinc-600">
+                        {renderLinkPicker(c)}
+                      </div>
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">金額 / 一致度</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">金額</p>
                       <div className="mt-1">
-                        {c.source === 'detected_new_order' ? (
-                          <span className="font-black text-zinc-900">¥{Number(c.amount ?? 0).toLocaleString()}</span>
-                        ) : (
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${getScoreColor(c.match_score ?? 0)}`}>
-                            {((c.match_score ?? 0) * 100).toFixed(0)}%
-                          </span>
-                        )}
+                        <span className="font-black text-zinc-900">{formatAmount(c.amount)}</span>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <button
                         onClick={() => approveCandidate(c)}
-                        disabled={isCandidateBusy(c, 'approve') || isCandidateBusy(c, 'reject')}
+                        disabled={isCandidateBusy(c, 'approve') || isCandidateBusy(c, 'reject') || !selectedTargets[candidateKey(c)]}
                         className="flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                           >
                             {isCandidateBusy(c, 'approve') ? (
@@ -596,7 +817,7 @@ export default function CustomerMerge() {
                             ) : (
                               <GitMerge className="h-3.5 w-3.5" />
                             )}
-                            {c.source === 'detected_new_order' ? '追加' : '受注確認'}
+                            受注確認
                           </button>
 
                       <button

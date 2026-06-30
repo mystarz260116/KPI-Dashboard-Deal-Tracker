@@ -57,6 +57,17 @@ function uniqueValues<T>(values: T[]) {
   return Array.from(new Set(values));
 }
 
+function parseCategoryFilter(...values: unknown[]) {
+  const categories = values.flatMap((value) => {
+    if (Array.isArray(value)) return value;
+    return String(value ?? '').split(',');
+  })
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+
+  return categories.length > 0 ? new Set(categories) : undefined;
+}
+
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
   if (Array.isArray(pathValue)) {
     return pathValue.join('/');
@@ -464,6 +475,11 @@ export default async function handler(req: any, res: any) {
     const dataKind = normalizeSalesImportDataKind(req.query.data_kind);
     const includeExistingDealWins = req.query.includeExistingDealWins === '1'
       || req.query.include_existing_deal_wins === '1';
+    const existingDealWinCategories = parseCategoryFilter(
+      req.query.existingDealWinCategories,
+      req.query.existing_deal_win_categories,
+      req.query.proposal_category
+    );
 
     const fromParam = req.query.from as string | undefined;
     const toParam = req.query.to as string | undefined;
@@ -683,9 +699,12 @@ export default async function handler(req: any, res: any) {
         startDate: currentStart,
         endExclusiveDate: currentEnd,
         allowedUserIds,
+        proposalCategories: existingDealWinCategories,
       })
       : [];
-    markDebug('existing_deal_wins', undefined, existingDealWins.length);
+    markDebug('existing_deal_wins', {
+      proposalCategories: existingDealWinCategories ? Array.from(existingDealWinCategories) : [],
+    }, existingDealWins.length);
     const scopedBudgets = (budgetsData ?? []).filter((b: any) => {
       if (granularity === 'individual') return b.user_id === userId;
       if (granularity === 'department') return allowedDepartmentIds.includes(b.department_id);

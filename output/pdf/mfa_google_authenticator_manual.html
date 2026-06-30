@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>MFA初回設定マニュアル</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #18181b;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "YuGothic", "Noto Sans JP", sans-serif;
+      line-height: 1.55;
+      background: #ffffff;
+    }
+
+    .page {
+      min-height: 269mm;
+      page-break-after: always;
+      position: relative;
+      padding: 0;
+    }
+
+    .page:last-child {
+      page-break-after: auto;
+    }
+
+    .cover {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 269mm;
+      padding: 12mm 4mm 0;
+    }
+
+    .eyebrow {
+      color: #4f46e5;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 8px 0 10px;
+      font-size: 34px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    p {
+      margin: 0;
+      font-size: 11.5px;
+    }
+
+    .lead {
+      max-width: 150mm;
+      color: #52525b;
+      font-size: 14px;
+    }
+
+    .band {
+      border-radius: 10px;
+      background: #f4f4f5;
+      padding: 14px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .hero-card {
+      border: 1px solid #e4e4e7;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #3730a3;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .section {
+      padding: 4mm 4mm 0;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 0.98fr 1.02fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .steps {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      margin-bottom: 9px;
+      break-inside: avoid;
+    }
+
+    .num {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #4f46e5;
+      color: white;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 12px;
+    }
+
+    .step span {
+      color: #52525b;
+      font-size: 10.5px;
+    }
+
+    .note {
+      border-left: 4px solid #4f46e5;
+      background: #eef2ff;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #312e81;
+      font-size: 10.5px;
+    }
+
+    .warning {
+      border-left-color: #f97316;
+      background: #fff7ed;
+      color: #9a3412;
+    }
+
+    .visual {
+      border: 1px solid #e4e4e7;
+      border-radius: 12px;
+      background: #fafafa;
+      padding: 12px;
+      break-inside: avoid;
+    }
+
+    .caption {
+      margin-top: 8px;
+      color: #71717a;
+      font-size: 9.8px;
+      text-align: center;
+    }
+
+    .browser {
+      overflow: hidden;
+      border: 1px solid #d4d4d8;
+      border-radius: 10px;
+      background: white;
+      box-shadow: 0 8px 22px rgba(24, 24, 27, 0.08);
+    }
+
+    .browser-bar {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 22px;
+      padding: 0 8px;
+      background: #f4f4f5;
+      border-bottom: 1px solid #e4e4e7;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #d4d4d8;
+    }
+
+    .screen {
+      padding: 14px;
+      background: #18181b;
+    }
+
+    .panel {
+      margin: 0 auto;
+      border-radius: 10px;
+      background: white;
+      padding: 14px;
+      width: 100%;
+    }
+
+    .shield {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: #eef2ff;
+      color: #4f46e5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 8px;
+      font-weight: 900;
+    }
+
+    .mini-title {
+      text-align: center;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .mini-subtitle {
+      text-align: center;
+      color: #71717a;
+      font-size: 9.5px;
+      margin-top: 3px;
+    }
+
+    .setup-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .setup-box {
+      border: 1px solid #e4e4e7;
+      border-radius: 8px;
+      background: #fafafa;
+      padding: 8px;
+      min-height: 112px;
+    }
+
+    .setup-box.active {
+      border-color: #c7d2fe;
+      background: #eef2ff;
+    }
+
+    .button {
+      display: block;
+      margin-top: 8px;
+      border-radius: 7px;
+      background: #18181b;
+      color: white;
+      padding: 7px 8px;
+      font-size: 9.5px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .secondary-button {
+      background: white;
+      color: #3f3f46;
+      border: 1px solid #d4d4d8;
+    }
+
+    .key-field {
+      margin-top: 8px;
+      border-radius: 6px;
+      background: white;
+      padding: 7px;
+      text-align: center;
+      color: #71717a;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+    }
+
+    .qr {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 2px;
+      width: 86px;
+      height: 86px;
+      margin: 8px auto 0;
+      padding: 5px;
+      background: white;
+      border: 1px solid #e4e4e7;
+    }
+
+    .qr span {
+      background: #18181b;
+    }
+
+    .qr span.off {
+      background: white;
+    }
+
+    .phone {
+      width: 130px;
+      margin: 0 auto;
+      border: 8px solid #18181b;
+      border-radius: 24px;
+      background: #0f172a;
+      padding: 12px 8px;
+      box-shadow: 0 8px 22px rgba(24, 24, 27, 0.18);
+    }
+
+    .phone-screen {
+      border-radius: 14px;
+      background: white;
+      min-height: 230px;
+      padding: 10px;
+    }
+
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .plus {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #2563eb;
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .auth-card {
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 9px;
+      margin-bottom: 8px;
+    }
+
+    .auth-name {
+      color: #334155;
+      font-size: 8.5px;
+      font-weight: 700;
+    }
+
+    .auth-code {
+      color: #2563eb;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin-top: 3px;
+    }
+
+    .menu-row {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px;
+      margin-top: 7px;
+      font-size: 8.5px;
+      color: #374151;
+      background: #ffffff;
+    }
+
+    .form-row {
+      margin-top: 8px;
+    }
+
+    .label {
+      font-size: 8.5px;
+      color: #52525b;
+      font-weight: 700;
+    }
+
+    .input {
+      margin-top: 3px;
+      border: 1px solid #d4d4d8;
+      border-radius: 6px;
+      padding: 6px;
+      font-size: 8.5px;
+      color: #71717a;
+      background: #fafafa;
+    }
+
+    .footer {
+      position: absolute;
+      bottom: 0;
+      left: 4mm;
+      right: 4mm;
+      border-top: 1px solid #e4e4e7;
+      padding-top: 6px;
+      color: #a1a1aa;
+      font-size: 9px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .check {
+      border: 1px solid #e4e4e7;
+      border-radius: 8px;
+      padding: 10px;
+      background: #fafafa;
+      font-size: 10.5px;
+    }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .photo-card {
+      border: 1px solid #e4e4e7;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 8px;
+      break-inside: avoid;
+    }
+
+    .photo-card img {
+      display: block;
+      width: 100%;
+      height: 134px;
+      object-fit: contain;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .photo-card.tall img {
+      height: 205px;
+    }
+
+    .photo-title {
+      margin-top: 7px;
+      color: #18181b;
+      font-size: 10.5px;
+      font-weight: 800;
+    }
+
+    .photo-note {
+      margin-top: 2px;
+      color: #71717a;
+      font-size: 9.5px;
+    }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div>
+      <div class="eyebrow">KPI Dashboard & Deal Tracker</div>
+      <h1>MFA初回設定マニュアル<br />Google Authenticator版</h1>
+      <p class="lead">
+        この資料は、初回ログイン時に表示されるMFA設定を、PC利用者とiPhone利用者のどちらでも進められるようにまとめた手順書です。
+      </p>
+
+      <div class="hero-grid">
+        <div class="hero-card">
+          <span class="pill">PCユーザー</span>
+          <h3 style="margin-top:10px;">PC画面のQRコードをiPhoneで読み取る</h3>
+          <p>PCでアプリにログインしている場合は、画面に表示されたQRコードをiPhoneのGoogle Authenticatorで読み取ります。</p>
+        </div>
+        <div class="hero-card">
+          <span class="pill">iPhoneユーザー</span>
+          <h3 style="margin-top:10px;">セットアップキーをコピーして登録する</h3>
+          <p>iPhoneでアプリにログインしている場合は、QRではなくセットアップキーをGoogle Authenticatorへ貼り付けます。</p>
+        </div>
+      </div>
+
+      <div class="band" style="margin-top:24px;">
+        <h3>事前に必要なもの</h3>
+        <p>Google AuthenticatorアプリをiPhoneにインストールしておいてください。QRコードやセットアップキーは本人専用です。他人に見せたり共有したりしないでください。</p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>MFA初回設定マニュアル</span>
+      <span>1</span>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section">
+      <h2>PCユーザー向け: QRコードで設定する</h2>
+      <div class="two-col">
+        <div>
+          <ol class="steps">
+            <li class="step">
+              <div class="num">1</div>
+              <div><strong>PCでログインします</strong><span>メールアドレスとパスワードでログインすると、MFA設定画面が表示されます。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">2</div>
+              <div><strong>設定を開始します</strong><span>「Google Authenticatorの設定を開始」を押します。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">3</div>
+              <div><strong>QRコードを読み取ります</strong><span>iPhoneでGoogle Authenticatorを開き、右下の「+」からQRコードをスキャンします。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">4</div>
+              <div><strong>6桁コードを入力します</strong><span>Google Authenticatorに表示された6桁コードをPC画面に入力し、「設定を完了」を押します。</span></div>
+            </li>
+          </ol>
+
+          <div class="note">
+            QRコードはユーザーごとに異なります。自分の画面に表示されたQRコードだけを読み取ってください。
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="browser">
+            <div class="browser-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="screen">
+              <div class="panel">
+                <div class="shield">✓</div>
+                <div class="mini-title">MFA設定</div>
+                <div class="mini-subtitle">Google Authenticatorを使って登録します</div>
+                <div class="setup-grid">
+                  <div class="setup-box">
+                    <h3>スマホだけで設定</h3>
+                    <div class="button secondary-button">キーをコピー</div>
+                    <div class="key-field">•••• •••• ••••</div>
+                  </div>
+                  <div class="setup-box active">
+                    <h3>PCで設定</h3>
+                    <div class="qr">
+                      <span></span><span></span><span></span><span class="off"></span><span></span><span class="off"></span><span></span><span></span><span></span>
+                      <span></span><span class="off"></span><span></span><span class="off"></span><span class="off"></span><span></span><span></span><span class="off"></span><span></span>
+                      <span></span><span></span><span></span><span class="off"></span><span></span><span class="off"></span><span></span><span></span><span></span>
+                      <span class="off"></span><span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span><span class="off"></span>
+                      <span></span><span class="off"></span><span></span><span></span><span class="off"></span><span></span><span></span><span class="off"></span><span></span>
+                      <span class="off"></span><span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span><span class="off"></span>
+                      <span></span><span></span><span></span><span class="off"></span><span></span><span class="off"></span><span></span><span></span><span></span>
+                      <span></span><span class="off"></span><span></span><span></span><span class="off"></span><span></span><span></span><span class="off"></span><span></span>
+                      <span></span><span></span><span></span><span class="off"></span><span></span><span class="off"></span><span></span><span></span><span></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="key-field" style="margin-top:12px;">6桁コード 000000</div>
+              </div>
+            </div>
+          </div>
+          <p class="caption">画面イメージ: PCでは右側のQRコードを読み取ります。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>MFA初回設定マニュアル</span>
+      <span>2</span>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section">
+      <h2>iPhoneユーザー向け: セットアップキーで設定する</h2>
+      <div class="two-col">
+        <div>
+          <ol class="steps">
+            <li class="step">
+              <div class="num">1</div>
+              <div><strong>iPhoneでログインします</strong><span>メールアドレスとパスワードでログインし、MFA設定画面を開きます。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">2</div>
+              <div><strong>キーをコピーします</strong><span>「キーをコピー」を押します。セットアップキーは本人専用です。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">3</div>
+              <div><strong>Google Authenticatorを開きます</strong><span>右下の「+」を押し、「セットアップキーを入力」を選択します。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">4</div>
+              <div><strong>キーを貼り付けます</strong><span>アカウント名に「KPI Dashboard」、キーにコピーした値を貼り付けます。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">5</div>
+              <div><strong>6桁コードを入力します</strong><span>Google Authenticatorに表示された6桁コードをアプリ画面に戻って入力します。</span></div>
+            </li>
+          </ol>
+        </div>
+
+        <div class="visual">
+          <div class="photo-grid">
+            <div class="photo-card">
+              <img src="assets/google-authenticator-icon.jpg" alt="Google Authenticatorアプリのアイコン" />
+              <div class="photo-title">1. Authenticatorを開く</div>
+              <div class="photo-note">このアイコンのアプリを使います。</div>
+            </div>
+            <div class="photo-card tall">
+              <img src="assets/google-authenticator-list.jpg" alt="Google Authenticatorの一覧画面" />
+              <div class="photo-title">2. 右下の+を押す</div>
+              <div class="photo-note">KPI Dashboardが追加される画面です。</div>
+            </div>
+            <div class="photo-card tall">
+              <img src="assets/google-authenticator-menu.jpg" alt="Google Authenticatorの追加メニュー" />
+              <div class="photo-title">3. セットアップキーを入力</div>
+              <div class="photo-note">QRではなくキー入力を選びます。</div>
+            </div>
+            <div class="photo-card tall">
+              <img src="assets/google-authenticator-key-form.jpg" alt="Google Authenticatorのアカウント情報入力画面" />
+              <div class="photo-title">4. アカウント情報を入力</div>
+              <div class="photo-note">アカウント名とコピーしたキーを入れます。</div>
+            </div>
+          </div>
+          <p class="caption">写真: iPhoneではGoogle Authenticatorにセットアップキーを手入力します。</p>
+        </div>
+      </div>
+
+      <div class="note warning" style="margin-top:14px;">
+        iPhoneでは「認証アプリで開く」リンクがAppleの「パスワード」に飛ぶことがあります。そのため、このマニュアルではキーをコピーしてGoogle Authenticatorへ貼り付ける方法を推奨します。
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>MFA初回設定マニュアル</span>
+      <span>3</span>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section">
+      <h2>2回目以降のログイン</h2>
+      <div class="two-col">
+        <div>
+          <ol class="steps">
+            <li class="step">
+              <div class="num">1</div>
+              <div><strong>通常どおりログインします</strong><span>メールアドレスとパスワードを入力します。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">2</div>
+              <div><strong>6桁コードを確認します</strong><span>Google Authenticatorを開き、「KPI Dashboard」の6桁コードを確認します。</span></div>
+            </li>
+            <li class="step">
+              <div class="num">3</div>
+              <div><strong>アプリに入力します</strong><span>コードは約30秒で切り替わります。新しいコードを入力してください。</span></div>
+            </li>
+          </ol>
+
+          <div class="checklist">
+            <div class="check">スマホ紛失・機種変更時は管理者へ連絡してください。</div>
+            <div class="check">QRコードやセットアップキーを他人に送らないでください。</div>
+            <div class="check">6桁コードが合わない場合は、次のコードに切り替わってから再入力してください。</div>
+            <div class="check">MFA設定済みの人は、初回QR画面ではなく確認画面が表示されます。</div>
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="phone">
+            <div class="phone-screen">
+              <div class="app-header"><span>Authenticator</span><span style="font-size:8px;color:#64748b;">30秒更新</span></div>
+              <div class="auth-card">
+                <div class="auth-name">KPI Dashboard</div>
+                <div class="auth-code">492 861</div>
+              </div>
+              <div class="auth-card" style="opacity:.45;">
+                <div class="auth-name">Other Service</div>
+                <div class="auth-code">105 337</div>
+              </div>
+            </div>
+          </div>
+          <p class="caption">画面イメージ: 2回目以降はGoogle Authenticatorの6桁コードだけ入力します。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>MFA初回設定マニュアル</span>
+      <span>4</span>
+    </div>
+  </section>
+</body>
+</html>

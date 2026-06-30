@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { normalizeCustomerCode, normalizeCustomerName } from '../lib/customerCode';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, Building2, Loader2, LogOut, Search, Users,
@@ -26,6 +27,30 @@ interface DealSummaryRow {
   next_action: string | null;
   customer_code: string | null;
   prospect_customer_id: string | null;
+}
+
+function buildClinicSearchKeywords(value: string) {
+  const trimmed = value.trim();
+  const normalizedParentheses = trimmed
+    .replace(/（/g, '(')
+    .replace(/）/g, ')');
+
+  return Array.from(new Set([trimmed, normalizedParentheses].filter(Boolean)));
+}
+
+function buildCustomerSearchOrFilter(keywords: string[]) {
+  return keywords
+    .flatMap((keyword) => [
+      `name.ilike.%${keyword}%`,
+      `code.ilike.%${keyword}%`,
+    ])
+    .join(',');
+}
+
+function buildNameSearchOrFilter(keywords: string[]) {
+  return keywords
+    .map((keyword) => `name.ilike.%${keyword}%`)
+    .join(',');
 }
 
 export default function CrmSearch() {
@@ -55,12 +80,13 @@ export default function CrmSearch() {
       setError('');
 
       try {
+        const searchKeywords = buildClinicSearchKeywords(normalizedQuery);
         const customerPromise = filter === 'prospect'
           ? Promise.resolve({ data: [], error: null })
           : supabase
             .from('customers')
             .select('code, name')
-            .or(`name.ilike.%${normalizedQuery}%,code.ilike.%${normalizedQuery}%`)
+            .or(buildCustomerSearchOrFilter(searchKeywords))
             .order('name', { ascending: true })
             .limit(30);
 
@@ -68,7 +94,7 @@ export default function CrmSearch() {
           .from('prospect_customers')
           .select('id, name, status')
           .or('status.is.null,status.neq.merged')
-          .ilike('name', `%${normalizedQuery}%`)
+          .or(buildNameSearchOrFilter(searchKeywords))
           .order('name', { ascending: true })
           .limit(30);
 
@@ -90,13 +116,21 @@ export default function CrmSearch() {
           return;
         }
 
-        const customerResults: SearchResult[] = (customerResult.data ?? []).map((row: any) => ({
-          id: row.code,
-          kind: 'customer',
-          name: row.name,
-          subtitle: `顧客コード: ${row.code}`,
-          ownDealCount: 0,
-        }));
+        const customerResultsById = new Map<string, SearchResult>();
+        (customerResult.data ?? []).forEach((row: any) => {
+          const id = normalizeCustomerCode(row.code);
+          if (!id || customerResultsById.has(id)) return;
+
+          customerResultsById.set(id, {
+            id,
+            kind: 'customer',
+            name: normalizeCustomerName(row.name, id),
+            subtitle: `顧客コード: ${id}`,
+            ownDealCount: 0,
+          });
+        });
+
+        let customerResults = Array.from(customerResultsById.values());
 
         const prospectResults: SearchResult[] = (prospectResult.data ?? []).map((row: any) => ({
           id: row.id,
@@ -106,6 +140,24 @@ export default function CrmSearch() {
           status: row.status ?? undefined,
           ownDealCount: 0,
         }));
+
+        if (filter === 'all' && customerResults.length > 0 && prospectResults.length > 0) {
+          const { data: mergeCandidates, error: mergeCandidateError } = await supabase
+            .from('customer_merge_candidates')
+            .select('prospect_customer_id, customer_code, decision')
+            .eq('decision', 'pending')
+            .in('prospect_customer_id', prospectResults.map((row) => row.id))
+            .in('customer_code', customerResults.map((row) => row.id));
+
+          if (mergeCandidateError) {
+            console.error('crm search merge candidates error:', mergeCandidateError);
+          } else {
+            const hiddenCustomerCodes = new Set(
+              (mergeCandidates ?? []).map((row: any) => normalizeCustomerCode(row.customer_code))
+            );
+            customerResults = customerResults.filter((row) => !hiddenCustomerCodes.has(row.id));
+          }
+        }
 
         const merged = [...prospectResults, ...customerResults];
 

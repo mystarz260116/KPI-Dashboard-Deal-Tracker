@@ -108,6 +108,17 @@ function normalizeTemperature(value: string | null | undefined) {
   return raw.charAt(0);
 }
 
+function parseCategoryFilter(...values: unknown[]) {
+  const categories = values.flatMap((value) => {
+    if (Array.isArray(value)) return value;
+    return String(value ?? '').split(',');
+  })
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+
+  return categories.length > 0 ? new Set(categories) : undefined;
+}
+
 function resolveStage(row: DealRow): DealPipelineStage {
   const isMergedProspect = row.prospect_customer_id
     && row.prospect_customers?.status === 'merged'
@@ -135,6 +146,11 @@ export default async function handler(req: any, res: any) {
     const departmentId = parseDepartmentId(req.query.departmentId);
     const fromParam = req.query.from as string | undefined;
     const toParam = req.query.to as string | undefined;
+    const existingDealWinCategories = parseCategoryFilter(
+      req.query.existingDealWinCategories,
+      req.query.existing_deal_win_categories,
+      req.query.proposal_category
+    );
     const { from, toExclusive } = getDateRange(period, fromParam, toParam);
 
     const { data: profilesData, error: profilesError } = await supabaseAdmin
@@ -259,6 +275,7 @@ export default async function handler(req: any, res: any) {
       startDate: from,
       endExclusiveDate: toExclusive,
       allowedUserIds,
+      proposalCategories: existingDealWinCategories,
     });
 
     const userMap = new Map(

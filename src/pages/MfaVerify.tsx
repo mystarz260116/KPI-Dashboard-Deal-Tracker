@@ -39,8 +39,8 @@ export default function MfaVerify() {
 
       const verifiedTotp = data.totp?.[0];
       if (!verifiedTotp) {
-      navigate('/mfa/setup', { replace: true, state: location.state });
-      return;
+        navigate('/mfa/setup', { replace: true, state: location.state });
+        return;
       }
 
       setFactorId(verifiedTotp.id);
@@ -52,7 +52,7 @@ export default function MfaVerify() {
     return () => {
       isMounted = false;
     };
-  }, [navigate]);
+  }, [location.state, navigate]);
 
   const handleVerify = async (event: FormEvent) => {
     event.preventDefault();

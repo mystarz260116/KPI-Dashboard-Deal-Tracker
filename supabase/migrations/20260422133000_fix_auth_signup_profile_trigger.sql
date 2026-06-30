@@ -35,7 +35,7 @@ begin
     new.email,
     coalesce(v_role, 'user'),
     v_department_id,
-    false
+    true
   )
   on conflict (id) do update
   set

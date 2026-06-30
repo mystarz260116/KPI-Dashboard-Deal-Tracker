@@ -34,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
-  const [isMfaLoading] = useState(false);
+  const [isMfaLoading, setIsMfaLoading] = useState(false);
   const recordedLoginKeyRef = useRef<string | null>(null);
   const loadedSessionKeyRef = useRef<string | null>(null);
   const authLoadSeqRef = useRef(0);
@@ -91,13 +91,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       department: departmentName,
       email: profile.email,
       role: profile.role,
-      can_view_dashboard: profile.can_view_dashboard ?? false,
+      can_view_dashboard: true,
     };
   };
 
+  const loadMfaStatus = async (session: Session | null): Promise<MfaStatus | null> => {
+    if (!session?.user) {
+      setMfaStatus(null);
+      return null;
+    }
+
+    setIsMfaLoading(true);
+
+    try {
+      const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+      if (aalError) {
+        throw aalError;
+      }
+
+      const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+
+      if (factorsError) {
+        throw factorsError;
+      }
+
+      const nextStatus = {
+        currentLevel: aalData.currentLevel,
+        nextLevel: aalData.nextLevel,
+        isEnrolled: (factorsData.totp ?? []).length > 0,
+        isVerified: aalData.currentLevel === 'aal2',
+      };
+
+      setMfaStatus(nextStatus);
+      return nextStatus;
+    } catch (error) {
+      console.error('mfa status fetch error:', error);
+      const fallbackStatus = {
+        currentLevel: null,
+        nextLevel: null,
+        isEnrolled: false,
+        isVerified: false,
+      };
+      setMfaStatus(fallbackStatus);
+      return fallbackStatus;
+    } finally {
+      setIsMfaLoading(false);
+    }
+  };
+
   const refreshMfaStatus = async () => {
-    setMfaStatus(null);
-    return null;
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    return loadMfaStatus(session);
   };
 
   const getSessionKey = (session: Session | null) => (
@@ -130,19 +178,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const nextUser = await buildUserFromSession(session);
+    const [nextUser, nextMfaStatus] = await Promise.all([
+      buildUserFromSession(session),
+      loadMfaStatus(session),
+    ]);
 
     if (authLoadSeqRef.current !== loadSeq) {
       return;
     }
 
     setUser(nextUser);
-    setMfaStatus(null);
     setIsLoading(false);
     perfMark(`${label}:end`);
     perfMeasure(label, `${label}:start`, `${label}:end`);
 
-    if (options.trackLogin) {
+    if (options.trackLogin && nextMfaStatus?.isVerified) {
       void recordLoginUsage(session);
     }
   };

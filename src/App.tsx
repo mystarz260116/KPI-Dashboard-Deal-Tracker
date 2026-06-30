@@ -6,6 +6,8 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import MfaSetup from './pages/MfaSetup';
+import MfaVerify from './pages/MfaVerify';
 import Dashboard from './pages/Dashboard';
 import DealInput from './pages/DealInput';
 import DealHistory from './pages/DealHistory';
@@ -17,21 +19,40 @@ import SalesPerformanceDashboard from './pages/SalesPerformanceDashboard';
 import ClinicAssetsDashboard from './pages/ClinicAssetsDashboard';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, mfaStatus, isMfaLoading } = useAuth();
   const location = useLocation();
   const from = `${location.pathname}${location.search}`;
 
-  if (isLoading) return (
+  if (isLoading || isMfaLoading) return (
     <div className="flex h-screen items-center justify-center">
       Loading...
     </div>
   );
   if (!user) return <Navigate to="/login" replace state={{ from }} />;
+  if (!mfaStatus?.isEnrolled) return <Navigate to="/mfa/setup" replace state={{ from }} />;
+  if (!mfaStatus.isVerified) return <Navigate to="/mfa/verify" replace state={{ from }} />;
+  return <>{children}</>;
+}
+
+function MfaRoute({ children }: { children: ReactNode }) {
+  const { user, isLoading, mfaStatus, isMfaLoading } = useAuth();
+  const location = useLocation();
+  const redirectPath = typeof location.state?.from === 'string' ? location.state.from : '';
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const homePath = redirectPath || (isMobile || !user?.can_view_dashboard ? '/deals/new' : '/dashboard');
+
+  if (isLoading || isMfaLoading) return (
+    <div className="flex h-screen items-center justify-center">
+      Loading...
+    </div>
+  );
+  if (!user) return <Navigate to="/login" replace state={location.state} />;
+  if (mfaStatus?.isVerified) return <Navigate to={homePath} replace />;
   return <>{children}</>;
 }
 
 function AuthRedirect({ children }: { children: ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, mfaStatus, isMfaLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const redirectPath = typeof location.state?.from === 'string' ? location.state.from : '';
@@ -39,14 +60,24 @@ function AuthRedirect({ children }: { children: ReactNode }) {
   const homePath = redirectPath || (isMobile || !user?.can_view_dashboard ? '/deals/new' : '/dashboard');
 
   useEffect(() => {
-    if (isLoading || !user) {
+    if (isLoading || isMfaLoading || !user) {
+      return;
+    }
+
+    if (!mfaStatus?.isEnrolled) {
+      navigate('/mfa/setup', { state: { from: redirectPath || homePath }, replace: true });
+      return;
+    }
+
+    if (!mfaStatus.isVerified) {
+      navigate('/mfa/verify', { state: { from: redirectPath || homePath }, replace: true });
       return;
     }
 
     navigate(homePath);
-  }, [user, isLoading, navigate, homePath]);
+  }, [user, isLoading, isMfaLoading, mfaStatus, navigate, redirectPath, homePath]);
 
-  if (isLoading) return (
+  if (isLoading || isMfaLoading) return (
     <div className="flex h-screen items-center justify-center">
       Loading...
     </div>
@@ -64,8 +95,8 @@ export default function App() {
           <Route path="/signup" element={<AuthRedirect><Signup /></AuthRedirect>} />
           <Route path="/forgot-password" element={<AuthRedirect><ForgotPassword /></AuthRedirect>} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/mfa/setup" element={<Navigate to="/login" replace />} />
-          <Route path="/mfa/verify" element={<Navigate to="/login" replace />} />
+          <Route path="/mfa/setup" element={<MfaRoute><MfaSetup /></MfaRoute>} />
+          <Route path="/mfa/verify" element={<MfaRoute><MfaVerify /></MfaRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/deals/new" element={<ProtectedRoute><DealInput /></ProtectedRoute>} />
           <Route path="/deals/history" element={<ProtectedRoute><DealHistory /></ProtectedRoute>} />
