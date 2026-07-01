@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { storeMfaRedirectPath } from './mfaReverification';
 
 let cachedAccessToken: string | null | undefined;
 let sessionPromise: Promise<string | null> | null = null;
@@ -32,8 +33,24 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
-  return fetch(input, {
+  const response = await fetch(input, {
     ...init,
     headers,
   });
+
+  if (response.status === 403 && typeof window !== 'undefined') {
+    try {
+      const payload = await response.clone().json();
+      if (payload?.code === 'MFA_REQUIRED' || payload?.code === 'MFA_REVERIFY_REQUIRED') {
+        if (!window.location.pathname.startsWith('/mfa/')) {
+          storeMfaRedirectPath(`${window.location.pathname}${window.location.search}`);
+          window.location.assign('/mfa/verify');
+        }
+      }
+    } catch {
+      // Non-JSON 403 responses are handled by the caller.
+    }
+  }
+
+  return response;
 }

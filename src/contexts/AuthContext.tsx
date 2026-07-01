@@ -5,12 +5,16 @@ import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { User } from '../types';
 import { perfMark, perfMeasure } from '../lib/perf';
 import { authFetch } from '../lib/authFetch';
+import { isMfaReverificationRequired } from '../lib/mfaReverification';
 
 type MfaStatus = {
   currentLevel: 'aal1' | 'aal2' | null;
   nextLevel: 'aal1' | 'aal2' | null;
   isEnrolled: boolean;
   isVerified: boolean;
+  isReverificationRequired: boolean;
+  verifiedAt: string | null;
+  reverifyAfter: string | null;
 };
 
 interface AuthContextType {
@@ -70,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('name, email, role, department_id, can_view_dashboard, departments(name)')
+      .select('name, email, role, department_id, can_view_dashboard, mfa_verified_at, mfa_reverify_after, departments(name)')
       .eq('id', userId)
       .single();
 
@@ -92,6 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: profile.email,
       role: profile.role,
       can_view_dashboard: true,
+      mfa_verified_at: profile.mfa_verified_at ?? null,
+      mfa_reverify_after: profile.mfa_reverify_after ?? null,
     };
   };
 
@@ -116,11 +122,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw factorsError;
       }
 
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('mfa_verified_at, mfa_reverify_after')
+        .eq('id', session.user.id)
+        .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const isReverificationRequired = isMfaReverificationRequired(profile?.mfa_reverify_after ?? null);
+
       const nextStatus = {
         currentLevel: aalData.currentLevel,
         nextLevel: aalData.nextLevel,
         isEnrolled: (factorsData.totp ?? []).length > 0,
-        isVerified: aalData.currentLevel === 'aal2',
+        isVerified: aalData.currentLevel === 'aal2' && !isReverificationRequired,
+        isReverificationRequired,
+        verifiedAt: profile?.mfa_verified_at ?? null,
+        reverifyAfter: profile?.mfa_reverify_after ?? null,
       };
 
       setMfaStatus(nextStatus);
@@ -132,6 +153,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         nextLevel: null,
         isEnrolled: false,
         isVerified: false,
+        isReverificationRequired: true,
+        verifiedAt: null,
+        reverifyAfter: null,
       };
       setMfaStatus(fallbackStatus);
       return fallbackStatus;

@@ -1,0 +1,26 @@
+# supabase/migrations/20260423092000_use_department_id_for_sales_import.sql
+
+## 対応元ファイル
+
+`supabase/migrations/20260423092000_use_department_id_for_sales_import.sql`
+
+## 役割
+
+Supabase/Postgresのマイグレーションです。変更テーマは「use department id for sales import」です。
+
+## 主な仕様
+
+- ファイル名先頭のタイムスタンプ順に適用される前提です。
+- テーブル、カラム、インデックス、RLS、RPC、データ補正などのDB変更を管理します。
+
+## コードから読み取れる手がかり
+
+- 関連テーブル: sales_import_raw_rows、sales_import_rows、external_staffs、customer_external_staff_maps、profile_external_staff_maps
+- 関連インデックス: idx_sales_import_raw_rows_department_id、idx_sales_import_raw_rows_department_batch、idx_sales_import_rows_department_delivery_date、idx_sales_import_rows_department_customer_code、idx_sales_import_rows_department_external_staff_code、idx_external_staffs_department_code、idx_customer_external_staff_maps_department_customer_staff、idx_customer_external_staff_maps_department_staff、idx_profile_external_staff_maps_department_profile_staff、idx_profile_external_staff_maps_department_profile_id
+- 関連DB関数: sync_external_staff_from_raw、sum_sales_import_rows_amount
+
+## 運用メモ
+
+- この説明は現在のファイル構造に合わせた自然言語版です。実装変更時は対応する説明も更新してください。
+- 種別: テキストとして読めるファイル。
+- DB変更は適用順、既存データへの影響、RLS、インデックス負荷を確認してから反映してください。

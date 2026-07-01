@@ -33,11 +33,6 @@ interface LinkTarget {
 type ImportDataKind = 'delivery' | 'order';
 const candidateListInFlight = new Map<string, Promise<MergeCandidate[]>>();
 
-function getCurrentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
 export default function CustomerMerge() {
   const { user, logout, isLoading: isAuthLoading } = useAuth();
   const [candidates, setCandidates] = useState<MergeCandidate[]>([]);
@@ -53,7 +48,6 @@ export default function CustomerMerge() {
   const [linkSearched, setLinkSearched] = useState<Record<string, boolean>>({});
   const [sourceCustomerMatched, setSourceCustomerMatched] = useState<Record<string, boolean>>({});
   const [selectedTargets, setSelectedTargets] = useState<Record<string, LinkTarget | undefined>>({});
-  const [targetMonth, setTargetMonth] = useState(getCurrentMonth);
   const [dataKind, setDataKind] = useState<ImportDataKind>('delivery');
   const latestRequestKeyRef = useRef('');
   const navigate = useNavigate();
@@ -65,7 +59,6 @@ export default function CustomerMerge() {
 
   function buildCandidateQuery() {
     const params = new URLSearchParams({
-      month: targetMonth,
       data_kind: dataKind,
       ts: String(Date.now()),
     });
@@ -75,9 +68,9 @@ export default function CustomerMerge() {
 
   async function loadCandidates() {
     const startedAt = performance.now();
-    const requestKey = `${targetMonth}:${dataKind}`;
+    const requestKey = dataKind;
     latestRequestKeyRef.current = requestKey;
-    console.info('[perf] customer-merge load-candidates start', { month: targetMonth, dataKind, requestKey });
+    console.info('[perf] customer-merge load-candidates start', { dataKind, requestKey });
     try {
       setError('');
       setMessage('');
@@ -205,7 +198,7 @@ export default function CustomerMerge() {
       action,
       customerCode: candidate.customer_code,
       amount: candidate.amount,
-      month: candidate.detected_month ?? targetMonth,
+      month: candidate.detected_month,
     });
     const actionKey = `${action}:${candidate.customer_code}`;
     const target = selectedTargets[candidateKey(candidate)];
@@ -223,7 +216,7 @@ export default function CustomerMerge() {
         body: JSON.stringify({
           action,
           data_kind: candidate.data_kind ?? dataKind,
-          detected_month: candidate.detected_month ?? targetMonth,
+          detected_month: candidate.detected_month,
           customer_code: candidate.customer_code,
           customer_name: candidate.customer_name,
           department_id: candidate.department_id,
@@ -283,7 +276,7 @@ export default function CustomerMerge() {
       setLoading(false);
     }
     init();
-  }, [isAuthLoading, user?.id, targetMonth, dataKind]);
+  }, [isAuthLoading, user?.id, dataKind]);
 
   const handleLogout = async () => {
     await logout();
@@ -298,7 +291,7 @@ export default function CustomerMerge() {
 
   function candidateKey(candidate: MergeCandidate) {
     return candidate.source === 'detected_new_order'
-      ? `detected:${candidate.data_kind ?? dataKind}:${candidate.detected_month ?? targetMonth}:${candidate.customer_code}`
+      ? `detected:${candidate.data_kind ?? dataKind}:${candidate.detected_month ?? 'latest'}:${candidate.customer_code}`
       : `merge:${candidate.prospect_customer_id}:${candidate.customer_code}`;
   }
 
@@ -622,12 +615,6 @@ export default function CustomerMerge() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="month"
-                value={targetMonth}
-                onChange={(event) => setTargetMonth(event.target.value)}
-                className="h-11 rounded-lg border border-zinc-200 px-4 text-base font-black text-zinc-700 outline-none focus:border-indigo-300"
-              />
               <div className="flex rounded-lg bg-zinc-100 p-1">
                 {(['delivery', 'order'] as ImportDataKind[]).map((kind) => (
                   <button

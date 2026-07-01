@@ -32,10 +32,24 @@ function toDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function normalizeMonth(value: unknown) {
+function explicitMonth(value: unknown) {
   const raw = String(value ?? '').trim();
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  return monthKey(new Date());
+  return /^\d{4}-\d{2}$/.test(raw) ? raw : null;
+}
+
+async function fetchLatestSalesMonth(dataKind: 'delivery' | 'order') {
+  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+  const { data, error } = await supabaseAdmin
+    .from('sales_import_rows')
+    .select(dateColumn)
+    .eq('data_kind', dataKind)
+    .not(dateColumn, 'is', null)
+    .order(dateColumn, { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  const latestDate = String((data ?? [])[0]?.[dateColumn] ?? '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(latestDate) ? latestDate.slice(0, 7) : monthKey(new Date());
 }
 
 function normalizeSalesRowDate(value: unknown) {
@@ -253,7 +267,7 @@ export async function fetchDetectedNewOrderCandidates(profile: any, query: Recor
 
   const canViewAll = profile.role === 'admin' || profile.can_view_dashboard;
   const dataKind = normalizeSalesImportDataKind(query.data_kind);
-  const targetMonth = normalizeMonth(query.month);
+  const targetMonth = explicitMonth(query.month) ?? await fetchLatestSalesMonth(dataKind);
   const targetStart = monthStart(targetMonth);
   const targetEnd = addMonths(targetStart, 1);
   const previousYearStart = addMonths(targetStart, -12);

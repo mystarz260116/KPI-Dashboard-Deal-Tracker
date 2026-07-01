@@ -1,0 +1,25 @@
+# supabase/migrations/20260422110000_split_business_tables_by_region.sql
+
+## 対応元ファイル
+
+`supabase/migrations/20260422110000_split_business_tables_by_region.sql`
+
+## 役割
+
+Supabase/Postgresのマイグレーションです。変更テーマは「split business tables by region」です。
+
+## 主な仕様
+
+- ファイル名先頭のタイムスタンプ順に適用される前提です。
+- テーブル、カラム、インデックス、RLS、RPC、データ補正などのDB変更を管理します。
+
+## コードから読み取れる手がかり
+
+- 関連テーブル: customers_kansai、customers_tokyo、customer_external_staff_maps_kansai、customer_external_staff_maps_tokyo、profile_external_staff_maps_kansai、profile_external_staff_maps_tokyo、prospect_customers_kansai、prospect_customers_tokyo、deals_kansai、deals_tokyo、budgets_kansai、budgets_tokyo
+- 関連インデックス: idx_sales_import_rows_kansai_delivery_date、idx_sales_import_rows_tokyo_delivery_date、idx_sales_import_rows_kansai_customer_code、idx_sales_import_rows_tokyo_customer_code、idx_sales_import_rows_kansai_external_staff_code、idx_sales_import_rows_tokyo_external_staff_code、idx_sales_import_rows_kansai_import_batch_id、idx_sales_import_rows_tokyo_import_batch_id
+
+## 運用メモ
+
+- この説明は現在のファイル構造に合わせた自然言語版です。実装変更時は対応する説明も更新してください。
+- 種別: テキストとして読めるファイル。
+- DB変更は適用順、既存データへの影響、RLS、インデックス負荷を確認してから反映してください。

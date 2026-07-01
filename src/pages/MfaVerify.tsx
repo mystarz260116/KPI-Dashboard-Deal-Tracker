@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Loader2, LogOut, ShieldCheck } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { consumeStoredMfaRedirectPath } from '../lib/mfaReverification';
+import { recordMfaVerification } from '../lib/mfaVerification';
 import logoImg from '../assets/Mystarz-logo.png';
 
 function getHomePath(canViewDashboard: boolean) {
@@ -81,8 +83,12 @@ export default function MfaVerify() {
         return;
       }
 
+      await supabase.auth.refreshSession();
+      await recordMfaVerification();
       await refreshMfaStatus();
-      const redirectPath = typeof location.state?.from === 'string' ? location.state.from : '';
+      const redirectPath = typeof location.state?.from === 'string'
+        ? location.state.from
+        : consumeStoredMfaRedirectPath();
       navigate(redirectPath || getHomePath(Boolean(user?.can_view_dashboard)), { replace: true });
     } catch (error) {
       console.error('mfa verify error:', error);

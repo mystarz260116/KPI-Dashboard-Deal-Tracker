@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Copy, Eye, EyeOff, KeyRound, Loader2, LogOut, Monitor, ShieldCheck, Smartphone } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { consumeStoredMfaRedirectPath } from '../lib/mfaReverification';
+import { recordMfaVerification } from '../lib/mfaVerification';
 import logoImg from '../assets/Mystarz-logo.png';
 
 type Enrollment = {
@@ -213,9 +215,13 @@ export default function MfaSetup() {
         return;
       }
 
+      await supabase.auth.refreshSession();
+      await recordMfaVerification();
       await refreshMfaStatus();
       setPendingFactorId('');
-      const redirectPath = typeof location.state?.from === 'string' ? location.state.from : '';
+      const redirectPath = typeof location.state?.from === 'string'
+        ? location.state.from
+        : consumeStoredMfaRedirectPath();
       navigate(redirectPath || getHomePath(Boolean(user?.can_view_dashboard)), { replace: true });
     } catch (error) {
       console.error('mfa setup verify error:', error);

@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { isMfaReverificationRequired } from './mfaReverification.js';
 
 type AuthenticatedProfile = {
   id: string;
@@ -10,6 +11,8 @@ type AuthenticatedProfile = {
   department_id: string | null;
   can_view_dashboard: boolean;
   authenticator_assurance_level: 'aal1' | 'aal2' | null;
+  mfa_verified_at: string | null;
+  mfa_reverify_after: string | null;
 };
 
 type AuthCacheEntry = {
@@ -19,6 +22,7 @@ type AuthCacheEntry = {
 
 type RequireAuthenticatedProfileOptions = {
   allowMfaIncomplete?: boolean;
+  allowMfaReverifyExpired?: boolean;
 };
 
 type AuthLoadResult = {
@@ -49,6 +53,18 @@ const AUTH_PROFILE_CACHE_TTL_MS = 60_000;
 const authProfileCache = new Map<string, AuthCacheEntry>();
 const authProfileInFlight = new Map<string, Promise<AuthLoadResult>>();
 
+function getMfaReverificationError(profile: AuthenticatedProfile) {
+  if (profile.authenticator_assurance_level !== 'aal2') {
+    return { error: 'MFA required', code: 'MFA_REQUIRED' };
+  }
+
+  if (isMfaReverificationRequired(profile.mfa_reverify_after)) {
+    return { error: 'MFA re-verification required', code: 'MFA_REVERIFY_REQUIRED' };
+  }
+
+  return null;
+}
+
 function getBearerToken(req: VercelRequest) {
   const authorizationHeader = req.headers.authorization;
   if (!authorizationHeader?.startsWith('Bearer ')) {
@@ -57,6 +73,13 @@ function getBearerToken(req: VercelRequest) {
 
   const token = authorizationHeader.slice('Bearer '.length).trim();
   return token || null;
+}
+
+export function clearAuthProfileCacheForRequest(req: VercelRequest) {
+  const accessToken = getBearerToken(req);
+  if (accessToken) {
+    authProfileCache.delete(accessToken);
+  }
 }
 
 function decodeAuthenticatorAssuranceLevel(accessToken: string): 'aal1' | 'aal2' | null {
@@ -91,8 +114,9 @@ export async function requireAuthenticatedProfile(
   const cacheKey = accessToken;
   const cached = authProfileCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    if (!options.allowMfaIncomplete && cached.profile.authenticator_assurance_level !== 'aal2') {
-      res.status(403).json({ error: 'MFA required', code: 'MFA_REQUIRED' });
+    const mfaError = options.allowMfaIncomplete ? null : getMfaReverificationError(cached.profile);
+    if (mfaError && !(mfaError.code === 'MFA_REVERIFY_REQUIRED' && options.allowMfaReverifyExpired)) {
+      res.status(403).json(mfaError);
       return null;
     }
     return cached.profile;
@@ -122,7 +146,7 @@ export async function requireAuthenticatedProfile(
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('id, name, email, role, department_id, can_view_dashboard')
+      .select('id, name, email, role, department_id, can_view_dashboard, mfa_verified_at, mfa_reverify_after')
       .eq('id', user.id)
       .single();
 
@@ -139,6 +163,8 @@ export async function requireAuthenticatedProfile(
       department_id: profile.department_id ?? null,
       can_view_dashboard: true,
       authenticator_assurance_level: authenticatorAssuranceLevel,
+      mfa_verified_at: profile.mfa_verified_at ?? null,
+      mfa_reverify_after: profile.mfa_reverify_after ?? null,
     };
 
     authProfileCache.set(cacheKey, {
@@ -160,8 +186,9 @@ export async function requireAuthenticatedProfile(
     return null;
   }
 
-  if (!options.allowMfaIncomplete && result.profile.authenticator_assurance_level !== 'aal2') {
-    res.status(403).json({ error: 'MFA required', code: 'MFA_REQUIRED' });
+  const mfaError = options.allowMfaIncomplete ? null : getMfaReverificationError(result.profile);
+  if (mfaError && !(mfaError.code === 'MFA_REVERIFY_REQUIRED' && options.allowMfaReverifyExpired)) {
+    res.status(403).json(mfaError);
     return null;
   }
 
