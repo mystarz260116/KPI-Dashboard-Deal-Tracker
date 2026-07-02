@@ -8,6 +8,7 @@
   "rewrites": [
     { "source": "/api/customers/(.*)", "destination": "/api/customers?path=$1" },
     { "source": "/api/deals/(.*)", "destination": "/api/deals?path=$1" },
+    { "source": "/api/import/product-categories/(.*)", "destination": "/api/import?path=product-categories/$1" },
     { "source": "/api/import/sales/(.*)", "destination": "/api/import?path=sales/$1" },
     { "source": "/api/kpi/(.*)", "destination": "/api/kpi?path=$1" },
     { "source": "/api/merge/(.*)", "destination": "/api/merge?path=$1" },
