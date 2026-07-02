@@ -310,6 +310,7 @@ export default function Dashboard() {
   const [isCommentNotificationsOpen, setIsCommentNotificationsOpen] = useState(false);
   const [productDepartmentAssignments, setProductDepartmentAssignments] = useState<Record<string, string>>({});
   const [savingProductAssignmentKey, setSavingProductAssignmentKey] = useState('');
+  const [isBulkProductAssignmentSaving, setIsBulkProductAssignmentSaving] = useState(false);
   const [productAssignmentMessage, setProductAssignmentMessage] = useState('');
   const [dashboardReloadKey, setDashboardReloadKey] = useState(0);
   const [perfStats, setPerfStats] = useState<{
@@ -333,6 +334,9 @@ export default function Dashboard() {
   const productDepartmentSales: ProductDepartmentPanelItem[] = data?.product_department_sales ?? [];
   const productDepartmentOptions: ProductDepartmentOption[] = data?.product_department_options ?? [];
   const unclassifiedProducts: UnclassifiedProductItem[] = data?.unclassified_products ?? [];
+  const selectedProductAssignmentItems = unclassifiedProducts.filter(
+    (item) => Boolean(productDepartmentAssignments[item.key])
+  );
   const performanceRanking: PerformanceRankingItem[] = data?.performance_ranking ?? [];
   const scopedUsers = selectedDept
     ? users.filter((u) => String(u.department_id ?? '') === selectedDept)
@@ -720,9 +724,55 @@ export default function Dashboard() {
     setAppliedSalesImportDataKind(salesImportDataKind);
   };
 
+  const upsertProductDepartmentAssignments = async (items: UnclassifiedProductItem[]) => {
+    const rows = items
+      .map((item) => {
+        const productDepartmentId = productDepartmentAssignments[item.key];
+        if (!productDepartmentId) return null;
+
+        return {
+          department_id: item.department_id,
+          product_department_id: productDepartmentId,
+          normalized_product_code: item.normalized_product_code,
+          normalized_product_name: item.normalized_product_name || item.normalized_product_code,
+          sort_order: 0,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+    if (rows.length === 0) {
+      setProductAssignmentMessage('商品部門を選択してください。');
+      return 0;
+    }
+
+    const response = await authFetch('/api/import/product-categories/upsert', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        rows,
+      }),
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error ?? '商品部門マスタへの追加に失敗しました。');
+    }
+
+    setProductDepartmentAssignments((current) => {
+      const next = { ...current };
+      items.forEach((item) => {
+        delete next[item.key];
+      });
+      return next;
+    });
+    setDashboardReloadKey((current) => current + 1);
+    return rows.length;
+  };
+
   const assignProductDepartment = async (item: UnclassifiedProductItem) => {
-    const productDepartmentId = productDepartmentAssignments[item.key];
-    if (!productDepartmentId) {
+    if (!productDepartmentAssignments[item.key]) {
       setProductAssignmentMessage('商品部門を選択してください。');
       return;
     }
@@ -731,39 +781,37 @@ export default function Dashboard() {
     setProductAssignmentMessage('');
 
     try {
-      const response = await authFetch('/api/import/product-categories/upsert', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          rows: [{
-            department_id: item.department_id,
-            product_department_id: productDepartmentId,
-            normalized_product_code: item.normalized_product_code,
-            normalized_product_name: item.normalized_product_name || item.normalized_product_code,
-            sort_order: 0,
-          }],
-        }),
-      });
-
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error ?? '商品部門マスタへの追加に失敗しました。');
+      const upsertedCount = await upsertProductDepartmentAssignments([item]);
+      if (upsertedCount > 0) {
+        setProductAssignmentMessage('商品部門マスタに追加しました。');
       }
-
-      setProductAssignmentMessage('商品部門マスタに追加しました。');
-      setProductDepartmentAssignments((current) => {
-        const next = { ...current };
-        delete next[item.key];
-        return next;
-      });
-      setDashboardReloadKey((current) => current + 1);
     } catch (err: any) {
       console.error('product department assignment error:', err);
       setProductAssignmentMessage(err?.message ?? '商品部門マスタへの追加に失敗しました。');
     } finally {
       setSavingProductAssignmentKey('');
+    }
+  };
+
+  const assignSelectedProductDepartments = async () => {
+    if (selectedProductAssignmentItems.length === 0) {
+      setProductAssignmentMessage('商品部門を選択してください。');
+      return;
+    }
+
+    setIsBulkProductAssignmentSaving(true);
+    setProductAssignmentMessage('');
+
+    try {
+      const upsertedCount = await upsertProductDepartmentAssignments(selectedProductAssignmentItems);
+      if (upsertedCount > 0) {
+        setProductAssignmentMessage(`${upsertedCount}件を商品部門マスタに追加しました。`);
+      }
+    } catch (err: any) {
+      console.error('product department bulk assignment error:', err);
+      setProductAssignmentMessage(err?.message ?? '商品部門マスタへの追加に失敗しました。');
+    } finally {
+      setIsBulkProductAssignmentSaving(false);
     }
   };
 
@@ -1406,9 +1454,24 @@ export default function Dashboard() {
                     <h3 className="text-sm font-black text-zinc-900">未分類商品の割当</h3>
                     <p className="mt-1 text-xs text-zinc-500">選択した内容は商品部門マスタへ追加されます</p>
                   </div>
-                  {productAssignmentMessage && (
-                    <p className="text-xs font-semibold text-zinc-600">{productAssignmentMessage}</p>
-                  )}
+                  <div className="flex flex-col gap-2 md:items-end">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-semibold text-zinc-500">
+                        選択済み {selectedProductAssignmentItems.length}件
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isBulkProductAssignmentSaving || selectedProductAssignmentItems.length === 0}
+                        onClick={assignSelectedProductDepartments}
+                        className="rounded-md bg-teal-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                      >
+                        {isBulkProductAssignmentSaving ? '一括追加中' : '選択済みを一括追加'}
+                      </button>
+                    </div>
+                    {productAssignmentMessage && (
+                      <p className="text-xs font-semibold text-zinc-600">{productAssignmentMessage}</p>
+                    )}
+                  </div>
                 </div>
                 <div className="overflow-x-auto rounded-lg border border-zinc-200">
                   <table className="min-w-full divide-y divide-zinc-200 text-sm">
@@ -1428,6 +1491,7 @@ export default function Dashboard() {
                           (option) => option.department_id === item.department_id
                         );
                         const isSaving = savingProductAssignmentKey === item.key;
+                        const isProductAssignmentDisabled = isSaving || isBulkProductAssignmentSaving;
 
                         return (
                           <tr key={item.key}>
@@ -1444,6 +1508,7 @@ export default function Dashboard() {
                                   ...current,
                                   [item.key]: event.target.value,
                                 }))}
+                                disabled={isProductAssignmentDisabled}
                                 className="w-full min-w-[180px] rounded-md border border-zinc-200 px-3 py-2 text-sm"
                               >
                                 <option value="">選択</option>
@@ -1455,7 +1520,7 @@ export default function Dashboard() {
                             <td className="px-4 py-3 text-right">
                               <button
                                 type="button"
-                                disabled={isSaving || !productDepartmentAssignments[item.key]}
+                                disabled={isProductAssignmentDisabled || !productDepartmentAssignments[item.key]}
                                 onClick={() => assignProductDepartment(item)}
                                 className="rounded-md bg-teal-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
                               >
