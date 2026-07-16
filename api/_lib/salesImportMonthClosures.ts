@@ -129,61 +129,27 @@ export async function replaceOpenMonthSalesData(
   let deletedSalesRows = 0;
   const normalizedDataKind = normalizeSalesImportDataKind(dataKind);
   const salesDateColumn = normalizedDataKind === 'order' ? 'order_date' : 'delivery_date';
-  const rawDateColumn = normalizedDataKind === 'order' ? '受注日' : '納品日';
 
   for (const targetYearMonth of targetYearMonths) {
     const { start, endExclusive } = getMonthRange(targetYearMonth);
 
-    const rawRowsToDelete: any[] = [];
-    const pageSize = 1000;
-    let from = 0;
+    const rawParsedDateColumn = normalizedDataKind === 'order'
+      ? 'order_date_parsed'
+      : 'delivery_date_parsed';
+    const deleteRawResult = await supabaseAdmin
+      .from(SALES_IMPORT_RAW_TABLE)
+      .delete({ count: 'exact' })
+      .eq('department_id', departmentId)
+      .eq('data_kind', normalizedDataKind)
+      .neq('import_batch_id', importBatchId)
+      .gte(rawParsedDateColumn, start)
+      .lt(rawParsedDateColumn, endExclusive);
 
-    while (true) {
-      const { data: rawRowsPage, error: rawRowsLookupError } = await supabaseAdmin
-        .from(SALES_IMPORT_RAW_TABLE)
-        .select(`id, ${rawDateColumn}`)
-        .eq('department_id', departmentId)
-        .eq('data_kind', normalizedDataKind)
-        .neq('import_batch_id', importBatchId)
-        .range(from, from + pageSize - 1);
-
-      if (rawRowsLookupError) {
-        throw rawRowsLookupError;
-      }
-
-      const page = rawRowsPage ?? [];
-      rawRowsToDelete.push(...page);
-
-      if (page.length < pageSize) {
-        break;
-      }
-
-      from += pageSize;
+    if (deleteRawResult.error) {
+      throw deleteRawResult.error;
     }
 
-    const rawIdsToDelete = (rawRowsToDelete ?? [])
-      .filter((row: any) => {
-        const month = getMonthKeyFromRawDate(row[rawDateColumn]);
-        return month === targetYearMonth;
-      })
-      .map((row: any) => row.id)
-      .filter(Boolean);
-
-    for (let index = 0; index < rawIdsToDelete.length; index += 1000) {
-      const rawIdChunk = rawIdsToDelete.slice(index, index + 1000);
-      const deleteRawResult = await supabaseAdmin
-        .from(SALES_IMPORT_RAW_TABLE)
-        .delete({ count: 'exact' })
-        .eq('department_id', departmentId)
-        .eq('data_kind', normalizedDataKind)
-        .in('id', rawIdChunk);
-
-      if (deleteRawResult.error) {
-        throw deleteRawResult.error;
-      }
-
-      deletedRawRows += deleteRawResult.count ?? rawIdChunk.length;
-    }
+    deletedRawRows += deleteRawResult.count ?? 0;
 
     const deleteSalesRowsResult = await supabaseAdmin
       .from('sales_import_rows')
