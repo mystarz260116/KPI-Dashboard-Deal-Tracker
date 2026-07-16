@@ -128,43 +128,22 @@ export async function replaceOpenMonthSalesData(
   let deletedRawRows = 0;
   let deletedSalesRows = 0;
   const normalizedDataKind = normalizeSalesImportDataKind(dataKind);
-  const salesDateColumn = normalizedDataKind === 'order' ? 'order_date' : 'delivery_date';
 
   for (const targetYearMonth of targetYearMonths) {
     const { start, endExclusive } = getMonthRange(targetYearMonth);
+    const { data, error } = await supabaseAdmin.rpc('replace_open_month_sales_import_data', {
+      p_department_id: departmentId,
+      p_import_batch_id: importBatchId,
+      p_data_kind: normalizedDataKind,
+      p_start_date: start,
+      p_end_date_exclusive: endExclusive,
+    });
 
-    const rawParsedDateColumn = normalizedDataKind === 'order'
-      ? 'order_date_parsed'
-      : 'delivery_date_parsed';
-    const deleteRawResult = await supabaseAdmin
-      .from(SALES_IMPORT_RAW_TABLE)
-      .delete({ count: 'exact' })
-      .eq('department_id', departmentId)
-      .eq('data_kind', normalizedDataKind)
-      .neq('import_batch_id', importBatchId)
-      .gte(rawParsedDateColumn, start)
-      .lt(rawParsedDateColumn, endExclusive);
+    if (error) throw error;
 
-    if (deleteRawResult.error) {
-      throw deleteRawResult.error;
-    }
-
-    deletedRawRows += deleteRawResult.count ?? 0;
-
-    const deleteSalesRowsResult = await supabaseAdmin
-      .from('sales_import_rows')
-      .delete({ count: 'exact' })
-      .eq('department_id', departmentId)
-      .eq('data_kind', normalizedDataKind)
-      .neq('import_batch_id', importBatchId)
-      .gte(salesDateColumn, start)
-      .lt(salesDateColumn, endExclusive);
-
-    if (deleteSalesRowsResult.error) {
-      throw deleteSalesRowsResult.error;
-    }
-
-    deletedSalesRows += deleteSalesRowsResult.count ?? 0;
+    const result = Array.isArray(data) ? data[0] : data;
+    deletedRawRows += Number(result?.deleted_raw_rows ?? 0);
+    deletedSalesRows += Number(result?.deleted_sales_rows ?? 0);
   }
 
   return {
