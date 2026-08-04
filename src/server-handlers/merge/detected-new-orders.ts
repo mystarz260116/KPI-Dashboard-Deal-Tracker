@@ -265,7 +265,7 @@ export async function fetchDetectedNewOrderCandidates(profile: any, query: Recor
     lastAt = now;
   };
 
-  const canViewAll = profile.role === 'admin' || profile.can_view_dashboard;
+  const canViewAll = profile.can_manage_users;
   const dataKind = normalizeSalesImportDataKind(query.data_kind);
   const targetMonth = explicitMonth(query.month) ?? await fetchLatestSalesMonth(dataKind);
   const targetStart = monthStart(targetMonth);

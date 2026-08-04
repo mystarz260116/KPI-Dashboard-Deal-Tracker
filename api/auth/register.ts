@@ -5,6 +5,12 @@ import {
 } from '../_lib/profileExternalStaff.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  void req;
+  return res.status(403).json({
+    error: '公開アカウント登録は停止されています。ユーザーマスタから追加してください',
+  });
+
+  /* 公開登録を再開する場合に備え、旧実装を履歴として残しています。
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -99,4 +105,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('register api unexpected error:', error);
     return res.status(500).json({ error: 'register api failed' });
   }
+  */
 }

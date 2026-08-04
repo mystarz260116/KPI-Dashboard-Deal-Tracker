@@ -10,6 +10,8 @@ type AuthenticatedProfile = {
   role: string;
   department_id: string | null;
   can_view_dashboard: boolean;
+  can_manage_users: boolean;
+  must_change_password: boolean;
   authenticator_assurance_level: 'aal1' | 'aal2' | null;
   mfa_verified_at: string | null;
   mfa_reverify_after: string | null;
@@ -53,6 +55,44 @@ const AUTH_PROFILE_CACHE_TTL_MS = 60_000;
 const authProfileCache = new Map<string, AuthCacheEntry>();
 const authProfileInFlight = new Map<string, Promise<AuthLoadResult>>();
 
+function isLocalAuthBypassRequest(req: VercelRequest) {
+  if (process.env.NODE_ENV === 'production' || process.env.LOCAL_AUTH_BYPASS !== '1') {
+    return false;
+  }
+
+  const host = String(req.headers.host ?? '').split(':')[0];
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
+async function loadLocalDevelopmentProfile(): Promise<AuthenticatedProfile | null> {
+  const { data: profile, error } = await supabaseAdmin
+    .from('profiles')
+    .select('id, name, email, role, department_id, can_view_dashboard, can_manage_users, must_change_password, mfa_verified_at, mfa_reverify_after')
+    .eq('role', 'admin')
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !profile) {
+    console.error('local auth bypass profile lookup error:', error);
+    return null;
+  }
+
+  return {
+    id: profile.id,
+    email: profile.email ?? '',
+    name: profile.name ?? 'ローカル開発者',
+    role: profile.role ?? 'admin',
+    department_id: profile.department_id ?? null,
+    can_view_dashboard: true,
+    can_manage_users: true,
+    must_change_password: false,
+    authenticator_assurance_level: 'aal2',
+    mfa_verified_at: profile.mfa_verified_at ?? new Date().toISOString(),
+    mfa_reverify_after: null,
+  };
+}
+
 function getMfaReverificationError(profile: AuthenticatedProfile) {
   if (profile.authenticator_assurance_level !== 'aal2') {
     return { error: 'MFA required', code: 'MFA_REQUIRED' };
@@ -82,6 +122,14 @@ export function clearAuthProfileCacheForRequest(req: VercelRequest) {
   }
 }
 
+export function clearAuthProfileCacheForUser(userId: string) {
+  for (const [accessToken, entry] of authProfileCache.entries()) {
+    if (entry.profile.id === userId) {
+      authProfileCache.delete(accessToken);
+    }
+  }
+}
+
 function decodeAuthenticatorAssuranceLevel(accessToken: string): 'aal1' | 'aal2' | null {
   try {
     const [, payload] = accessToken.split('.');
@@ -104,6 +152,15 @@ export async function requireAuthenticatedProfile(
   res: VercelResponse,
   options: RequireAuthenticatedProfileOptions = {}
 ): Promise<AuthenticatedProfile | null> {
+  if (isLocalAuthBypassRequest(req)) {
+    const localProfile = await loadLocalDevelopmentProfile();
+    if (!localProfile) {
+      res.status(500).json({ error: 'Local development profile is unavailable' });
+      return null;
+    }
+    return localProfile;
+  }
+
   const accessToken = getBearerToken(req);
 
   if (!accessToken) {
@@ -146,7 +203,7 @@ export async function requireAuthenticatedProfile(
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('id, name, email, role, department_id, can_view_dashboard, mfa_verified_at, mfa_reverify_after')
+      .select('id, name, email, role, department_id, can_view_dashboard, can_manage_users, must_change_password, mfa_verified_at, mfa_reverify_after')
       .eq('id', user.id)
       .single();
 
@@ -162,6 +219,8 @@ export async function requireAuthenticatedProfile(
       role: profile.role ?? 'sales',
       department_id: profile.department_id ?? null,
       can_view_dashboard: true,
+      can_manage_users: profile.can_manage_users ?? false,
+      must_change_password: profile.must_change_password ?? false,
       authenticator_assurance_level: authenticatorAssuranceLevel,
       mfa_verified_at: profile.mfa_verified_at ?? null,
       mfa_reverify_after: profile.mfa_reverify_after ?? null,
@@ -201,5 +260,17 @@ export function requireDashboardAccess(
 ) {
   void profile;
   void res;
+  return true;
+}
+
+export function requireUserManagementAccess(
+  profile: AuthenticatedProfile,
+  res: VercelResponse
+) {
+  if (!profile.can_manage_users) {
+    res.status(403).json({ error: 'User management permission required' });
+    return false;
+  }
+
   return true;
 }

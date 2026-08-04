@@ -27,6 +27,31 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const isLocalAuthBypass = import.meta.env.DEV && import.meta.env.VITE_LOCAL_AUTH_BYPASS === 'true';
+
+const localDevelopmentUser: User = {
+  id: 'local-development-user',
+  email: 'local-development@mystarz.local',
+  name: 'ローカル開発者',
+  department_id: null,
+  department: 'ローカル開発',
+  role: 'admin',
+  can_view_dashboard: true,
+  can_manage_users: true,
+  must_change_password: false,
+  mfa_verified_at: new Date().toISOString(),
+  mfa_reverify_after: null,
+};
+
+const localDevelopmentMfaStatus: MfaStatus = {
+  currentLevel: 'aal2',
+  nextLevel: 'aal2',
+  isEnrolled: true,
+  isVerified: true,
+  isReverificationRequired: false,
+  verifiedAt: localDevelopmentUser.mfa_verified_at ?? null,
+  reverifyAfter: null,
+};
 
 export function useAuth() {
   const context = useContext(AuthContext);
@@ -35,9 +60,9 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+  const [user, setUser] = useState<User | null>(isLocalAuthBypass ? localDevelopmentUser : null);
+  const [isLoading, setIsLoading] = useState(!isLocalAuthBypass);
+  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(isLocalAuthBypass ? localDevelopmentMfaStatus : null);
   const [isMfaLoading, setIsMfaLoading] = useState(false);
   const recordedLoginKeyRef = useRef<string | null>(null);
   const loadedSessionKeyRef = useRef<string | null>(null);
@@ -74,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('name, email, role, department_id, can_view_dashboard, mfa_verified_at, mfa_reverify_after, departments(name)')
+      .select('name, email, role, department_id, can_view_dashboard, can_manage_users, must_change_password, mfa_verified_at, mfa_reverify_after, departments(name)')
       .eq('id', userId)
       .single();
 
@@ -96,6 +121,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: profile.email,
       role: profile.role,
       can_view_dashboard: true,
+      can_manage_users: profile.can_manage_users ?? false,
+      must_change_password: profile.must_change_password ?? false,
       mfa_verified_at: profile.mfa_verified_at ?? null,
       mfa_reverify_after: profile.mfa_reverify_after ?? null,
     };
@@ -239,6 +266,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    if (isLocalAuthBypass) {
+      return;
+    }
+
     let isMounted = true;
 
     const initializeAuth = async () => {
@@ -274,6 +305,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = async () => {
+    if (isLocalAuthBypass) {
+      return;
+    }
+
     await supabase.auth.signOut();
     setUser(null);
     setMfaStatus(null);
