@@ -1101,12 +1101,6 @@ export default async function handler(req: any, res: any) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 50);
 
-    const won_ranking = Array.from(wonRankingMap.entries())
-      .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
-      .filter((item) => item.name)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
-
     const sales_ranking = Array.from(salesRankingMap.entries())
       .map(([userId, sales]) => ({ user_id: userId, name: userById.get(userId)?.name ?? '', sales: Math.round(sales) }))
       .filter((item) => item.user_id !== headOfficeSalesUserId)
@@ -1114,21 +1108,6 @@ export default async function handler(req: any, res: any) {
       .map(({ name, sales }) => ({ name, sales }))
       .sort((a, b) => b.sales - a.sales)
       .slice(0, 10);
-
-    const performance_ranking = filteredUsers
-      .map((user) => ({
-        user_id: user.id,
-        name: user.name,
-        sales: Math.round(salesRankingMap.get(user.id) ?? 0),
-        budget: Math.round(budgetByUserMap.get(user.id) ?? 0),
-        visits: visitRankingMap.get(user.id) ?? 0,
-        visit_goal: visitGoalByUserMap.get(user.id) ?? null,
-        won_count: wonRankingMap.get(user.id) ?? 0,
-        closure_goal: closureGoalByUserMap.get(user.id) ?? null,
-        new_order_amount_goal: newOrderAmountGoalByUserMap.get(user.id) ?? null,
-      }))
-      .filter((row) => row.user_id !== headOfficeSalesUserId)
-      .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
 
     const prospectNewOrders = scopedMergedProspectsInPeriod
       .slice()
@@ -1156,6 +1135,7 @@ export default async function handler(req: any, res: any) {
       });
 
     let approvedDetectedNewOrders: any[] = [];
+    const approvedDetectedNewOrderUserIds: string[] = [];
     const approvedDetectedQuery = supabaseAdmin
       .from('detected_new_orders')
       .select('customer_code, customer_name, user_id, department_id, amount, ordered_at, detected_month, created_deal_id')
@@ -1181,11 +1161,13 @@ export default async function handler(req: any, res: any) {
           if (granularity === 'individual' && userId && detectedUserId !== userId) return false;
           return true;
         })
-        .filter((row: any) => !prospectCustomerCodes.has(String(row.customer_code ?? '').trim()))
         .map((row: any) => {
           const detectedUserId = String(row.user_id ?? '').trim();
           const user = userById.get(detectedUserId);
           const customerCode = String(row.customer_code ?? '').trim();
+          if (!prospectCustomerCodes.has(customerCode)) {
+            approvedDetectedNewOrderUserIds.push(detectedUserId);
+          }
           return {
             clinic: row.customer_name ?? customerCode,
             clinic_kind: 'customer',
@@ -1202,7 +1184,41 @@ export default async function handler(req: any, res: any) {
         });
     }
 
-    const new_orders = [...prospectNewOrders, ...approvedDetectedNewOrders]
+    approvedDetectedNewOrderUserIds.forEach((detectedUserId) => {
+      wonRankingMap.set(detectedUserId, (wonRankingMap.get(detectedUserId) ?? 0) + 1);
+    });
+
+    const won_ranking = Array.from(wonRankingMap.entries())
+      .map(([userId, count]) => ({ name: userById.get(userId)?.name ?? '', count }))
+      .filter((item) => item.name)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    const performance_ranking = filteredUsers
+      .map((user) => ({
+        user_id: user.id,
+        name: user.name,
+        sales: Math.round(salesRankingMap.get(user.id) ?? 0),
+        budget: Math.round(budgetByUserMap.get(user.id) ?? 0),
+        visits: visitRankingMap.get(user.id) ?? 0,
+        visit_goal: visitGoalByUserMap.get(user.id) ?? null,
+        won_count: wonRankingMap.get(user.id) ?? 0,
+        closure_goal: closureGoalByUserMap.get(user.id) ?? null,
+        new_order_amount_goal: newOrderAmountGoalByUserMap.get(user.id) ?? null,
+      }))
+      .filter((row) => row.user_id !== headOfficeSalesUserId)
+      .sort((a, b) => b.sales - a.sales || b.visits - a.visits || a.name.localeCompare(b.name, 'ja'));
+
+    const approvedDetectedCustomerCodes = new Set(
+      approvedDetectedNewOrders
+        .map((row: any) => String(row.customer_code ?? '').trim())
+        .filter(Boolean)
+    );
+    const prospectOrdersWithoutApprovedDetection = prospectNewOrders.filter(
+      (row: any) => !approvedDetectedCustomerCodes.has(String(row.customer_code ?? '').trim())
+    );
+
+    const new_orders = [...prospectOrdersWithoutApprovedDetection, ...approvedDetectedNewOrders]
       .sort((a: any, b: any) => {
         const left = new Date(a.ordered_at ?? '').getTime();
         const right = new Date(b.ordered_at ?? '').getTime();
@@ -1214,7 +1230,7 @@ export default async function handler(req: any, res: any) {
       performanceRanking: performance_ranking.length,
       productDepartmentSales: product_department_sales.length,
       newOrders: new_orders.length,
-      prospectNewOrders: prospectNewOrders.length,
+      prospectNewOrders: prospectOrdersWithoutApprovedDetection.length,
       approvedDetectedNewOrders: approvedDetectedNewOrders.length,
     });
 

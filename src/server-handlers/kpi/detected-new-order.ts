@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { normalizeCustomerCode, normalizeCustomerName } from '../../lib/customerCode.js';
-import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
+import { clinicNameSimilarity, normalizeClinicNameForMerge } from '../../lib/mergeUtils.js';
+import { requireAuthenticatedProfile, requireUserManagementAccess } from '../../../api/_lib/auth.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
 
 function normalizeMonth(value: unknown) {
@@ -68,12 +69,79 @@ async function customerExists(customerCode: string) {
 async function fetchProspectName(prospectCustomerId: string) {
   const { data, error } = await supabaseAdmin
     .from('prospect_customers')
-    .select('name')
+    .select('name, status, merged_customer_code')
     .eq('id', prospectCustomerId)
     .maybeSingle();
 
   if (error) throw error;
-  return data?.name ?? prospectCustomerId;
+  return data ?? null;
+}
+
+function isLikelySameClinic(left: string, right: string) {
+  const normalizedLeft = normalizeClinicNameForMerge(left);
+  const normalizedRight = normalizeClinicNameForMerge(right);
+  const containsSameName = normalizedLeft.length >= 4
+    && normalizedRight.length >= 4
+    && (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft));
+
+  return containsSameName || clinicNameSimilarity(left, right) >= 0.55;
+}
+
+async function mergeProspectIntoCustomer({
+  prospectCustomerId,
+  customerCode,
+  mergedBy,
+}: {
+  prospectCustomerId: string;
+  customerCode: string;
+  mergedBy: string;
+}) {
+  const mergedAt = new Date().toISOString();
+
+  const { error: prospectUpdateError } = await supabaseAdmin
+    .from('prospect_customers')
+    .update({
+      status: 'merged',
+      merged_customer_code: customerCode,
+      merged_at: mergedAt,
+      merged_by: mergedBy,
+    })
+    .eq('id', prospectCustomerId);
+
+  if (prospectUpdateError) throw prospectUpdateError;
+
+  const { error: dealUpdateError } = await supabaseAdmin
+    .from('deals')
+    .update({ customer_code: customerCode })
+    .eq('prospect_customer_id', prospectCustomerId);
+
+  if (dealUpdateError) throw dealUpdateError;
+
+  const { error: candidateApproveError } = await supabaseAdmin
+    .from('customer_merge_candidates')
+    .update({
+      decision: 'approved',
+      reviewed_by: mergedBy,
+      reviewed_at: mergedAt,
+    })
+    .eq('prospect_customer_id', prospectCustomerId)
+    .eq('customer_code', customerCode)
+    .eq('decision', 'pending');
+
+  if (candidateApproveError) throw candidateApproveError;
+
+  const { error: candidateRejectError } = await supabaseAdmin
+    .from('customer_merge_candidates')
+    .update({
+      decision: 'rejected',
+      reviewed_by: mergedBy,
+      reviewed_at: mergedAt,
+    })
+    .eq('prospect_customer_id', prospectCustomerId)
+    .neq('customer_code', customerCode)
+    .eq('decision', 'pending');
+
+  if (candidateRejectError) throw candidateRejectError;
 }
 
 async function createProspectCustomer(name: string, profileId: string) {
@@ -176,6 +244,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const profile = await requireAuthenticatedProfile(req, res);
     if (!profile) return;
+    if (!requireUserManagementAccess(profile, res)) return;
 
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body ?? {});
     const action = String(body.action ?? 'approve').trim();
@@ -197,15 +266,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!detectedMonth || !customerCode) {
       return res.status(400).json({ error: 'detected_month and customer_code are required' });
-    }
-
-    const canUpdateCandidateForUser = !userId
-      || userId === profile.id
-      || profile.role === 'admin'
-      || profile.can_view_dashboard;
-
-    if (!canUpdateCandidateForUser) {
-      return res.status(403).json({ error: 'Forbidden' });
     }
 
     if (action === 'reject') {
@@ -319,7 +379,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (targetKind === 'customer') {
       targetName = await fetchCustomerName(targetCustomerCode);
     } else if (targetKind === 'prospect') {
-      targetName = await fetchProspectName(targetProspectCustomerId);
+      const [prospect, detectedCustomerExists] = await Promise.all([
+        fetchProspectName(targetProspectCustomerId),
+        customerExists(customerCode),
+      ]);
+      targetName = prospect?.name ?? targetProspectCustomerId;
+
+      const canMergeIntoDetectedCustomer = detectedCustomerExists
+        && prospect
+        && (!prospect.merged_customer_code || prospect.merged_customer_code === customerCode)
+        && isLikelySameClinic(customerName, targetName);
+
+      if (canMergeIntoDetectedCustomer) {
+        await mergeProspectIntoCustomer({
+          prospectCustomerId: targetProspectCustomerId,
+          customerCode,
+          mergedBy: profile.id,
+        });
+        finalTargetKind = 'customer';
+        finalTargetCustomerCode = customerCode;
+        finalTargetProspectCustomerId = '';
+        targetName = await fetchCustomerName(customerCode);
+      }
     } else if (targetKind === 'new_prospect') {
       if (await customerExists(customerCode)) {
         return res.status(400).json({ error: '検知元コードは既存取引先に存在するため、見込み顧客として登録できません' });
