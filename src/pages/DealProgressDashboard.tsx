@@ -4,13 +4,14 @@ import { motion } from 'motion/react';
 import { authFetch } from '../lib/authFetch';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  ArrowLeft, ChevronLeft, ChevronRight, GripVertical, LayoutDashboard,
+  ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, GripVertical, LayoutDashboard,
   Loader2, Lock, LogOut, Users,
 } from 'lucide-react';
 
 type DealPipelineStage = 'targeting' | 'visiting' | 'negotiating' | 'accepted' | 'won' | 'lost';
 type EditableDealPipelineStage = Exclude<DealPipelineStage, 'won'>;
 type DealLifecycle = 'all' | 'new' | 'existing';
+type NextActionFilter = 'unregistered' | 'overdue';
 
 type BoardDeal = {
   id: string;
@@ -21,6 +22,7 @@ type BoardDeal = {
   clinic_id: string;
   lifecycle: DealLifecycle;
   deal_date: string;
+  created_at: string;
   pipeline_stage: DealPipelineStage;
   product_name: string | null;
   notes: string | null;
@@ -36,6 +38,7 @@ type BoardDeal = {
   deal_temperature: string | null;
   source_month: string;
   is_carried_over: boolean;
+  has_later_deal: boolean;
 };
 
 type UserOption = {
@@ -188,6 +191,7 @@ const TEMPERATURE_FILTER_OPTIONS = [
 const PROGRESS_FILTER_STORAGE_KEY = 'dealProgressDashboardFilters';
 const TEMPERATURE_FILTER_VALUES = new Set<string>(TEMPERATURE_FILTER_OPTIONS.map((option) => option.value));
 const LIFECYCLE_VALUES = new Set<DealLifecycle>(['all', 'new', 'existing']);
+const NEXT_ACTION_FILTER_VALUES = new Set<NextActionFilter>(['unregistered', 'overdue']);
 
 type ProgressFilters = {
   month: string;
@@ -195,6 +199,7 @@ type ProgressFilters = {
   selectedUserId: string;
   selectedDepartmentId: string;
   selectedTemperatures: string[];
+  selectedNextActionFilters: NextActionFilter[];
 };
 
 function currentMonth() {
@@ -258,6 +263,15 @@ function normalizeTemperatures(value: string | null | undefined) {
     .filter((entry, index, entries) => TEMPERATURE_FILTER_VALUES.has(entry) && entries.indexOf(entry) === index);
 }
 
+function normalizeNextActionFilters(value: string | null | undefined): NextActionFilter[] {
+  if (!value) return [];
+
+  return value
+    .split(',')
+    .map((entry) => entry.trim() as NextActionFilter)
+    .filter((entry, index, entries) => NEXT_ACTION_FILTER_VALUES.has(entry) && entries.indexOf(entry) === index);
+}
+
 function readStoredProgressFilters(): Partial<ProgressFilters> {
   if (typeof window === 'undefined') {
     return {};
@@ -269,7 +283,7 @@ function readStoredProgressFilters(): Partial<ProgressFilters> {
       return {};
     }
 
-    const parsed = JSON.parse(raw) as Partial<ProgressFilters>;
+    const parsed = JSON.parse(raw) as Partial<ProgressFilters> & { nextActionFilter?: string };
     return {
       month: parsed.month ? normalizeMonth(parsed.month) : undefined,
       lifecycle: parsed.lifecycle ? normalizeLifecycle(parsed.lifecycle) : undefined,
@@ -278,6 +292,11 @@ function readStoredProgressFilters(): Partial<ProgressFilters> {
       selectedTemperatures: Array.isArray(parsed.selectedTemperatures)
         ? parsed.selectedTemperatures.filter((entry) => TEMPERATURE_FILTER_VALUES.has(entry))
         : undefined,
+      selectedNextActionFilters: Array.isArray(parsed.selectedNextActionFilters)
+        ? parsed.selectedNextActionFilters.filter((entry) => NEXT_ACTION_FILTER_VALUES.has(entry))
+        : parsed.nextActionFilter
+          ? normalizeNextActionFilters(parsed.nextActionFilter)
+          : undefined,
     };
   } catch {
     return {};
@@ -298,6 +317,9 @@ function getInitialProgressFilters(): ProgressFilters {
     selectedTemperatures: searchParams.has('temperatures')
       ? normalizeTemperatures(searchParams.get('temperatures'))
       : storedFilters.selectedTemperatures ?? [],
+    selectedNextActionFilters: searchParams.has('nextAction')
+      ? normalizeNextActionFilters(searchParams.get('nextAction'))
+      : storedFilters.selectedNextActionFilters ?? [],
   };
 }
 
@@ -319,6 +341,10 @@ function buildProgressFilterSearch(filters: ProgressFilters) {
 
   if (filters.selectedTemperatures.length > 0) {
     params.set('temperatures', filters.selectedTemperatures.join(','));
+  }
+
+  if (filters.selectedNextActionFilters.length > 0) {
+    params.set('nextAction', filters.selectedNextActionFilters.join(','));
   }
 
   return params.toString();
@@ -409,14 +435,16 @@ export default function DealProgressDashboard() {
   const [selectedUserId, setSelectedUserId] = useState(initialFilters.selectedUserId);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(initialFilters.selectedDepartmentId);
   const [selectedTemperatures, setSelectedTemperatures] = useState<string[]>(initialFilters.selectedTemperatures);
+  const [selectedNextActionFilters, setSelectedNextActionFilters] = useState<NextActionFilter[]>(initialFilters.selectedNextActionFilters);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [deals, setDeals] = useState<BoardDeal[]>([]);
-  const [newOrderAmountGoal, setNewOrderAmountGoal] = useState(0);
+  const [targetMonthGoal, setTargetMonthGoal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isClosed, setIsClosed] = useState(false);
   const [isClosingMonth, setIsClosingMonth] = useState(false);
+  const [expandedDealIds, setExpandedDealIds] = useState<Set<string>>(() => new Set());
   const [draggingDealId, setDraggingDealId] = useState<string | null>(null);
   const [updatingDealId, setUpdatingDealId] = useState<string | null>(null);
   const [didInitializeUserFilter, setDidInitializeUserFilter] = useState(false);
@@ -468,6 +496,7 @@ export default function DealProgressDashboard() {
       selectedUserId,
       selectedDepartmentId,
       selectedTemperatures,
+      selectedNextActionFilters,
     };
     const nextSearch = buildProgressFilterSearch(filters);
     const nextUrl = nextSearch ? `/deals/progress?${nextSearch}` : '/deals/progress';
@@ -476,7 +505,7 @@ export default function DealProgressDashboard() {
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
       navigate(nextUrl, { replace: true });
     }
-  }, [lifecycle, month, navigate, selectedDepartmentId, selectedTemperatures, selectedUserId]);
+  }, [lifecycle, month, navigate, selectedDepartmentId, selectedNextActionFilters, selectedTemperatures, selectedUserId]);
 
   useEffect(() => {
     const loadDeals = async () => {
@@ -505,12 +534,12 @@ export default function DealProgressDashboard() {
         const payload = await response.json();
         setDeals(Array.isArray(payload.deals) ? payload.deals : []);
         setIsClosed(Boolean(payload.is_closed));
-        setNewOrderAmountGoal(Number(payload.new_order_amount_goal ?? 0));
+        setTargetMonthGoal(Number(payload.target_month_goal ?? 0));
       } catch (loadDealsError) {
         console.error('progress dashboard deals error:', loadDealsError);
         setError('商談進捗の取得に失敗しました');
         setDeals([]);
-        setNewOrderAmountGoal(0);
+        setTargetMonthGoal(0);
         setIsClosed(false);
       } finally {
         setIsLoading(false);
@@ -522,6 +551,24 @@ export default function DealProgressDashboard() {
 
   const filteredDeals = useMemo(() => (
     deals.filter((deal) => {
+      const today = new Date();
+      const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const hasNextAction = Boolean(deal.next_action?.trim() && deal.next_action_date);
+
+      if (selectedNextActionFilters.length > 0) {
+        if (deal.has_later_deal) {
+          return false;
+        }
+
+        const matchesUnregistered = selectedNextActionFilters.includes('unregistered') && !hasNextAction;
+        const matchesOverdue = selectedNextActionFilters.includes('overdue')
+          && Boolean(deal.next_action_date && deal.next_action_date < todayString);
+
+        if (!matchesUnregistered && !matchesOverdue) {
+          return false;
+        }
+      }
+
       if (selectedTemperatures.length === 0) {
         return true;
       }
@@ -538,7 +585,7 @@ export default function DealProgressDashboard() {
       const normalizedTemperature = rawTemperature.charAt(0);
       return selectedTemperatures.includes(normalizedTemperature);
     })
-  ), [deals, selectedTemperatures]);
+  ), [deals, selectedNextActionFilters, selectedTemperatures]);
   const sortedDepartments = useMemo(
     () => [...departments].sort((a, b) => a.name.localeCompare(b.name, 'ja')),
     [departments]
@@ -624,8 +671,8 @@ export default function DealProgressDashboard() {
     return {
       totalAmount,
       rawTotalAmount,
-      goalAmount: newOrderAmountGoal,
-      goalRate: newOrderAmountGoal > 0 ? Math.round((totalAmount / newOrderAmountGoal) * 100) : 0,
+      goalAmount: targetMonthGoal,
+      goalRate: targetMonthGoal > 0 ? Math.round((totalAmount / targetMonthGoal) * 100) : 0,
       columns: COLUMNS.map((column) => ({
         ...column,
         count: groupedDeals[column.key].length,
@@ -634,7 +681,7 @@ export default function DealProgressDashboard() {
         ratio: totalAmount > 0 ? Math.round((weightedColumnAmountTotals[column.key] / totalAmount) * 100) : 0,
       })),
     };
-  }, [columnAmountTotals, groupedDeals, newOrderAmountGoal, weightedColumnAmountTotals]);
+  }, [columnAmountTotals, groupedDeals, targetMonthGoal, weightedColumnAmountTotals]);
 
   const canEditDeal = (deal: BoardDeal) => (
     !isClosed
@@ -865,6 +912,41 @@ export default function DealProgressDashboard() {
                   );
                 })}
               </div>
+
+              <div className="flex flex-wrap gap-2 rounded-2xl bg-zinc-50 p-2">
+                <button
+                  type="button"
+                  aria-pressed={selectedNextActionFilters.includes('unregistered')}
+                  onClick={() => setSelectedNextActionFilters((current) => (
+                    current.includes('unregistered')
+                      ? current.filter((value) => value !== 'unregistered')
+                      : [...current, 'unregistered']
+                  ))}
+                  className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+                    selectedNextActionFilters.includes('unregistered')
+                      ? 'bg-amber-500 text-white shadow-sm'
+                      : 'bg-white text-zinc-500 hover:text-zinc-800'
+                  }`}
+                >
+                  次回未登録
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={selectedNextActionFilters.includes('overdue')}
+                  onClick={() => setSelectedNextActionFilters((current) => (
+                    current.includes('overdue')
+                      ? current.filter((value) => value !== 'overdue')
+                      : [...current, 'overdue']
+                  ))}
+                  className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+                    selectedNextActionFilters.includes('overdue')
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'bg-white text-zinc-500 hover:text-zinc-800'
+                  }`}
+                >
+                  期限切れ
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
@@ -909,7 +991,7 @@ export default function DealProgressDashboard() {
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold">
                 <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">
-                  目標 ¥{portfolioSummary.goalAmount.toLocaleString()}
+                  当月目標 ¥{portfolioSummary.goalAmount.toLocaleString()}
                 </span>
                 <span className="rounded-full bg-zinc-100 px-3 py-1 text-zinc-600">
                   見込総額 ¥{portfolioSummary.rawTotalAmount.toLocaleString()}
@@ -1015,6 +1097,7 @@ export default function DealProgressDashboard() {
                       const dealWeight = getDealWeight(deal);
                       const weightedDealAmount = getWeightedDealAmount(deal);
                       const { cleanNotes } = parseExpectedAmountNotes(deal.notes);
+                      const isDealCollapsed = !expandedDealIds.has(deal.id);
                       const metaBadges = [
                         deal.contact_role ? `接触: ${deal.contact_role}` : null,
                       ].filter(Boolean);
@@ -1035,7 +1118,9 @@ export default function DealProgressDashboard() {
                               navigate(`/clinics/${deal.clinic_kind}/${encodeURIComponent(deal.clinic_id)}`);
                             }
                           }}
-                          className={`relative overflow-hidden rounded-2xl border p-3 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md ${
+                          className={`relative overflow-hidden rounded-2xl border shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md ${
+                            isDealCollapsed ? 'p-2.5' : 'p-3'
+                          } ${
                             temperatureTone.cardClassName
                           } ${
                             updatingDealId === deal.id ? 'opacity-60' : ''
@@ -1043,45 +1128,81 @@ export default function DealProgressDashboard() {
                         >
                           <div className={`pointer-events-none absolute inset-x-0 top-0 h-1 bg-linear-to-r ${temperatureTone.glowClassName}`} />
 
-                          <div className="mb-3 flex items-start justify-between gap-2">
+                          <div className={`${isDealCollapsed ? '' : 'mb-3'} flex items-start justify-between gap-2`}>
                             <div className="min-w-0">
-                              <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${temperatureTone.chipClassName}`}>
-                                  {temperatureTone.label}
+                              <div className={`${isDealCollapsed ? 'mb-1 flex-nowrap' : 'mb-2 flex-wrap'} flex items-center gap-1.5 overflow-hidden`}>
+                                <span className={`shrink-0 rounded-full font-bold ${
+                                  isDealCollapsed ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+                                } ${temperatureTone.chipClassName}`}>
+                                  {isDealCollapsed ? temperatureTone.shortLabel : temperatureTone.label}
                                 </span>
-                                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                <span className={`shrink-0 rounded-full font-semibold ${
+                                  isDealCollapsed ? 'px-2 py-0.5 text-[10px]' : 'px-2 py-1 text-[11px]'
+                                } ${
                                   deal.lifecycle === 'new'
                                     ? 'bg-emerald-50 text-emerald-700'
                                     : 'bg-sky-50 text-sky-700'
                                 }`}>
                                   {deal.lifecycle === 'new' ? '新規' : '既存'}
                                 </span>
-                                {deal.is_carried_over && (
+                                {!isDealCollapsed && deal.is_carried_over && (
                                   <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
                                     前月繰越
                                   </span>
                                 )}
-                                {deal.pipeline_stage === 'won' && (
+                                {!isDealCollapsed && deal.pipeline_stage === 'won' && (
                                   <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
                                     自動受注
                                   </span>
                                 )}
-                                {!canEditDeal(deal) && (
+                                {!isDealCollapsed && !canEditDeal(deal) && (
                                   <span className="rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700">
                                     閲覧のみ
                                   </span>
                                 )}
                               </div>
-                              <div className="line-clamp-2 text-left text-base font-bold leading-snug text-zinc-900 hover:text-purple-600">
+                              <div
+                                title={deal.clinic_name}
+                                className={`${isDealCollapsed ? 'truncate text-sm leading-5' : 'line-clamp-2 text-base leading-snug'} text-left font-bold text-zinc-900 hover:text-purple-600`}
+                              >
                                 {deal.clinic_name}
                               </div>
-                              <p className="mt-1 truncate text-xs font-medium text-zinc-500">
+                              <p className={`${isDealCollapsed ? 'mt-0.5 text-[11px]' : 'mt-1 text-xs'} truncate font-medium text-zinc-500`}>
                                 {deal.user_name || '担当者未設定'} ・ {deal.deal_date}
                               </p>
                             </div>
-                            <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                aria-label={`${deal.clinic_name}の詳細を${isDealCollapsed ? '展開' : '折り畳む'}`}
+                                aria-expanded={!isDealCollapsed}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setExpandedDealIds((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(deal.id)) {
+                                      next.delete(deal.id);
+                                    } else {
+                                      next.add(deal.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className="rounded-full bg-white/80 p-1 text-zinc-400 transition hover:bg-white hover:text-purple-600"
+                              >
+                                {isDealCollapsed ? (
+                                  <ChevronDown className="h-4 w-4" />
+                                ) : (
+                                  <ChevronUp className="h-4 w-4" />
+                                )}
+                              </button>
+                              <GripVertical className="h-4 w-4 text-zinc-300" />
+                            </div>
                           </div>
 
+                          {!isDealCollapsed && (
+                          <>
                           <div className="mb-3 flex flex-wrap gap-1.5">
                             {categories.slice(0, 2).map((category) => (
                               <span key={category} className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700">
@@ -1162,6 +1283,8 @@ export default function DealProgressDashboard() {
                               </p>
                             )}
                           </div>
+                          </>
+                          )}
                         </motion.div>
                       );
                     })
