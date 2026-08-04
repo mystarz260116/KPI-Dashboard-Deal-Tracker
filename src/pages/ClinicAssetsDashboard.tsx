@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch } from '../lib/authFetch';
 import {
-  ArrowDownRight, ArrowLeft, ArrowUpDown, ArrowUpRight, CalendarDays, Download,
+  ArrowDownRight, ArrowLeft, ArrowUpDown, ArrowUpRight, Award, CalendarDays, CheckCircle2, Download,
   Loader2, LogOut, Search, Target, TrendingDown, TrendingUp, Users,
 } from 'lucide-react';
 import {
@@ -58,6 +58,14 @@ type ClinicAssetRow = {
   is_new: boolean;
   is_churn_risk: boolean;
   monthly: Array<{ month: string; amount: number }>;
+  ranking_insight: {
+    reasons: string[];
+    product_portfolio: Array<{ label: string; amount: number; share: number }>;
+    ios_rental_enabled: boolean;
+    ios_rental_start_date: string | null;
+    order_count: number;
+    average_order_amount: number;
+  } | null;
   management: {
     status: ClinicCareStatus;
     next_action_date: string | null;
@@ -172,6 +180,12 @@ function formatSignedCurrency(value: number | null | undefined) {
   if (amount > 0) return `+¥${amount.toLocaleString()}`;
   if (amount < 0) return `-¥${Math.abs(amount).toLocaleString()}`;
   return '¥0';
+}
+
+function formatGrowthRate(current: number, previous: number) {
+  if (previous <= 0) return current > 0 ? '新規・復活' : '0%';
+  const rate = ((current - previous) / previous) * 100;
+  return `${rate >= 0 ? '+' : ''}${Math.round(rate)}%`;
 }
 
 function getRiskState(row: ClinicAssetRow, months: Array<{ key: string; label: string }>) {
@@ -615,6 +629,23 @@ export default function ClinicAssetsDashboard() {
     });
   }, [data?.months, filteredRows, sortConfig]);
 
+  const growthRankingRows = useMemo(() => {
+    const targetMonth = data?.month;
+    if (!targetMonth) return [];
+    return (data?.rows ?? [])
+      .map((row) => {
+        const currentAmount = row.monthly.find((entry) => entry.month === targetMonth)?.amount ?? 0;
+        const previousAmount = row.previous_year_total;
+        const growthRate = previousAmount > 0
+          ? (currentAmount - previousAmount) / previousAmount
+          : currentAmount > 0 ? Number.POSITIVE_INFINITY : 0;
+        return { row, currentAmount, previousAmount, growthRate };
+      })
+      .filter((entry) => entry.currentAmount > 0 && entry.growthRate > 0)
+      .sort((a, b) => b.growthRate - a.growthRate || (b.currentAmount - b.previousAmount) - (a.currentAmount - a.previousAmount))
+      .slice(0, 10);
+  }, [data?.month, data?.rows]);
+
   const handleSort = (key: SortKey) => {
     setSortConfig((current) => {
       if (current?.key === key) {
@@ -747,14 +778,23 @@ export default function ClinicAssetsDashboard() {
             <h1 className="text-2xl font-black text-zinc-900">医院アセット</h1>
             <p className="mt-1 text-sm text-zinc-500">部署・担当別の医院売上資産を管理</p>
           </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded-lg bg-white p-3 text-zinc-400 shadow-sm transition hover:text-zinc-700"
-            aria-label="ログアウト"
-          >
-            <LogOut className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/clinic-sales-trend')}
+              className="rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700"
+            >
+              2医院の売上推移
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-lg bg-white p-3 text-zinc-400 shadow-sm transition hover:text-zinc-700"
+              aria-label="ログアウト"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <div className="mb-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
@@ -876,6 +916,107 @@ export default function ClinicAssetsDashboard() {
             icon={(data?.summary.year_over_year_delta ?? 0) < 0 ? <ArrowDownRight className="h-5 w-5" /> : <TrendingUp className="h-5 w-5" />}
           />
         </div>
+
+        <section className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-zinc-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Award className="h-5 w-5 text-amber-500" />
+                <h2 className="text-lg font-black text-zinc-900">医院別 伸び率ランキング</h2>
+              </div>
+              <p className="mt-1 text-sm text-zinc-500">対象月と前年同月を比較し、上昇理由・商品構成・IOS利用状況を表示</p>
+            </div>
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+              TOP {growthRankingRows.length}
+            </span>
+          </div>
+
+          <div className="divide-y divide-zinc-100">
+            {growthRankingRows.map(({ row, currentAmount, previousAmount }, index) => {
+              const insight = row.ranking_insight;
+              const portfolioColors = ['bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500', 'bg-amber-400'];
+              return (
+                <button
+                  key={`ranking-${row.customer_code}`}
+                  type="button"
+                  onClick={() => navigate(`/clinics/customer/${encodeURIComponent(row.customer_code)}`)}
+                  className="grid w-full gap-4 px-5 py-4 text-left transition hover:bg-indigo-50/40 lg:grid-cols-[52px_1.1fr_0.7fr_1.5fr_1.2fr]"
+                >
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-black ${
+                    index === 0 ? 'bg-amber-400 text-white'
+                      : index === 1 ? 'bg-zinc-300 text-zinc-800'
+                        : index === 2 ? 'bg-orange-200 text-orange-800'
+                          : 'bg-zinc-100 text-zinc-600'
+                  }`}>
+                    {index + 1}
+                  </div>
+                  <div>
+                    <p className="font-black text-zinc-900">{row.customer_name}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{row.customer_code}・{formatStaffName(row)}</p>
+                    {insight?.ios_rental_enabled && (
+                      <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-1 text-xs font-bold text-sky-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        IOSレンタル
+                        {insight.ios_rental_start_date ? ` ${insight.ios_rental_start_date}` : ''}
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-2xl font-black text-emerald-600">{formatGrowthRate(currentAmount, previousAmount)}</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {formatCurrency(previousAmount)} → {formatCurrency(currentAmount)}
+                    </p>
+                    <p className="mt-1 text-xs font-bold text-emerald-700">
+                      {formatSignedCurrency(currentAmount - previousAmount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-black text-zinc-500">上昇理由</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(insight?.reasons.length ? insight.reasons : ['売上が前年同月を上回りました']).map((reason) => (
+                        <span key={reason} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-black text-zinc-500">商品ポートフォリオ</p>
+                    {insight?.product_portfolio.length ? (
+                      <>
+                        <div className="flex h-2.5 overflow-hidden rounded-full bg-zinc-100">
+                          {insight.product_portfolio.map((product, productIndex) => (
+                            <span
+                              key={product.label}
+                              className={portfolioColors[productIndex] ?? 'bg-zinc-400'}
+                              style={{ width: `${product.share}%` }}
+                              title={`${product.label} ${product.share}%`}
+                            />
+                          ))}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                          {insight.product_portfolio.map((product, productIndex) => (
+                            <span key={product.label} className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-600">
+                              <span className={`h-2 w-2 rounded-full ${portfolioColors[productIndex] ?? 'bg-zinc-400'}`} />
+                              {product.label} {product.share}%
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-xs text-zinc-400">商品情報なし</p>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+            {growthRankingRows.length === 0 && (
+              <div className="px-5 py-10 text-center text-sm text-zinc-500">
+                前年同月を上回った医院はありません
+              </div>
+            )}
+          </div>
+        </section>
 
         <div className="mb-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">

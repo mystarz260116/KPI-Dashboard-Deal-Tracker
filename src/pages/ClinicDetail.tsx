@@ -4,9 +4,10 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { motion } from 'motion/react';
 import { authFetch } from '../lib/authFetch';
+import MentionTextarea, { MentionText } from '../components/MentionTextarea';
 import { normalizeCustomerCode } from '../lib/customerCode';
 import {
-  ArrowLeft, Building2, CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Link2, LogOut, MapPin, Phone, Trash2,
+  ArrowLeft, Building2, CalendarDays, Check, ChevronLeft, ChevronRight, ClipboardList, Link2, LogOut, MapPin, Phone, Save, Trash2,
 } from 'lucide-react';
 
 type ClinicKind = 'customer' | 'prospect';
@@ -46,8 +47,7 @@ interface AssignedStaff {
 interface SalesDetail {
   delivery_date: string | null;
   product_name: string;
-  detail_category: string | null;
-  quantity: number;
+  data_kind: 'delivery' | 'order';
   amount?: number;
 }
 
@@ -60,6 +60,8 @@ interface DealComment {
   created_at: string;
   author_user_id: string;
   author_name: string;
+  reply_to_comment_id?: string | null;
+  reply_to_author_name?: string | null;
 }
 
 interface DealReactionSummary {
@@ -131,9 +133,14 @@ export default function ClinicDetail() {
   });
   const [salesMonthTotal, setSalesMonthTotal] = useState(0);
   const [salesDetails, setSalesDetails] = useState<SalesDetail[]>([]);
+  const [iosRentalEnabled, setIosRentalEnabled] = useState(false);
+  const [iosRentalStartDate, setIosRentalStartDate] = useState('');
+  const [isSavingIosRental, setIsSavingIosRental] = useState(false);
+  const [iosRentalMessage, setIosRentalMessage] = useState('');
   const [commentsByDealId, setCommentsByDealId] = useState<Record<string, DealComment[]>>({});
   const [reactionsByDealId, setReactionsByDealId] = useState<Record<string, DealReactionSummary>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [replyTargetsByDealId, setReplyTargetsByDealId] = useState<Record<string, DealComment | null>>({});
   const [submittingCommentDealId, setSubmittingCommentDealId] = useState<string | null>(null);
   const [submittingReactionKey, setSubmittingReactionKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -188,6 +195,9 @@ export default function ClinicDetail() {
         const clinicPayload = await clinicApiResponse.json();
         const clinicData = clinicPayload?.clinic;
         setClinic(clinicData ?? null);
+        setIosRentalEnabled(Boolean(clinicPayload?.ios_rental_enabled));
+        setIosRentalStartDate(String(clinicPayload?.ios_rental_start_date ?? ''));
+        setIosRentalMessage('');
         setAssignedStaffs(Array.isArray(clinicPayload?.assigned_staffs) ? clinicPayload.assigned_staffs : []);
         setSalesMonthTotal(Number(clinicPayload?.sales_month_total ?? 0));
         setSalesDetails(Array.isArray(clinicPayload?.sales_details) ? clinicPayload.sales_details : []);
@@ -381,12 +391,50 @@ export default function ClinicDetail() {
     }
   };
 
+  const handleSaveIosRental = async () => {
+    if (!clinic) return;
+    if (iosRentalEnabled && !iosRentalStartDate) {
+      setIosRentalMessage('開始日を入力してください');
+      return;
+    }
+
+    setIsSavingIosRental(true);
+    setIosRentalMessage('');
+    try {
+      const response = await authFetch(
+        `/api/clinic?kind=${clinic.kind}&id=${encodeURIComponent(clinic.id)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ios_rental_enabled: iosRentalEnabled,
+            ios_rental_start_date: iosRentalEnabled ? iosRentalStartDate : null,
+          }),
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        setIosRentalMessage(payload?.error ?? '保存に失敗しました');
+        return;
+      }
+      setIosRentalEnabled(Boolean(payload?.ios_rental_enabled));
+      setIosRentalStartDate(String(payload?.ios_rental_start_date ?? ''));
+      setIosRentalMessage('保存しました');
+    } catch (saveError) {
+      console.error('clinic IOS rental save error:', saveError);
+      setIosRentalMessage('保存に失敗しました');
+    } finally {
+      setIsSavingIosRental(false);
+    }
+  };
+
   const handleSubmitComment = async (deal: ClinicDeal) => {
     if (!clinic) {
       return;
     }
     const body = commentDrafts[deal.id]?.trim() ?? '';
     if (!body) return;
+    const replyTarget = replyTargetsByDealId[deal.id] ?? null;
 
     setSubmittingCommentDealId(deal.id);
     setError('');
@@ -402,6 +450,7 @@ export default function ClinicDetail() {
           clinic_id: clinic.id,
           deal_id: deal.id,
           body,
+          reply_to_comment_id: replyTarget?.id ?? null,
         }),
       });
 
@@ -413,6 +462,7 @@ export default function ClinicDetail() {
       }
 
       const newComment = await response.json();
+      if (replyTarget) newComment.reply_to_author_name = replyTarget.author_name;
       setCommentsByDealId((current) => ({
         ...current,
         [deal.id]: [newComment, ...(current[deal.id] ?? [])],
@@ -421,6 +471,7 @@ export default function ClinicDetail() {
         ...current,
         [deal.id]: '',
       }));
+      setReplyTargetsByDealId((current) => ({ ...current, [deal.id]: null }));
     } catch (submitError) {
       console.error('clinic detail comment post unexpected error:', submitError);
       setError('コメントの投稿に失敗しました');
@@ -619,6 +670,7 @@ export default function ClinicDetail() {
                   </div>
                 </div>
               </div>
+
             </motion.section>
 
             <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -657,6 +709,61 @@ export default function ClinicDetail() {
                       次回予定日
                     </div>
                     <p className="text-sm text-zinc-700">{latestDeal?.nextActionDate ?? '未設定'}</p>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-2xl border-2 border-sky-200 bg-gradient-to-r from-sky-50 to-cyan-50 p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="flex-1">
+                      <label className="inline-flex cursor-pointer items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={iosRentalEnabled}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setIosRentalEnabled(checked);
+                            if (!checked) setIosRentalStartDate('');
+                            setIosRentalMessage('');
+                          }}
+                          className="peer sr-only"
+                        />
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg border-2 border-sky-300 bg-white text-transparent transition peer-checked:border-sky-600 peer-checked:bg-sky-600 peer-checked:text-white">
+                          <Check className="h-5 w-5 stroke-[3]" />
+                        </span>
+                        <span className="text-xl font-extrabold tracking-wide text-sky-900">IOSレンタル</span>
+                      </label>
+                      <div className="mt-4 pl-11">
+                        <label htmlFor="ios-rental-start-date" className="mb-1 block text-xs font-bold text-sky-800">
+                          開始日
+                        </label>
+                        <input
+                          id="ios-rental-start-date"
+                          type="date"
+                          value={iosRentalStartDate}
+                          disabled={!iosRentalEnabled}
+                          onChange={(event) => {
+                            setIosRentalStartDate(event.target.value);
+                            setIosRentalMessage('');
+                          }}
+                          className="w-full max-w-xs rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-800 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {iosRentalMessage && (
+                        <p className={`text-sm font-semibold ${iosRentalMessage === '保存しました' ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {iosRentalMessage}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleSaveIosRental}
+                        disabled={isSavingIosRental}
+                        className="inline-flex items-center gap-2 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Save className="h-4 w-4" />
+                        {isSavingIosRental ? '保存中...' : '取引先情報に保存'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </motion.section>
@@ -787,10 +894,9 @@ export default function ClinicDetail() {
                     <table className="min-w-full text-sm">
                       <thead className="sticky top-0 bg-zinc-50 text-left text-zinc-500">
                         <tr className="border-b border-zinc-200">
-                          <th className="px-4 py-3 font-medium">納品日</th>
+                          <th className="px-4 py-3 font-medium">売上日</th>
                           <th className="px-4 py-3 font-medium">商品</th>
-                          <th className="px-4 py-3 font-medium">区分</th>
-                          <th className="px-4 py-3 text-right font-medium">数量</th>
+                          <th className="px-4 py-3 font-medium">売上種別</th>
                           <th className="px-4 py-3 text-right font-medium">金額</th>
                         </tr>
                       </thead>
@@ -799,8 +905,7 @@ export default function ClinicDetail() {
                           <tr key={`${row.delivery_date ?? 'nodate'}-${row.product_name}-${index}`} className="border-b border-zinc-100">
                             <td className="px-4 py-3 text-zinc-600">{row.delivery_date ?? '-'}</td>
                             <td className="px-4 py-3 font-medium text-zinc-900">{row.product_name}</td>
-                            <td className="px-4 py-3 text-zinc-600">{row.detail_category ?? '-'}</td>
-                            <td className="px-4 py-3 text-right text-zinc-600">{row.quantity.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-zinc-600">{row.data_kind === 'order' ? '受注' : '納品'}</td>
                             <td className="px-4 py-3 text-right font-semibold text-zinc-900">¥{row.amount.toLocaleString()}</td>
                           </tr>
                         ))}
@@ -919,14 +1024,26 @@ export default function ClinicDetail() {
                         </div>
 
                         <div className="mt-3 rounded-2xl bg-zinc-50 p-3">
-                          <textarea
+                          {replyTargetsByDealId[deal.id] && (
+                            <div className="mb-2 flex items-center justify-between rounded-xl bg-purple-50 px-3 py-2 text-xs text-purple-700">
+                              <span>{replyTargetsByDealId[deal.id]?.author_name}さんへ返信</span>
+                              <button
+                                type="button"
+                                onClick={() => setReplyTargetsByDealId((current) => ({ ...current, [deal.id]: null }))}
+                                className="font-semibold"
+                              >
+                                キャンセル
+                              </button>
+                            </div>
+                          )}
+                          <MentionTextarea
                             value={commentDrafts[deal.id] ?? ''}
-                            onChange={(event) => setCommentDrafts((current) => ({
+                            onChange={(value) => setCommentDrafts((current) => ({
                               ...current,
-                              [deal.id]: event.target.value,
+                              [deal.id]: value,
                             }))}
-                            placeholder="この商談へのコメントを書く"
-                            className="min-h-[72px] w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                            placeholder="コメントを書く（@名前 でメンション）"
+                            className="min-h-[88px] w-full touch-manipulation rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-base text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 sm:text-sm"
                           />
                           <div className="mt-3 flex justify-end">
                             <button
@@ -947,7 +1064,12 @@ export default function ClinicDetail() {
                             </div>
                           ) : (
                             (commentsByDealId[deal.id] ?? []).map((comment) => (
-                              <div key={comment.id} className="rounded-lg border border-zinc-200 px-3 py-3">
+                              <div key={comment.id} className={`rounded-lg border border-zinc-200 px-3 py-3 ${comment.reply_to_comment_id ? 'ml-8 bg-zinc-50' : ''}`}>
+                                {comment.reply_to_comment_id && (
+                                  <p className="mb-1 text-xs font-medium text-purple-600">
+                                    {comment.reply_to_author_name}さんへの返信
+                                  </p>
+                                )}
                                 <div className="flex items-center justify-between gap-3">
                                   <p className="text-sm font-bold text-zinc-900">{comment.author_name}</p>
                                   <p className="text-xs text-zinc-500">
@@ -960,7 +1082,23 @@ export default function ClinicDetail() {
                                     }).format(new Date(comment.created_at))}
                                   </p>
                                 </div>
-                                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">{comment.body}</p>
+                                <MentionText
+                                  text={comment.body}
+                                  className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReplyTargetsByDealId((current) => ({ ...current, [deal.id]: comment }));
+                                    setCommentDrafts((current) => ({
+                                      ...current,
+                                      [deal.id]: `@${comment.author_name} `,
+                                    }));
+                                  }}
+                                  className="mt-2 text-xs font-semibold text-zinc-500 hover:text-purple-600"
+                                >
+                                  返信
+                                </button>
                               </div>
                             ))
                           )}

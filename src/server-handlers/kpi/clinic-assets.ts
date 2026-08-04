@@ -13,6 +13,8 @@ type SalesRow = {
   amount: number | null;
   delivery_date: string | null;
   order_date: string | null;
+  normalized_product_code?: string | null;
+  normalized_product_name?: string | null;
 };
 
 type ProfileRow = {
@@ -47,6 +49,15 @@ type DealBoardStateRow = {
   base_deal_id: string;
   month_start: string;
   pipeline_stage: string;
+};
+
+type ClinicRankingInsight = {
+  reasons: string[];
+  product_portfolio: Array<{ label: string; amount: number; share: number }>;
+  ios_rental_enabled: boolean;
+  ios_rental_start_date: string | null;
+  order_count: number;
+  average_order_amount: number;
 };
 
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
@@ -654,6 +665,157 @@ export default async function handler(req: any, res: any) {
       .sort((a, b) => b.total - a.total || a.customer_name.localeCompare(b.customer_name, 'ja'));
 
     const assetCustomerCodes = assetRows.map((row) => row.customer_code).filter(Boolean);
+    const targetAmountForRow = (row: (typeof assetRows)[number]) => (
+      row.monthly.find((entry) => entry.month === targetMonth)?.amount ?? 0
+    );
+    const rankingCandidateCodes = [...assetRows]
+      .filter((row) => targetAmountForRow(row) > 0)
+      .sort((a, b) => {
+        const growthA = a.previous_year_total > 0
+          ? (targetAmountForRow(a) - a.previous_year_total) / a.previous_year_total
+          : targetAmountForRow(a) > 0 ? Number.POSITIVE_INFINITY : 0;
+        const growthB = b.previous_year_total > 0
+          ? (targetAmountForRow(b) - b.previous_year_total) / b.previous_year_total
+          : targetAmountForRow(b) > 0 ? Number.POSITIVE_INFINITY : 0;
+        return growthB - growthA || targetAmountForRow(b) - targetAmountForRow(a);
+      })
+      .slice(0, 20)
+      .map((row) => row.customer_code);
+
+    const insightByCustomerCode = new Map<string, ClinicRankingInsight>();
+    rankingCandidateCodes.forEach((code) => {
+      insightByCustomerCode.set(code, {
+        reasons: [],
+        product_portfolio: [],
+        ios_rental_enabled: false,
+        ios_rental_start_date: null,
+        order_count: 0,
+        average_order_amount: 0,
+      });
+    });
+
+    if (rankingCandidateCodes.length > 0) {
+      const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+      const comparisonStart = toDateString(previousSameMonthStart);
+      const { data: insightSalesRows, error: insightSalesError } = await supabaseAdmin
+        .from('sales_import_rows')
+        .select(`customer_code, amount, ${dateColumn}, normalized_product_code, normalized_product_name, source_raw_id`)
+        .eq('data_kind', dataKind)
+        .in('customer_code', rankingCandidateCodes)
+        .gte(dateColumn, comparisonStart)
+        .lt(dateColumn, toDateString(displayEndExclusive))
+        .limit(10000);
+
+      if (insightSalesError) {
+        console.warn('clinic asset ranking product insights unavailable:', insightSalesError.message ?? insightSalesError);
+      } else {
+        const currentByClinic = new Map<string, any[]>();
+        const previousByClinic = new Map<string, any[]>();
+        (insightSalesRows ?? []).forEach((sale: any) => {
+          const code = String(sale.customer_code ?? '');
+          const saleMonth = String(sale[dateColumn] ?? '').slice(0, 7);
+          if (saleMonth === targetMonth) {
+            currentByClinic.set(code, [...(currentByClinic.get(code) ?? []), sale]);
+          } else if (saleMonth === previousSameMonthKey) {
+            previousByClinic.set(code, [...(previousByClinic.get(code) ?? []), sale]);
+          }
+        });
+
+        rankingCandidateCodes.forEach((code) => {
+          const insight = insightByCustomerCode.get(code);
+          if (!insight) return;
+          const currentRows = currentByClinic.get(code) ?? [];
+          const previousRows = previousByClinic.get(code) ?? [];
+          const currentTotal = currentRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+          const previousTotal = previousRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+          const currentOrders = new Set(currentRows.map((row) => row.source_raw_id).filter(Boolean)).size || currentRows.length;
+          const previousOrders = new Set(previousRows.map((row) => row.source_raw_id).filter(Boolean)).size || previousRows.length;
+          const currentAverage = currentOrders > 0 ? currentTotal / currentOrders : 0;
+          const previousAverage = previousOrders > 0 ? previousTotal / previousOrders : 0;
+          const productAmounts = new Map<string, number>();
+          const previousProductAmounts = new Map<string, number>();
+          currentRows.forEach((row) => {
+            const label = String(row.normalized_product_name ?? row.normalized_product_code ?? 'その他').trim() || 'その他';
+            productAmounts.set(label, (productAmounts.get(label) ?? 0) + Number(row.amount ?? 0));
+          });
+          previousRows.forEach((row) => {
+            const label = String(row.normalized_product_name ?? row.normalized_product_code ?? 'その他').trim() || 'その他';
+            previousProductAmounts.set(label, (previousProductAmounts.get(label) ?? 0) + Number(row.amount ?? 0));
+          });
+
+          const strongestProduct = [...productAmounts.entries()]
+            .map(([label, amount]) => ({ label, amount, delta: amount - (previousProductAmounts.get(label) ?? 0) }))
+            .sort((a, b) => b.delta - a.delta)[0];
+          if (strongestProduct && strongestProduct.delta >= Math.max(50_000, (previousProductAmounts.get(strongestProduct.label) ?? 0) * 0.3)) {
+            insight.reasons.push(`${strongestProduct.label}が大幅増加`);
+          }
+          if ([...productAmounts.keys()].some((label) => !previousProductAmounts.has(label))) {
+            insight.reasons.push('新しい商品カテゴリを初受注');
+          }
+          if (currentOrders > previousOrders * 1.2 && currentOrders > previousOrders) {
+            insight.reasons.push('注文件数が増加');
+          }
+          if (previousAverage > 0 && currentAverage > previousAverage * 1.2) {
+            insight.reasons.push('平均注文単価が上昇');
+          }
+          if (previousTotal <= 0 && currentTotal > 0) {
+            insight.reasons.push('休眠状態から復活');
+          }
+          insight.order_count = currentOrders;
+          insight.average_order_amount = Math.round(currentAverage);
+          insight.product_portfolio = [...productAmounts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([label, amount]) => ({
+              label,
+              amount: Math.round(amount),
+              share: currentTotal > 0 ? Math.round((amount / currentTotal) * 100) : 0,
+            }));
+        });
+      }
+
+      const { data: iosRows, error: iosRowsError } = await supabaseAdmin
+        .from('clinic_attributes')
+        .select('clinic_id, ios_rental_enabled, ios_rental_start_date')
+        .eq('clinic_kind', 'customer')
+        .in('clinic_id', rankingCandidateCodes);
+      if (iosRowsError && iosRowsError.code !== 'PGRST205' && iosRowsError.code !== '42P01') {
+        console.warn('clinic asset ranking IOS attributes unavailable:', iosRowsError.message ?? iosRowsError);
+      }
+      (iosRows ?? []).forEach((row: any) => {
+        const insight = insightByCustomerCode.get(String(row.clinic_id));
+        if (!insight) return;
+        insight.ios_rental_enabled = Boolean(row.ios_rental_enabled);
+        insight.ios_rental_start_date = row.ios_rental_start_date ?? null;
+        if (
+          insight.ios_rental_enabled
+          && insight.ios_rental_start_date
+          && insight.ios_rental_start_date < toDateString(displayEndExclusive)
+        ) {
+          insight.reasons.push('IOSレンタル開始後に売上増加');
+        }
+      });
+
+      const { data: rankingDealRows, error: rankingDealRowsError } = await supabaseAdmin
+        .from('deals')
+        .select('customer_code, deal_date')
+        .in('customer_code', rankingCandidateCodes)
+        .gte('deal_date', toDateString(addMonths(targetDate, -3)))
+        .lt('deal_date', toDateString(displayEndExclusive));
+      if (rankingDealRowsError) {
+        console.warn('clinic asset ranking deal insights unavailable:', rankingDealRowsError.message ?? rankingDealRowsError);
+      }
+      (rankingDealRows ?? []).forEach((deal: any) => {
+        const code = String(deal.customer_code ?? '');
+        const insight = insightByCustomerCode.get(code);
+        const assetRow = assetRows.find((row) => row.customer_code === code);
+        if (!insight || !assetRow || targetAmountForRow(assetRow) <= assetRow.previous_year_total) return;
+        if (!insight.reasons.includes('商談実施後に売上増加')) {
+          insight.reasons.push('商談実施後に売上増加');
+        }
+      });
+    }
+
     const { data: careDealRows, error: careDealRowsError } = assetCustomerCodes.length > 0
       ? await supabaseAdmin
         .from('deals')
@@ -702,6 +864,7 @@ export default async function handler(req: any, res: any) {
       const careDealState = careDeal ? latestStateByDealId.get(careDeal.id) : null;
       return {
         ...row,
+        ranking_insight: insightByCustomerCode.get(row.customer_code) ?? null,
         management: {
           status: careDeal ? mapCareStatusFromDeal(careDeal, careDealState?.pipeline_stage) : '未対応',
           next_action_date: careDeal?.next_action_date ?? null,
@@ -711,6 +874,7 @@ export default async function handler(req: any, res: any) {
         },
       };
     });
+
     markDebug('build_asset_rows', {
       careDealRows: careDealRows?.length ?? 0,
       careDealStateRows: careDealStateRows?.length ?? 0,

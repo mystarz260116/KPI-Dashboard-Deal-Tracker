@@ -18,6 +18,7 @@ import SalesPerformanceDashboard from './pages/SalesPerformanceDashboard';
 import ClinicAssetsDashboard from './pages/ClinicAssetsDashboard';
 import UserMaster from './pages/UserMaster';
 import InitialPasswordSetup from './pages/InitialPasswordSetup';
+import ClinicSalesTrend from './pages/ClinicSalesTrend';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, isLoading, mfaStatus, isMfaLoading } = useAuth();
@@ -130,6 +131,7 @@ export default function App() {
           <Route path="/deals/progress" element={<ProtectedRoute><DealProgressDashboard /></ProtectedRoute>} />
           <Route path="/sales-performance" element={<ProtectedRoute><SalesPerformanceDashboard /></ProtectedRoute>} />
           <Route path="/clinic-assets" element={<ProtectedRoute><ClinicAssetsDashboard /></ProtectedRoute>} />
+          <Route path="/clinic-sales-trend" element={<ProtectedRoute><ClinicSalesTrend /></ProtectedRoute>} />
           <Route path="/crm" element={<ProtectedRoute><CrmSearch /></ProtectedRoute>} />
           <Route path="/clinics/:kind/:clinicId" element={<ProtectedRoute><ClinicDetail /></ProtectedRoute>} />
           <Route path="/customer-merge" element={<ProtectedRoute><UserManagementRoute><CustomerMerge /></UserManagementRoute></ProtectedRoute>} />
