@@ -11,6 +11,10 @@ type NotificationRow = {
   read_at: string | null;
 };
 
+function visibleCommentBody(value: unknown) {
+  return String(value ?? '').replace(/^\[\[reply_to:[0-9a-f-]{36}\]\]\n/i, '');
+}
+
 function parseLimit(value: unknown) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -56,7 +60,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const notifications = (notificationRows ?? []) as NotificationRow[];
-      const unreadCount = notifications.filter((notification) => !notification.read_at).length;
 
       if (notifications.length === 0) {
         return res.status(200).json({ notifications: [], unread_count: 0 });
@@ -89,7 +92,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const dealsById = new Map((dealsResult.data ?? []).map((deal: any) => [deal.id, deal]));
       const commentsById = new Map((commentsResult.data ?? []).map((comment: any) => [comment.id, comment]));
 
-      const payload = notifications.map((notification) => {
+      const [relatedDealsResult, profileStaffMapsResult] = await Promise.all([
+        supabaseAdmin
+          .from('deals')
+          .select('customer_code, prospect_customer_id')
+          .eq('user_id', profile.id),
+        supabaseAdmin
+          .from('profile_external_staff_maps')
+          .select('department_id, external_staff_code')
+          .eq('profile_id', profile.id),
+      ]);
+
+      const relatedCustomerCodes = new Set<string>(
+        (relatedDealsResult.data ?? []).map((row: any) => String(row.customer_code ?? '').trim()).filter(Boolean)
+      );
+      const relatedProspectIds = new Set<string>(
+        (relatedDealsResult.data ?? []).map((row: any) => String(row.prospect_customer_id ?? '').trim()).filter(Boolean)
+      );
+
+      if (!profileStaffMapsResult.error && (profileStaffMapsResult.data ?? []).length > 0) {
+        const departmentIds = Array.from(new Set((profileStaffMapsResult.data ?? []).map((row: any) => Number(row.department_id))));
+        const staffCodes = Array.from(new Set((profileStaffMapsResult.data ?? []).map((row: any) => String(row.external_staff_code))));
+        const { data: customerMaps } = await supabaseAdmin
+          .from('customer_external_staff_maps')
+          .select('customer_code')
+          .in('department_id', departmentIds)
+          .in('external_staff_code', staffCodes);
+        (customerMaps ?? []).forEach((row: any) => {
+          const customerCode = String(row.customer_code ?? '').trim();
+          if (customerCode) relatedCustomerCodes.add(customerCode);
+        });
+      }
+
+      const visibleNotifications = notifications.filter((notification) => {
+        const deal = dealsById.get(notification.deal_id) as any;
+        const comment = commentsById.get(notification.comment_id) as any;
+        const isMentioned = Boolean(profile.name && visibleCommentBody(comment?.body).includes(`@${profile.name}`));
+        const isRelatedCustomer = Boolean(deal?.customer_code && relatedCustomerCodes.has(String(deal.customer_code)));
+        const isRelatedProspect = Boolean(deal?.prospect_customer_id && relatedProspectIds.has(String(deal.prospect_customer_id)));
+        return isMentioned || isRelatedCustomer || isRelatedProspect || deal?.user_id === profile.id;
+      });
+      const unreadCount = visibleNotifications.filter((notification) => !notification.read_at).length;
+
+      const payload = visibleNotifications.map((notification) => {
         const deal = dealsById.get(notification.deal_id) as any;
         const comment = commentsById.get(notification.comment_id) as any;
         const clinicKind = deal?.customer_code ? 'customer' : 'prospect';
@@ -112,7 +157,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           clinic_id: clinicId,
           clinic_name: clinicName,
           deal_date: deal?.deal_date ?? null,
-          comment_body: comment?.body ?? '',
+          comment_body: visibleCommentBody(comment?.body),
           comment_author_name: authorName,
           comment_created_at: comment?.created_at ?? notification.created_at,
         };
