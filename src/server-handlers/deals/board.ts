@@ -251,7 +251,7 @@ async function fetchMergedCustomerNameMap(rows: DealRow[]) {
   return mergedCustomerNameMap;
 }
 
-async function fetchNewOrderAmountGoal({
+async function fetchTargetMonthGoal({
   month,
   userId,
   departmentId,
@@ -260,11 +260,14 @@ async function fetchNewOrderAmountGoal({
   userId: string;
   departmentId: number | null;
 }) {
-  const monthKeys = expandYearMonthFormats([month]);
+  const previousMonth = shiftMonth(month, -1);
+  const currentMonthKeys = new Set(expandYearMonthFormats([month]));
+  const previousMonthKeys = new Set(expandYearMonthFormats([previousMonth]));
+  const queryMonthKeys = Array.from(new Set([...currentMonthKeys, ...previousMonthKeys]));
   let query = supabaseAdmin
     .from('budgets')
     .select('user_id, department_id, target_year_month, "KPI_new_order_amount"')
-    .in('target_year_month', monthKeys);
+    .in('target_year_month', queryMonthKeys);
 
   if (userId) {
     query = query.eq('user_id', userId);
@@ -303,15 +306,25 @@ async function fetchNewOrderAmountGoal({
     );
   }
 
-  return (budgetRows ?? []).reduce((sum: number, row: any) => {
-    const profileId = String(row.user_id ?? '').trim();
-    if (profileId && !allowedProfileIds.has(profileId)) {
-      return sum;
-    }
+  const sumGoalForMonth = (monthKeys: Set<string>) => (
+    (budgetRows ?? []).reduce((sum: number, row: any) => {
+      const profileId = String(row.user_id ?? '').trim();
+      if (profileId && !allowedProfileIds.has(profileId)) {
+        return sum;
+      }
 
-    const amount = Number(row.KPI_new_order_amount ?? 0);
-    return sum + (Number.isFinite(amount) ? amount : 0);
-  }, 0);
+      if (!monthKeys.has(String(row.target_year_month ?? '').trim())) {
+        return sum;
+      }
+
+      const amount = Number(row.KPI_new_order_amount ?? 0);
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0)
+  );
+
+  const currentGoal = sumGoalForMonth(currentMonthKeys);
+  const previousGoal = sumGoalForMonth(previousMonthKeys);
+  return Math.max(0, currentGoal - previousGoal);
 }
 
 function mapBoardDeal(row: DealRow, mergedCustomerNameMap: Map<string, string>, pipelineStage: DealPipelineStage) {
@@ -337,6 +350,7 @@ function mapBoardDeal(row: DealRow, mergedCustomerNameMap: Map<string, string>, 
     clinic_id: row.customer_code ?? mergedCustomerCode ?? row.prospect_customer_id ?? '',
     lifecycle: lifecycleType,
     deal_date: row.deal_date,
+    created_at: row.created_at,
     pipeline_stage: pipelineStage,
     product_name: row.product_name ?? null,
     notes: row.notes ?? null,
@@ -352,7 +366,62 @@ function mapBoardDeal(row: DealRow, mergedCustomerNameMap: Map<string, string>, 
     deal_temperature: row.deal_temperature ?? null,
     source_month: toMonthString(row.deal_date),
     is_carried_over: false,
+    has_later_deal: false,
   };
+}
+
+async function markDealsWithLaterActivity(deals: BoardDeal[], monthStart: string) {
+  if (deals.length === 0) return deals;
+
+  const customerCodes = Array.from(new Set(
+    deals.filter((deal) => deal.clinic_kind === 'customer').map((deal) => deal.clinic_id).filter(Boolean)
+  ));
+  const prospectIds = Array.from(new Set(
+    deals.filter((deal) => deal.clinic_kind === 'prospect').map((deal) => deal.clinic_id).filter(Boolean)
+  ));
+
+  const [customerResult, prospectResult] = await Promise.all([
+    customerCodes.length > 0
+      ? supabaseAdmin
+        .from('deals')
+        .select('id, customer_code, prospect_customer_id, deal_date, created_at')
+        .in('customer_code', customerCodes)
+        .gte('deal_date', monthStart)
+      : Promise.resolve({ data: [], error: null }),
+    prospectIds.length > 0
+      ? supabaseAdmin
+        .from('deals')
+        .select('id, customer_code, prospect_customer_id, deal_date, created_at')
+        .in('prospect_customer_id', prospectIds)
+        .gte('deal_date', monthStart)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (customerResult.error) throw customerResult.error;
+  if (prospectResult.error) throw prospectResult.error;
+
+  const laterRowsByClinic = new Map<string, Array<{ id: string; deal_date: string; created_at: string }>>();
+  for (const row of [...(customerResult.data ?? []), ...(prospectResult.data ?? [])] as any[]) {
+    const key = row.customer_code
+      ? `customer:${row.customer_code}`
+      : `prospect:${row.prospect_customer_id}`;
+    const current = laterRowsByClinic.get(key) ?? [];
+    current.push(row);
+    laterRowsByClinic.set(key, current);
+  }
+
+  return deals.map((deal) => {
+    const clinicKey = `${deal.clinic_kind}:${deal.clinic_id}`;
+    const hasLaterDeal = (laterRowsByClinic.get(clinicKey) ?? []).some((row) => (
+      row.id !== deal.id
+      && (
+        row.deal_date > deal.deal_date
+        || (row.deal_date === deal.deal_date && row.created_at > deal.created_at)
+      )
+    ));
+
+    return { ...deal, has_later_deal: hasLaterDeal };
+  });
 }
 
 function matchesFilters(
@@ -391,7 +460,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userId = String(req.query.userId ?? '').trim();
     const departmentId = parseDepartmentId(req.query.departmentId);
     const monthStart = `${month}-01`;
-    const newOrderAmountGoal = await fetchNewOrderAmountGoal({ month, userId, departmentId });
+    const targetMonthGoal = await fetchTargetMonthGoal({ month, userId, departmentId });
 
     const { data: closure, error: closureError } = await supabaseAdmin
       .from('deal_board_month_closures')
@@ -422,7 +491,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ));
 
       if (baseDealIds.length === 0) {
-        return res.status(200).json({ month, lifecycle, is_closed: true, deals: [], new_order_amount_goal: Math.round(newOrderAmountGoal) });
+        return res.status(200).json({ month, lifecycle, is_closed: true, deals: [], target_month_goal: Math.round(targetMonthGoal) });
       }
 
       const { data: dealRows, error: dealRowsError } = await supabaseAdmin
@@ -478,13 +547,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const filteredDeals = deals.filter((deal) => matchesFilters(deal, lifecycle, userId, departmentId));
+      const dealsWithLaterActivity = await markDealsWithLaterActivity(filteredDeals, monthStart);
 
       return res.status(200).json({
         month,
         lifecycle,
         is_closed: true,
-        deals: filteredDeals,
-        new_order_amount_goal: Math.round(newOrderAmountGoal),
+        deals: dealsWithLaterActivity,
+        target_month_goal: Math.round(targetMonthGoal),
       });
     }
 
@@ -644,12 +714,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    const filteredDeals = deals.filter((deal) => matchesFilters(deal, lifecycle, userId, departmentId));
+    const dealsWithLaterActivity = await markDealsWithLaterActivity(filteredDeals, monthStart);
+
     return res.status(200).json({
       month,
       lifecycle,
       is_closed: false,
-      deals: deals.filter((deal) => matchesFilters(deal, lifecycle, userId, departmentId)),
-      new_order_amount_goal: Math.round(newOrderAmountGoal),
+      deals: dealsWithLaterActivity,
+      target_month_goal: Math.round(targetMonthGoal),
     });
   } catch (error) {
     console.error('deals board api unexpected error:', error);

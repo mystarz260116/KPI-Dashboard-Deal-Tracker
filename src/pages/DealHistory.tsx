@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { authFetch } from '../lib/authFetch';
+import MentionTextarea, { MentionText, wasRecentMentionInteraction } from '../components/MentionTextarea';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, Building2, Search, CalendarDays, ChevronLeft, ChevronRight,
@@ -14,6 +15,7 @@ interface Deal {
   clinicId: string;
   clinicKind: 'customer' | 'prospect';
   clinicName: string;
+  assigneeName: string;
   activityType: 'visit' | 'proposal' | 'negotiating' | 'won' | 'lost';
   executedActionType?: string;
   date: string;
@@ -40,6 +42,8 @@ interface DealComment {
   created_at: string;
   author_user_id: string;
   author_name: string;
+  reply_to_comment_id?: string | null;
+  reply_to_author_name?: string | null;
 }
 
 interface DealReactionSummary {
@@ -144,6 +148,7 @@ export default function DealHistory() {
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [commentsByDealId, setCommentsByDealId] = useState<Record<string, DealComment[]>>({});
+  const [replyTargetsByDealId, setReplyTargetsByDealId] = useState<Record<string, DealComment | null>>({});
   const [reactionsByDealId, setReactionsByDealId] = useState<Record<string, DealReactionSummary>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [submittingCommentDealId, setSubmittingCommentDealId] = useState<string | null>(null);
@@ -155,27 +160,17 @@ export default function DealHistory() {
     const fetchDeals = async () => {
       if (!user?.id) return;
 
-      let query = supabase
-        .from('deals')
-        .select('id, customer_code, prospect_customer_id, deal_date, activity_type, executed_action_type, product_name, amount, expected_monthly_amounts, notes, next_action, contact_role, decision_maker_contact, proposal_category, proposal_categories, deal_temperature, next_action_type, next_action_date, customers(name), prospect_customers(name)')
-        .gte('deal_date', getMonthRange(selectedMonth).start)
-        .lt('deal_date', getMonthRange(selectedMonth).endExclusive)
-        .order('deal_date', { ascending: false })
-        .order('created_at', { ascending: false });
-
-      if (user.role !== 'admin') {
-        query = query.eq('user_id', user.id);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('deal history fetch error:', error);
+      const response = await authFetch(`/api/deals?path=history&month=${encodeURIComponent(selectedMonth)}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        console.error('deal history fetch error:', payload);
         setError('商談履歴の取得に失敗しました');
         setDeals([]);
         return;
       }
 
+      const payload = await response.json();
+      const data = Array.isArray(payload?.deals) ? payload.deals : [];
       setError('');
 
       const results: Deal[] = (data ?? []).map((d: any) => ({
@@ -183,6 +178,7 @@ export default function DealHistory() {
         clinicId: d.customer_code ?? d.prospect_customer_id,
         clinicKind: d.customer_code ? 'customer' : 'prospect',
         clinicName: d.customers?.name ?? d.prospect_customers?.name ?? d.customer_code ?? d.prospect_customer_id,
+        assigneeName: String(Array.isArray(d.profiles) ? d.profiles[0]?.name : d.profiles?.name).trim(),
         activityType: d.activity_type,
         executedActionType: d.executed_action_type ?? undefined,
         date: d.deal_date,
@@ -316,6 +312,7 @@ export default function DealHistory() {
   const handleSubmitComment = async (deal: Deal) => {
     const body = commentDrafts[deal.id]?.trim() ?? '';
     if (!body) return;
+    const replyTarget = replyTargetsByDealId[deal.id] ?? null;
 
     setSubmittingCommentDealId(deal.id);
     setError('');
@@ -331,6 +328,7 @@ export default function DealHistory() {
           clinic_id: deal.clinicId,
           deal_id: deal.id,
           body,
+          reply_to_comment_id: replyTarget?.id ?? null,
         }),
       });
 
@@ -340,6 +338,7 @@ export default function DealHistory() {
       }
 
       const newComment = await response.json();
+      if (replyTarget) newComment.reply_to_author_name = replyTarget.author_name;
       setCommentsByDealId((current) => ({
         ...current,
         [deal.id]: [newComment, ...(current[deal.id] ?? [])],
@@ -348,6 +347,7 @@ export default function DealHistory() {
         ...current,
         [deal.id]: '',
       }));
+      setReplyTargetsByDealId((current) => ({ ...current, [deal.id]: null }));
     } catch (submitError) {
       console.error('deal history comment post error:', submitError);
       setError('コメントの投稿に失敗しました');
@@ -532,7 +532,13 @@ export default function DealHistory() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="rounded-2xl bg-white p-5 shadow-sm border border-zinc-200"
+                onClick={(event) => {
+                  if (wasRecentMentionInteraction()) return;
+                  if ((event.target as HTMLElement).closest('button, a, input, textarea, select, label, [data-no-card-navigation]')) return;
+                  navigate(`/clinics/${deal.clinicKind}/${encodeURIComponent(deal.clinicId)}`);
+                }}
+                className="cursor-pointer rounded-2xl bg-white p-5 shadow-sm border border-zinc-200 transition hover:border-purple-200 hover:shadow-md"
+                title={`${deal.clinicName}を開く`}
               >
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -567,7 +573,10 @@ export default function DealHistory() {
                   </div>
                 </div>
 
-                <p className="mb-2 text-xs text-zinc-400">{deal.date}</p>
+                <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
+                  <span>{deal.date}</span>
+                  <span className="font-medium text-zinc-600">商談入力者：{deal.assigneeName}</span>
+                </div>
 
                 {(deal.dealTemperature || deal.proposalCategory || deal.proposalCategories?.length || deal.contactRole || deal.decisionMakerContact) && (
                   <div className="mb-3 flex flex-wrap gap-2">
@@ -677,14 +686,26 @@ export default function DealHistory() {
                 </div>
 
                 <div className="mt-3 rounded-2xl bg-zinc-50 p-3">
-                  <textarea
+                  {replyTargetsByDealId[deal.id] && (
+                    <div className="mb-2 flex items-center justify-between rounded-xl bg-purple-50 px-3 py-2 text-xs text-purple-700">
+                      <span>{replyTargetsByDealId[deal.id]?.author_name}さんへ返信</span>
+                      <button
+                        type="button"
+                        onClick={() => setReplyTargetsByDealId((current) => ({ ...current, [deal.id]: null }))}
+                        className="font-semibold"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  )}
+                  <MentionTextarea
                     value={commentDrafts[deal.id] ?? ''}
-                    onChange={(event) => setCommentDrafts((current) => ({
+                    onChange={(value) => setCommentDrafts((current) => ({
                       ...current,
-                      [deal.id]: event.target.value,
+                      [deal.id]: value,
                     }))}
-                    placeholder="この商談へのコメントを書く"
-                    className="min-h-[72px] w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                    placeholder="コメントを書く（@名前 でメンション）"
+                    className="min-h-[88px] w-full touch-manipulation rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-base text-zinc-700 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 sm:text-sm"
                   />
                   <div className="mt-3 flex justify-end">
                     <button
@@ -705,7 +726,12 @@ export default function DealHistory() {
                     </div>
                   ) : (
                     (commentsByDealId[deal.id] ?? []).map((comment) => (
-                      <div key={comment.id} className="rounded-lg border border-zinc-200 px-3 py-3">
+                      <div key={comment.id} className={`rounded-lg border border-zinc-200 px-3 py-3 ${comment.reply_to_comment_id ? 'ml-8 bg-zinc-50' : ''}`}>
+                        {comment.reply_to_comment_id && (
+                          <p className="mb-1 text-xs font-medium text-purple-600">
+                            {comment.reply_to_author_name}さんへの返信
+                          </p>
+                        )}
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-bold text-zinc-900">{comment.author_name}</p>
                           <p className="text-xs text-zinc-500">
@@ -718,7 +744,23 @@ export default function DealHistory() {
                             }).format(new Date(comment.created_at))}
                           </p>
                         </div>
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-700">{comment.body}</p>
+                        <MentionText
+                          text={comment.body}
+                          className="mt-2 whitespace-pre-wrap text-sm text-zinc-700"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplyTargetsByDealId((current) => ({ ...current, [deal.id]: comment }));
+                            setCommentDrafts((current) => ({
+                              ...current,
+                              [deal.id]: `@${comment.author_name} `,
+                            }));
+                          }}
+                          className="mt-2 text-xs font-semibold text-zinc-500 hover:text-purple-600"
+                        >
+                          返信
+                        </button>
                       </div>
                     ))
                   )}

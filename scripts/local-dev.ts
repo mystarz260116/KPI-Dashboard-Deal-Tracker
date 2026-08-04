@@ -23,9 +23,11 @@ function run(command: string, args: string[], extraEnv: Record<string, string> =
 const children: ChildProcess[] = [
   run('node', ['--import', 'tsx', 'scripts/local-api-server.ts'], {
     LOCAL_API_PORT: apiPort,
+    LOCAL_AUTH_BYPASS: '1',
   }),
   run('./node_modules/.bin/vite', ['--host', '0.0.0.0', '--port', webPort], {
     LOCAL_API_PORT: apiPort,
+    VITE_LOCAL_AUTH_BYPASS: 'true',
   }),
 ];
 

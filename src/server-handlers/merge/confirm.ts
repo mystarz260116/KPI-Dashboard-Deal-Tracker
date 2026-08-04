@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
-import { requireAuthenticatedProfile } from '../../../api/_lib/auth.js';
+import { requireAuthenticatedProfile, requireUserManagementAccess } from '../../../api/_lib/auth.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -9,6 +9,7 @@ export default async function handler(req: any, res: any) {
   try {
     const profile = await requireAuthenticatedProfile(req, res);
     if (!profile) return;
+    if (!requireUserManagementAccess(profile, res)) return;
 
     const { prospect_customer_id, customer_code } = req.body ?? {};
     const mergedBy = profile.id;

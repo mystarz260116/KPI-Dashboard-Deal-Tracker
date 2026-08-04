@@ -5,6 +5,7 @@ import { ArrowLeft, CheckCircle2, KeyRound, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import logoImg from '../assets/Mystarz-logo.png';
+import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '../lib/passwordPolicy';
 
 const getPasswordUpdateErrorMessage = (message: string) => {
   if (message.includes('New password should be different from the old password')) {
@@ -132,8 +133,8 @@ export default function ResetPassword() {
     setError('');
     setMessage('');
 
-    if (password.length < 8) {
-      setError('パスワードは8文字以上で入力してください');
+    if (!isValidPassword(password)) {
+      setError(PASSWORD_POLICY_MESSAGE);
       return;
     }
 

@@ -459,7 +459,7 @@ export default function CustomerMerge() {
       kind: 'new_prospect',
       id: `new:${candidate.customer_code}`,
       name: candidate.customer_name,
-      subtitle: 'この入れ歯くん名称で見込み顧客を作成',
+      subtitle: 'この売上データの名称で見込み顧客を作成',
     };
     const unlinkedTarget: LinkTarget = {
       kind: 'unlinked',
@@ -611,7 +611,7 @@ export default function CustomerMerge() {
             <div>
               <p className="text-base font-black text-zinc-900">確認対象</p>
               <p className="mt-2 text-sm font-medium text-zinc-500">
-                入れ歯くん売上データから検知した受注候補を表示します。紐づけ先を検索して選択してください。
+                売上インポートデータから検知した受注候補を表示します。紐づけ先を検索して選択してください。
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -703,7 +703,7 @@ export default function CustomerMerge() {
                 </colgroup>
                 <thead>
                   <tr className="border-b border-zinc-100 bg-zinc-50 text-left text-xs font-black text-zinc-500">
-                    <th className="px-6 py-4">入れ歯くんデータ</th>
+                    <th className="px-6 py-4">売上インポートデータ</th>
                     <th className="px-6 py-4">紐づけ先</th>
                     <th className="px-6 py-4 text-right">金額</th>
                     <th className="px-6 py-4">操作</th>
@@ -773,7 +773,7 @@ export default function CustomerMerge() {
                 >
                   <div className="space-y-3">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">入れ歯くんデータ</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">売上インポートデータ</p>
                       <p className="mt-1 text-sm font-medium text-zinc-800">
                         {c.source === 'detected_new_order' ? c.customer_name : c.prospect_name}
                       </p>

@@ -194,6 +194,10 @@ export default function DealInput() {
   const locationState = location.state as DealInputLocationState | null;
 
   const fetchMergeCandidateCount = async () => {
+  if (!user?.can_manage_users) {
+    setMergeCandidateCount(0);
+    return;
+  }
   try {
     const res = await authFetch(`/api/merge/candidates/count?ts=${Date.now()}`, {
       cache: 'no-store',
@@ -462,7 +466,9 @@ export default function DealInput() {
         return;
       }
 
-      await fetchMergeCandidateCount();
+      if (user?.can_manage_users) {
+        await fetchMergeCandidateCount();
+      }
       setStep('success');
     } catch (err) {
       console.error('deal submit error:', err);
@@ -492,8 +498,8 @@ export default function DealInput() {
   };
 
   useEffect(() => {
-  fetchMergeCandidateCount();
-  }, []);
+    fetchMergeCandidateCount();
+  }, [user?.can_manage_users]);
 
   useEffect(() => {
     fetchCommentNotifications();
@@ -617,19 +623,21 @@ export default function DealInput() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => navigate('/customer-merge')}
-              className="inline-flex items-center justify-center rounded-lg bg-linear-to-r from-purple-500 to-pink-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:opacity-90"
-            >
-              <GitMerge className="mr-1.5 h-4 w-4" />
-              受注確認
-              {mergeCandidateCount > 0 && (
-                <span className="ml-2 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] leading-none text-white">
-                  {mergeCandidateCount}
-                </span>
-              )}
-            </button>
+            {user?.can_manage_users && (
+              <button
+                type="button"
+                onClick={() => navigate('/customer-merge')}
+                className="inline-flex items-center justify-center rounded-lg bg-linear-to-r from-purple-500 to-pink-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:opacity-90"
+              >
+                <GitMerge className="mr-1.5 h-4 w-4" />
+                受注確認
+                {mergeCandidateCount > 0 && (
+                  <span className="ml-2 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                    {mergeCandidateCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="flex h-2 w-24 gap-1">
@@ -773,7 +781,7 @@ export default function DealInput() {
           </div>
         )}
 
-        {mergeCandidateCount > 0 && (
+        {user?.can_manage_users && mergeCandidateCount > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}

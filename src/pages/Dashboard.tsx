@@ -553,8 +553,13 @@ export default function Dashboard() {
   }, [user, navigate]);
 
   useEffect(() => {
-    fetchPendingMergeCount();
-  }, []);
+    if (user?.can_manage_users) {
+      fetchPendingMergeCount();
+    } else {
+      setPendingMergeCount(0);
+      setIsMergeCountLoading(false);
+    }
+  }, [user?.can_manage_users]);
 
   useEffect(() => {
     fetchCommentNotifications();
@@ -1038,7 +1043,9 @@ export default function Dashboard() {
         `CSV取込と同期処理が完了しました。種別: ${importDataKindLabel} / 部署: ${importDepartmentName} / 取り込み日時: ${importedAtInput.replace('T', ' ')} / 対象月: ${replacedMonths || '判定不可'} / 取込件数: ${uploadedCount}件 / 置換raw件数: ${finalizeResult?.deleted_raw_rows ?? 0}件 / 置換売上件数: ${finalizeResult?.deleted_sales_rows ?? 0}件 / 顧客担当紐付け更新: ${finalizeResult?.customer_external_staff_maps_upserted ?? 0}件 / 候補生成件数: ${finalizeResult?.inserted_count ?? 0}件`
       );
       setSelectedCsvFile(null);
-      await fetchPendingMergeCount();
+      if (user?.can_manage_users) {
+        await fetchPendingMergeCount();
+      }
       setIsImportModalOpen(false);
     } catch (err: any) {
       console.error('sales csv import error:', err);
@@ -1075,71 +1082,80 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-zinc-200">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white px-4 py-4 sm:px-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <img src={logoImg} alt="Mystarz" className="h-8 w-auto object-contain" />
-            <h1 className="text-xl font-bold text-zinc-900 xl:whitespace-nowrap">売上管理ダッシュボード</h1>
+      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white shadow-sm">
+        <div className="mx-auto max-w-[1600px] px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <img src={logoImg} alt="Mystarz" className="h-8 w-auto shrink-0 object-contain" />
+              <h1 className="truncate text-lg font-bold tracking-tight text-zinc-900 sm:text-xl">売上管理ダッシュボード</h1>
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="hidden max-w-[180px] truncate text-sm font-medium text-zinc-600 sm:block">{user?.name ?? 'ゲスト'}</span>
+              <button onClick={() => navigate('/deals/new')}
+                className="inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
+                <PlusCircle className="h-4 w-4" />新規案件入力
+              </button>
+              <button onClick={handleLogout} aria-label="ログアウト" title="ログアウト" className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700">
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-3 xl:items-end">
-            <div className="flex flex-wrap gap-2">
+          <nav className="mt-3 flex items-center gap-2 overflow-x-auto pb-1" aria-label="ダッシュボードメニュー">
             <button onClick={() => {
               setImportDataKind(salesImportDataKind);
               setIsImportModalOpen(true);
               setImportResultMessage('');
             }}
-              className="inline-flex items-center gap-1 rounded-xl border border-indigo-300 px-3 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-50 whitespace-nowrap">
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 text-sm font-medium text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-50">
               <PlusCircle className="h-4 w-4" />CSV取込
             </button>
 
             <button onClick={() => navigate('/deals/history')}
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
               <TrendingUp className="h-4 w-4" />商談履歴
             </button>
 
             <button onClick={() => navigate('/deals/progress')}
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
               <Users className="h-4 w-4" />進捗管理
             </button>
 
             <button onClick={() => navigate('/sales-performance')}
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
               <TrendingUp className="h-4 w-4" />営業パフォーマンス
             </button>
 
             <button onClick={() => navigate('/clinic-assets')}
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
               <Building2 className="h-4 w-4" />医院アセット
             </button>
 
             <button onClick={() => navigate('/crm')}
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 whitespace-nowrap">
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
               <Search className="h-4 w-4" />CRM検索
             </button>
 
-            <button onClick={() => navigate('/customer-merge')}
-              className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 whitespace-nowrap">
-              <Target className="h-4 w-4" />受注確認
-              {!isMergeCountLoading && pendingMergeCount > 0 && (
-                <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
-                  {pendingMergeCount}
-                </span>
-              )}
-            </button>
-            </div>
+            {user?.can_manage_users && (
+              <button onClick={() => navigate('/customer-merge')}
+                className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-medium text-amber-800 transition hover:border-amber-300 hover:bg-amber-100">
+                <Target className="h-4 w-4" />受注確認
+                {!isMergeCountLoading && pendingMergeCount > 0 && (
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-bold text-white">
+                    {pendingMergeCount}
+                  </span>
+                )}
+              </button>
+            )}
 
-            <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-              <button onClick={() => navigate('/deals/new')}
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 whitespace-nowrap">
-                <PlusCircle className="h-4 w-4" />新規案件入力
+            {user?.can_manage_users && (
+              <button onClick={() => navigate('/user-master')}
+                className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-purple-200 bg-purple-50 px-3 text-sm font-medium text-purple-800 transition hover:border-purple-300 hover:bg-purple-100">
+                <Users className="h-4 w-4" />ユーザーマスタ
               </button>
-              <span className="max-w-[160px] truncate text-sm text-zinc-600">{user?.name ?? 'ゲスト'}</span>
-              <button onClick={handleLogout} className="rounded-xl p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700">
-                <LogOut className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
+            )}
+          </nav>
         </div>
       </header>
 
@@ -1154,7 +1170,7 @@ export default function Dashboard() {
             {importResultMessage}
           </div>
         )}
-        {!isMergeCountLoading && pendingMergeCount > 0 && (
+        {user?.can_manage_users && !isMergeCountLoading && pendingMergeCount > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}

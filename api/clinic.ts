@@ -16,8 +16,12 @@ function parseMonth(value: unknown) {
   return raw;
 }
 
+function isMissingClinicAttributesTable(error: { code?: string } | null) {
+  return error?.code === 'PGRST205' || error?.code === '42P01';
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.method !== 'PATCH') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -32,6 +36,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!kind || !clinicId) {
       return res.status(400).json({ error: 'kind and id are required' });
+    }
+
+    if (req.method === 'PATCH') {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body ?? {});
+      const iosRentalEnabled = body.ios_rental_enabled === true;
+      const iosRentalStartDate = iosRentalEnabled
+        ? String(body.ios_rental_start_date ?? '').trim()
+        : null;
+
+      if (iosRentalEnabled && !/^\d{4}-\d{2}-\d{2}$/.test(iosRentalStartDate ?? '')) {
+        return res.status(400).json({ error: 'IOSレンタルの開始日を入力してください' });
+      }
+
+      const { data, error } = await supabaseAdmin
+        .from('clinic_attributes')
+        .upsert({
+          clinic_kind: kind,
+          clinic_id: clinicId,
+          ios_rental_enabled: iosRentalEnabled,
+          ios_rental_start_date: iosRentalStartDate,
+          updated_by: profile.id,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'clinic_kind,clinic_id' })
+        .select('ios_rental_enabled, ios_rental_start_date')
+        .single();
+
+      if (error) {
+        console.error('clinic api attributes save error:', error);
+        if (isMissingClinicAttributesTable(error)) {
+          return res.status(503).json({
+            error: 'IOSレンタル情報の保存準備が完了していません。DB更新を適用してください',
+            code: 'CLINIC_ATTRIBUTES_MIGRATION_REQUIRED',
+          });
+        }
+        return res.status(500).json({ error: '取引先情報の保存に失敗しました' });
+      }
+
+      return res.status(200).json({
+        ios_rental_enabled: Boolean(data?.ios_rental_enabled),
+        ios_rental_start_date: data?.ios_rental_start_date ?? null,
+      });
     }
 
     const [year, monthNumber] = month.split('-').map(Number);
@@ -91,12 +136,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       customerCodeForMapping = data.merged_customer_code ?? null;
     }
 
+    const { data: clinicAttributes, error: clinicAttributesError } = await supabaseAdmin
+      .from('clinic_attributes')
+      .select('ios_rental_enabled, ios_rental_start_date')
+      .eq('clinic_kind', kind)
+      .eq('clinic_id', clinicId)
+      .maybeSingle();
+
+    if (clinicAttributesError && !isMissingClinicAttributesTable(clinicAttributesError)) {
+      console.error('clinic api attributes fetch error:', clinicAttributesError);
+      return res.status(500).json({ error: 'Clinic attributes fetch failed' });
+    }
+    if (clinicAttributesError) {
+      console.warn('clinic attributes table is not available; using defaults');
+    }
+
     let assignedStaffs: Array<{ key: string; label: string; source: 'sales' | 'deal' }> = [];
     let salesDetails: Array<{
       delivery_date: string | null;
       product_name: string;
-      detail_category: string | null;
-      quantity: number;
+      data_kind: 'delivery' | 'order';
       amount: number;
     }> = [];
     let salesMonthTotal = 0;
@@ -155,69 +214,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       let salesQuery = supabaseAdmin
         .from('sales_import_rows')
-        .select('source_raw_id, delivery_date, amount, normalized_product_code, normalized_product_name')
+        .select('delivery_date, order_date, data_kind, external_staff_code, normalized_product_name, amount')
         .eq('customer_code', customerCodeForMapping)
-        .eq('data_kind', 'delivery')
-        .gte('delivery_date', monthStart)
-        .lt('delivery_date', monthEndExclusive)
-        .order('delivery_date', { ascending: false })
+        .or(`and(data_kind.eq.delivery,delivery_date.gte.${monthStart},delivery_date.lt.${monthEndExclusive}),and(data_kind.eq.order,order_date.gte.${monthStart},order_date.lt.${monthEndExclusive})`)
+        .order('delivery_date', { ascending: false, nullsFirst: false })
+        .order('order_date', { ascending: false, nullsFirst: false })
         .limit(1000);
 
       if (!canReadAllDepartments) {
-        if (!profileDepartmentId) {
-          salesQuery = salesQuery.eq('department_id', -1);
+        if (!profileDepartmentId || staffCodes.length === 0) {
+          salesQuery = salesQuery.eq('external_staff_code', '__no_access__');
         } else {
-          salesQuery = salesQuery.eq('department_id', profileDepartmentId);
+          salesQuery = salesQuery
+            .eq('department_id', profileDepartmentId)
+            .in('external_staff_code', staffCodes);
         }
       }
 
       const { data: salesRows, error: salesError } = await salesQuery;
 
       if (salesError) {
-        console.error('clinic api sales rows error:', salesError);
+        console.error('clinic api sales import rows error:', salesError);
         return res.status(500).json({ error: 'Clinic sales rows fetch failed' });
       }
 
-      const sourceRawIds = (salesRows ?? [])
-        .map((row: any) => Number(row.source_raw_id))
-        .filter((value: number) => Number.isFinite(value));
+      salesDetails = (salesRows ?? []).map((row: any) => {
+        const amount = Number(row.amount ?? 0);
+        const safeAmount = Number.isFinite(amount) ? amount : 0;
+        const dataKind = row.data_kind === 'order' ? 'order' : 'delivery';
+        salesMonthTotal += safeAmount;
 
-      if (sourceRawIds.length > 0) {
-        const { data: rawRows, error: rawRowsError } = await supabaseAdmin
-          .from('sales_import_raw_rows')
-          .select('id, 補綴物名, 明細区分, 数量')
-          .in('id', sourceRawIds);
-
-        if (rawRowsError) {
-          console.error('clinic api raw sales detail error:', rawRowsError);
-          return res.status(500).json({ error: 'Clinic raw sales rows fetch failed' });
-        }
-
-        const rawRowMap = new Map<number, any>();
-        (rawRows ?? []).forEach((row: any) => {
-          rawRowMap.set(Number(row.id), row);
-        });
-
-        salesDetails = (salesRows ?? []).map((row: any) => {
-          const raw = rawRowMap.get(Number(row.source_raw_id));
-          const amount = Number(row.amount ?? 0);
-          const quantity = Number(raw?.['数量'] ?? 0);
-          const safeAmount = Number.isFinite(amount) ? amount : 0;
-          salesMonthTotal += safeAmount;
-
-          return {
-            delivery_date: row.delivery_date ? String(row.delivery_date) : null,
-            product_name:
-              String(row.normalized_product_name ?? '').trim()
-              || String(raw?.['補綴物名'] ?? '').trim()
-              || String(raw?.['明細区分'] ?? '').trim()
-              || '未設定',
-            detail_category: raw?.['明細区分'] ? String(raw['明細区分']) : null,
-            quantity: Number.isFinite(quantity) ? quantity : 0,
-            amount: safeAmount,
-          };
-        });
-      }
+        return {
+          delivery_date: dataKind === 'order'
+            ? (row.order_date ? String(row.order_date) : null)
+            : (row.delivery_date ? String(row.delivery_date) : null),
+          product_name: String(row.normalized_product_name ?? '').trim() || '未設定',
+          data_kind: dataKind,
+          amount: safeAmount,
+        };
+      });
     }
 
     const dealQuery = supabaseAdmin
@@ -256,6 +291,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       clinic: clinicPayload,
+      ios_rental_enabled: Boolean(clinicAttributes?.ios_rental_enabled),
+      ios_rental_start_date: clinicAttributes?.ios_rental_start_date ?? null,
       assigned_staffs: assignedStaffs,
       sales_month: month,
       sales_month_total: salesMonthTotal,

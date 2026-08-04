@@ -14,6 +14,8 @@ export interface User {
   department: string;
   role: UserRole;       // 営業 / 上長 / 管理者
   can_view_dashboard: boolean; // ダッシュボード閲覧権限
+  can_manage_users: boolean; // ユーザーマスタ管理権限
+  must_change_password: boolean; // 初期パスワード変更要否
   mfa_verified_at?: string | null;
   mfa_reverify_after?: string | null;
 }
