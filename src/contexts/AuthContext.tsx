@@ -39,6 +39,7 @@ const localDevelopmentUser: User = {
   can_view_dashboard: true,
   can_manage_users: true,
   must_change_password: false,
+  mfa_temporarily_exempt: false,
   mfa_verified_at: new Date().toISOString(),
   mfa_reverify_after: null,
 };
@@ -96,6 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!session?.user) return null;
 
     const userId = session.user.id;
+    const { data: latestUserData, error: latestUserError } = await supabase.auth.getUser();
+
+    if (latestUserError) {
+      console.error('latest auth user fetch error:', latestUserError);
+    }
+
+    const latestAuthUser = latestUserData.user ?? session.user;
 
     const { data: profile, error } = await supabase
       .from('profiles')
@@ -123,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       can_view_dashboard: true,
       can_manage_users: profile.can_manage_users ?? false,
       must_change_password: profile.must_change_password ?? false,
+      mfa_temporarily_exempt: latestAuthUser.app_metadata?.mfa_temporarily_exempt === true,
       mfa_verified_at: profile.mfa_verified_at ?? null,
       mfa_reverify_after: profile.mfa_reverify_after ?? null,
     };

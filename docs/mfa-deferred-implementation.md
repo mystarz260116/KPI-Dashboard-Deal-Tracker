@@ -1,5 +1,8 @@
 # MFA Deferred Implementation Notes
 
+> **履歴資料:** この文書は2026-06-12にMFAを一時停止した時点の記録です。
+> MFAは現在再有効化されています。現行仕様は `docs/mfa-handoff-spec.md` を参照してください。
+
 MFA was temporarily removed from the active product flow on 2026-06-12.
 
 ## Preserved implementation

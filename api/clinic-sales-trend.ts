@@ -4,31 +4,15 @@ import { DASHBOARD_SALES_ROWS_TABLE } from './_lib/regions.js';
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
 
 const CLINICS = [
-  {
-    requested_code: '30562',
-    sales_code: '1030562',
-    display_name: 'しまだ歯科クリニック',
-    ios_rental_start: '2025-10-01',
-  },
-  {
-    requested_code: '4097',
-    sales_code: '1040979',
-    display_name: '医療法人社団晃誠会 あおぞらデンタルクリニック',
-    ios_rental_start: '2025-04-01',
-  },
+  { requested_code: '30562', sales_code: '1030562', display_name: 'しまだ歯科クリニック', ios_rental_start: '2025-10-01' },
+  { requested_code: '4097', sales_code: '1040979', display_name: '医療法人社団晃誠会 あおぞらデンタルクリニック', ios_rental_start: '2025-04-01' },
+  { requested_code: '40401', sales_code: '1040401', display_name: 'ささはら歯科クリニック', ios_rental_start: '2026-07-07' },
+  { requested_code: '40402', sales_code: '1040402', display_name: '栗田歯科クリニック', ios_rental_start: '2026-07-14' },
+  { requested_code: '40398', sales_code: '1040398', display_name: '宝塚ファミリー歯科クリニック', ios_rental_start: '2026-07-08' },
+  { requested_code: '30186', sales_code: '1030186', display_name: '光成歯科', ios_rental_start: '2026-07-17' },
+  { requested_code: '30760', sales_code: '1030760', display_name: '医療法人 小西歯科医院', ios_rental_start: '2026-06-26' },
+  { requested_code: '324', sales_code: '1000324', display_name: '医療法人誠智会 南与野駅歯科クリニック', ios_rental_start: '2026-04-15' },
 ] as const;
-
-function monthKey(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function addMonths(date: Date, amount: number) {
-  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
-}
-
-function toDateString(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
 
 type SalesRow = {
   delivery_date: string;
@@ -37,9 +21,36 @@ type SalesRow = {
   normalized_product_name: string | null;
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function parseDate(value: string) {
+  return new Date(`${value}T00:00:00Z`);
+}
+
+function toDateString(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(value: string, amount: number) {
+  return toDateString(new Date(parseDate(value).getTime() + amount * DAY_MS));
+}
+
+function addMonths(value: string, amount: number) {
+  const date = parseDate(value);
+  date.setUTCMonth(date.getUTCMonth() + amount);
+  return toDateString(date);
+}
+
+function monthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function daysInclusive(from: string, to: string) {
+  return Math.floor((parseDate(to).getTime() - parseDate(from).getTime()) / DAY_MS) + 1;
+}
+
 async function fetchClinicSales(salesCode: string, from: string, to: string) {
   const rows: SalesRow[] = [];
-
   for (let offset = 0; ; offset += 1000) {
     const { data, error } = await supabaseAdmin
       .from(DASHBOARD_SALES_ROWS_TABLE)
@@ -50,18 +61,11 @@ async function fetchClinicSales(salesCode: string, from: string, to: string) {
       .lte('delivery_date', to)
       .order('delivery_date')
       .range(offset, offset + 999);
-
     if (error) throw error;
     rows.push(...(data ?? []));
     if ((data?.length ?? 0) < 1000) break;
   }
-
   return rows;
-}
-
-function addMonthKey(value: string, amount: number) {
-  const [year, month] = value.split('-').map(Number);
-  return monthKey(new Date(year, month - 1 + amount, 1));
 }
 
 function productCategory(row: SalesRow) {
@@ -82,11 +86,8 @@ function percentChange(current: number, previous: number) {
   return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
-function summarizePeriod(rows: SalesRow[], fromMonth: string, toMonthExclusive: string) {
-  const scoped = rows.filter((row) => {
-    const month = row.delivery_date.slice(0, 7);
-    return month >= fromMonth && month < toMonthExclusive;
-  });
+function summarizePeriod(rows: SalesRow[], from: string, to: string, averageDivisor: number) {
+  const scoped = rows.filter((row) => row.delivery_date >= from && row.delivery_date <= to);
   const total = scoped.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
   const activeDays = new Set(scoped.map((row) => row.delivery_date)).size;
   const categoryTotals = new Map<string, number>();
@@ -95,100 +96,98 @@ function summarizePeriod(rows: SalesRow[], fromMonth: string, toMonthExclusive: 
     if (!category) return;
     categoryTotals.set(category, (categoryTotals.get(category) ?? 0) + Number(row.amount ?? 0));
   });
-
   return {
-    from: fromMonth,
-    to_exclusive: toMonthExclusive,
+    from,
+    to,
     total: Math.round(total),
-    monthly_average: Math.round(total / 6),
+    period_average: Math.round(total / averageDivisor),
     line_count: scoped.length,
     active_days: activeDays,
+    active_days_average: Math.round((activeDays / averageDivisor) * 10) / 10,
+    line_count_average: Math.round((scoped.length / averageDivisor) * 10) / 10,
     sales_per_active_day: activeDays > 0 ? Math.round(total / activeDays) : 0,
     sales_per_line: scoped.length > 0 ? Math.round(total / scoped.length) : 0,
     categories: Object.fromEntries(categoryTotals),
   };
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+function analysisWindow(start: string, today: string) {
+  const elapsedDays = Math.max(1, daysInclusive(start, today));
+  if (elapsedDays >= 180) {
+    return {
+      preFrom: addMonths(start, -6), preTo: addDays(start, -1),
+      postFrom: start, postTo: addDays(addMonths(start, 6), -1),
+      comparisonDays: daysInclusive(start, addDays(addMonths(start, 6), -1)),
+      averageDivisor: 6, averageLabel: '月平均', comparisonLabel: '6か月', maturity: '6か月比較',
+    };
   }
+  const comparisonDays = elapsedDays;
+  const useWeekly = comparisonDays < 90;
+  return {
+    preFrom: addDays(start, -comparisonDays), preTo: addDays(start, -1),
+    postFrom: start, postTo: today,
+    comparisonDays,
+    averageDivisor: comparisonDays / (useWeekly ? 7 : 30.4375),
+    averageLabel: useWeekly ? '週平均' : '月平均',
+    comparisonLabel: `${comparisonDays}日間`,
+    maturity: comparisonDays < 30 ? '初期観測' : comparisonDays < 90 ? '短期分析' : '3か月分析',
+  };
+}
 
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const profile = await requireAuthenticatedProfile(req, res);
   if (!profile || !requireDashboardAccess(profile, res)) return;
 
   try {
-    const now = new Date();
-    const start = new Date(2024, 3, 1);
+    const today = '2026-07-31';
+    const from = '2024-04-01';
     const months: string[] = [];
-    for (let cursor = start; cursor <= now; cursor = addMonths(cursor, 1)) {
+    for (let cursor = parseDate(from); cursor <= parseDate(today); cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
       months.push(monthKey(cursor));
     }
-
-    const from = '2024-04-01';
-    const to = toDateString(now);
-    const clinicRows = await Promise.all(
-      CLINICS.map((clinic) => fetchClinicSales(clinic.sales_code, from, to))
-    );
-
+    const clinicRows = await Promise.all(CLINICS.map((clinic) => fetchClinicSales(clinic.sales_code, from, today)));
     const clinics = CLINICS.map((clinic, index) => {
+      const rows = clinicRows[index];
       const totals = new Map(months.map((month) => [month, 0]));
-      clinicRows[index].forEach((row) => {
-        const month = String(row.delivery_date ?? '').slice(0, 7);
-        if (!totals.has(month)) return;
-        totals.set(month, (totals.get(month) ?? 0) + Number(row.amount ?? 0));
+      rows.forEach((row) => {
+        const month = row.delivery_date.slice(0, 7);
+        if (totals.has(month)) totals.set(month, (totals.get(month) ?? 0) + Number(row.amount ?? 0));
       });
-
-      const iosRentalMonth = clinic.ios_rental_start.slice(0, 7);
-      const pre = summarizePeriod(
-        clinicRows[index],
-        addMonthKey(iosRentalMonth, -6),
-        iosRentalMonth
-      );
-      const post = summarizePeriod(
-        clinicRows[index],
-        iosRentalMonth,
-        addMonthKey(iosRentalMonth, 6)
-      );
-      const categoryNames = new Set([
-        ...Object.keys(pre.categories),
-        ...Object.keys(post.categories),
-      ]);
-      const category_changes = Array.from(categoryNames)
-        .map((category) => {
-          const before = Number(pre.categories[category] ?? 0);
-          const after = Number(post.categories[category] ?? 0);
-          return {
-            category,
-            before,
-            after,
-            delta: after - before,
-            before_monthly_average: Math.round(before / 6),
-            after_monthly_average: Math.round(after / 6),
-            monthly_average_delta: Math.round((after - before) / 6),
-            change_rate: percentChange(after, before),
-          };
-        })
-        .sort((a, b) => b.delta - a.delta);
-
+      const window = analysisWindow(clinic.ios_rental_start, today);
+      const pre = summarizePeriod(rows, window.preFrom, window.preTo, window.averageDivisor);
+      const post = summarizePeriod(rows, window.postFrom, window.postTo, window.averageDivisor);
+      const categoryNames = new Set([...Object.keys(pre.categories), ...Object.keys(post.categories)]);
+      const category_changes = Array.from(categoryNames).map((category) => {
+        const before = Number(pre.categories[category] ?? 0);
+        const after = Number(post.categories[category] ?? 0);
+        return {
+          category, before, after, delta: after - before,
+          before_period_average: Math.round(before / window.averageDivisor),
+          after_period_average: Math.round(after / window.averageDivisor),
+          period_average_delta: Math.round((after - before) / window.averageDivisor),
+        };
+      }).sort((a, b) => b.delta - a.delta);
       return {
         ...clinic,
-        monthly: months.map((month) => ({
-          month,
-          amount: Math.round(totals.get(month) ?? 0),
-        })),
+        monthly: months.map((month) => ({ month, amount: Math.round(totals.get(month) ?? 0) })),
         ios_rental_analysis: {
-          comparison_months: 6,
-          pre,
-          post,
+          comparison_days: window.comparisonDays,
+          comparison_label: window.comparisonLabel,
+          average_label: window.averageLabel,
+          average_divisor: window.averageDivisor,
+          maturity: window.maturity,
+          pre, post,
           changes: {
             total: post.total - pre.total,
             total_rate: percentChange(post.total, pre.total),
-            monthly_average: post.monthly_average - pre.monthly_average,
+            period_average: post.period_average - pre.period_average,
             line_count: post.line_count - pre.line_count,
             line_count_rate: percentChange(post.line_count, pre.line_count),
             active_days: post.active_days - pre.active_days,
             active_days_rate: percentChange(post.active_days, pre.active_days),
+            active_days_average: Math.round((post.active_days_average - pre.active_days_average) * 10) / 10,
+            line_count_average: Math.round((post.line_count_average - pre.line_count_average) * 10) / 10,
             sales_per_active_day: post.sales_per_active_day - pre.sales_per_active_day,
             sales_per_active_day_rate: percentChange(post.sales_per_active_day, pre.sales_per_active_day),
             sales_per_line: post.sales_per_line - pre.sales_per_line,
@@ -198,14 +197,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       };
     });
-
-    return res.status(200).json({
-      from,
-      to,
-      is_current_month_partial: true,
-      months,
-      clinics,
-    });
+    return res.status(200).json({ from, to: today, is_current_month_partial: false, months, clinics });
   } catch (error) {
     console.error('clinic sales trend error:', error);
     return res.status(500).json({ error: 'Clinic sales trend fetch failed' });

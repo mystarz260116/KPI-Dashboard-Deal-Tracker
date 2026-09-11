@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch } from '../lib/authFetch';
 import {
-  ArrowDownRight, ArrowLeft, ArrowUpDown, ArrowUpRight, Award, CalendarDays, CheckCircle2, Download,
+  AlertTriangle, ArrowDownRight, ArrowLeft, ArrowUpDown, ArrowUpRight, CalendarDays, Download,
   Loader2, LogOut, Search, Target, TrendingDown, TrendingUp, Users,
 } from 'lucide-react';
 import {
@@ -146,7 +146,7 @@ type ClinicAssetsFetchResult = {
 };
 
 const clinicAssetsFetchInFlight = new Map<string, Promise<ClinicAssetsFetchResult>>();
-const CLINIC_ASSETS_TIMEOUT_MS = 30_000;
+const CLINIC_ASSETS_TIMEOUT_MS = 60_000;
 const CARE_STATUSES: ClinicCareStatus[] = ['未対応', '訪問中', '交渉中', '応諾済み', '受注'];
 const RISK_FILTER_OPTIONS = ['新規', '離反', '危険', '減少注意', '成長', '維持'] as const;
 const ATTENTION_RISK_LABELS = new Set(['離反', '危険', '減少注意']);
@@ -180,12 +180,6 @@ function formatSignedCurrency(value: number | null | undefined) {
   if (amount > 0) return `+¥${amount.toLocaleString()}`;
   if (amount < 0) return `-¥${Math.abs(amount).toLocaleString()}`;
   return '¥0';
-}
-
-function formatGrowthRate(current: number, previous: number) {
-  if (previous <= 0) return current > 0 ? '新規・復活' : '0%';
-  const rate = ((current - previous) / previous) * 100;
-  return `${rate >= 0 ? '+' : ''}${Math.round(rate)}%`;
 }
 
 function getRiskState(row: ClinicAssetRow, months: Array<{ key: string; label: string }>) {
@@ -629,21 +623,29 @@ export default function ClinicAssetsDashboard() {
     });
   }, [data?.months, filteredRows, sortConfig]);
 
-  const growthRankingRows = useMemo(() => {
+  const priorityActionRows = useMemo(() => {
     const targetMonth = data?.month;
     if (!targetMonth) return [];
+    const today = new Date().toISOString().slice(0, 10);
     return (data?.rows ?? [])
       .map((row) => {
         const currentAmount = row.monthly.find((entry) => entry.month === targetMonth)?.amount ?? 0;
-        const previousAmount = row.previous_year_total;
-        const growthRate = previousAmount > 0
-          ? (currentAmount - previousAmount) / previousAmount
-          : currentAmount > 0 ? Number.POSITIVE_INFINITY : 0;
-        return { row, currentAmount, previousAmount, growthRate };
+        const baselineAmount = Math.max(row.previous_year_total, row.three_month_average);
+        const revenueGap = Math.max(0, baselineAmount - currentAmount);
+        const risk = getRiskState(row, data.months).label;
+        const isAttention = ATTENTION_RISK_LABELS.has(risk);
+        const isUnresolved = row.management.status === '未対応';
+        const isOverdue = Boolean(
+          row.management.next_action_date
+          && row.management.next_action_date < today
+          && row.management.status !== '受注'
+        );
+        const score = revenueGap + (isOverdue ? 1_000_000 : 0) + (isUnresolved ? 300_000 : 0);
+        return { row, currentAmount, baselineAmount, revenueGap, risk, isUnresolved, isOverdue, score };
       })
-      .filter((entry) => entry.currentAmount > 0 && entry.growthRate > 0)
-      .sort((a, b) => b.growthRate - a.growthRate || (b.currentAmount - b.previousAmount) - (a.currentAmount - a.previousAmount))
-      .slice(0, 10);
+      .filter((entry) => ATTENTION_RISK_LABELS.has(entry.risk) || entry.isOverdue)
+      .sort((a, b) => b.score - a.score || b.revenueGap - a.revenueGap)
+      .slice(0, 8);
   }, [data?.month, data?.rows]);
 
   const handleSort = (key: SortKey) => {
@@ -781,10 +783,17 @@ export default function ClinicAssetsDashboard() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => navigate('/product-category-trends')}
+              className="rounded-lg border border-indigo-200 bg-white px-4 py-3 text-sm font-bold text-indigo-700 shadow-sm transition hover:bg-indigo-50"
+            >
+              商品カテゴリトレンド
+            </button>
+            <button
+              type="button"
               onClick={() => navigate('/clinic-sales-trend')}
               className="rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700"
             >
-              2医院の売上推移
+              IOSレンタル分析
             </button>
             <button
               type="button"
@@ -917,102 +926,60 @@ export default function ClinicAssetsDashboard() {
           />
         </div>
 
-        <section className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <section className="mb-6 overflow-hidden rounded-xl border border-rose-200 bg-white shadow-sm">
           <div className="flex flex-col gap-2 border-b border-zinc-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <Award className="h-5 w-5 text-amber-500" />
-                <h2 className="text-lg font-black text-zinc-900">医院別 伸び率ランキング</h2>
+                <AlertTriangle className="h-5 w-5 text-rose-600" />
+                <h2 className="text-lg font-black text-zinc-900">今すぐ動く医院</h2>
               </div>
-              <p className="mt-1 text-sm text-zinc-500">対象月と前年同月を比較し、上昇理由・商品構成・IOS利用状況を表示</p>
+              <p className="mt-1 text-sm text-zinc-500">売上の落ち込み額、未対応、次回アクション期限をもとに優先順位を表示</p>
             </div>
-            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
-              TOP {growthRankingRows.length}
+            <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-bold text-rose-700">
+              優先 {priorityActionRows.length}件
             </span>
           </div>
 
           <div className="divide-y divide-zinc-100">
-            {growthRankingRows.map(({ row, currentAmount, previousAmount }, index) => {
-              const insight = row.ranking_insight;
-              const portfolioColors = ['bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500', 'bg-amber-400'];
-              return (
+            {priorityActionRows.map(({ row, currentAmount, baselineAmount, revenueGap, risk, isUnresolved, isOverdue }, index) => (
                 <button
-                  key={`ranking-${row.customer_code}`}
+                  key={`priority-${row.customer_code}`}
                   type="button"
                   onClick={() => navigate(`/clinics/customer/${encodeURIComponent(row.customer_code)}`)}
-                  className="grid w-full gap-4 px-5 py-4 text-left transition hover:bg-indigo-50/40 lg:grid-cols-[52px_1.1fr_0.7fr_1.5fr_1.2fr]"
+                  className="grid w-full gap-4 px-5 py-4 text-left transition hover:bg-rose-50/40 lg:grid-cols-[44px_1.4fr_1fr_1fr_1.2fr] lg:items-center"
                 >
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-black ${
-                    index === 0 ? 'bg-amber-400 text-white'
-                      : index === 1 ? 'bg-zinc-300 text-zinc-800'
-                        : index === 2 ? 'bg-orange-200 text-orange-800'
-                          : 'bg-zinc-100 text-zinc-600'
-                  }`}>
+                  <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-black ${index < 3 ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-700'}`}>
                     {index + 1}
                   </div>
                   <div>
                     <p className="font-black text-zinc-900">{row.customer_name}</p>
                     <p className="mt-1 text-xs text-zinc-500">{row.customer_code}・{formatStaffName(row)}</p>
-                    {insight?.ios_rental_enabled && (
-                      <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-1 text-xs font-bold text-sky-700">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        IOSレンタル
-                        {insight.ios_rental_start_date ? ` ${insight.ios_rental_start_date}` : ''}
-                      </span>
-                    )}
                   </div>
                   <div>
-                    <p className="text-2xl font-black text-emerald-600">{formatGrowthRate(currentAmount, previousAmount)}</p>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      {formatCurrency(previousAmount)} → {formatCurrency(currentAmount)}
-                    </p>
-                    <p className="mt-1 text-xs font-bold text-emerald-700">
-                      {formatSignedCurrency(currentAmount - previousAmount)}
-                    </p>
+                    <p className="text-xs font-black text-zinc-500">想定売上との差</p>
+                    <p className="mt-1 text-xl font-black text-rose-600">-{formatCurrency(revenueGap)}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{formatCurrency(baselineAmount)} → {formatCurrency(currentAmount)}</p>
                   </div>
                   <div>
-                    <p className="mb-2 text-xs font-black text-zinc-500">上昇理由</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(insight?.reasons.length ? insight.reasons : ['売上が前年同月を上回りました']).map((reason) => (
-                        <span key={reason} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
-                          {reason}
-                        </span>
-                      ))}
+                    <p className="text-xs font-black text-zinc-500">状態</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">{risk}</span>
+                      {isUnresolved && <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-bold text-zinc-700">未対応</span>}
+                      {isOverdue && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">期限超過</span>}
                     </div>
                   </div>
                   <div>
-                    <p className="mb-2 text-xs font-black text-zinc-500">商品ポートフォリオ</p>
-                    {insight?.product_portfolio.length ? (
-                      <>
-                        <div className="flex h-2.5 overflow-hidden rounded-full bg-zinc-100">
-                          {insight.product_portfolio.map((product, productIndex) => (
-                            <span
-                              key={product.label}
-                              className={portfolioColors[productIndex] ?? 'bg-zinc-400'}
-                              style={{ width: `${product.share}%` }}
-                              title={`${product.label} ${product.share}%`}
-                            />
-                          ))}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-                          {insight.product_portfolio.map((product, productIndex) => (
-                            <span key={product.label} className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-600">
-                              <span className={`h-2 w-2 rounded-full ${portfolioColors[productIndex] ?? 'bg-zinc-400'}`} />
-                              {product.label} {product.share}%
-                            </span>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-xs text-zinc-400">商品情報なし</p>
-                    )}
+                    <p className="text-xs font-black text-zinc-500">次のアクション</p>
+                    <p className={`mt-1 text-sm font-bold ${isOverdue ? 'text-rose-700' : 'text-zinc-800'}`}>
+                      {row.management.next_action_date ?? '日付未設定'}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{row.management.memo || '医院詳細を開いて対応内容を登録'}</p>
                   </div>
                 </button>
-              );
-            })}
-            {growthRankingRows.length === 0 && (
+            ))}
+            {priorityActionRows.length === 0 && (
               <div className="px-5 py-10 text-center text-sm text-zinc-500">
-                前年同月を上回った医院はありません
+                現在、優先対応が必要な医院はありません
               </div>
             )}
           </div>

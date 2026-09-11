@@ -1,16 +1,27 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { KPIData, Granularity, Period } from '../types';
-import { toDateString } from '../lib/dateUtils';
-import { authFetch } from '../lib/authFetch';
-import { isPerfEnabled, perfNow } from '../lib/perf';
+import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import { KPIData, Granularity, Period } from "../types";
+import { toDateString } from "../lib/dateUtils";
+import { authFetch } from "../lib/authFetch";
+import { isPerfEnabled, perfNow } from "../lib/perf";
 import {
-  PlusCircle, Filter, Calendar, Users, Building2,
-  TrendingUp, Target, LogOut, Search, BellRing, ChevronDown
-} from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
-import logoImg from '../assets/M.png';
+  PlusCircle,
+  Filter,
+  Calendar,
+  Users,
+  Building2,
+  TrendingUp,
+  Target,
+  LogOut,
+  Search,
+  BellRing,
+  ChevronDown,
+  Settings2,
+  ClipboardList,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import logoImg from "../assets/M.png";
 
 interface User {
   id: string;
@@ -42,11 +53,11 @@ type DashboardFetchResult = {
 
 const dashboardFetchInFlight = new Map<string, Promise<DashboardFetchResult>>();
 
-type ImportDataKind = 'delivery' | 'order';
+type ImportDataKind = "delivery" | "order";
 
 const IMPORT_DATA_KIND_LABEL: Record<ImportDataKind, string> = {
-  delivery: '納品データ',
-  order: '受注データ',
+  delivery: "納品データ",
+  order: "受注データ",
 };
 
 interface ProductDepartmentPanelItem {
@@ -78,7 +89,7 @@ interface DealCommentNotification {
   comment_id: string;
   created_at: string;
   read_at: string | null;
-  clinic_kind: 'customer' | 'prospect';
+  clinic_kind: "customer" | "prospect";
   clinic_id: string;
   clinic_name: string;
   deal_date: string | null;
@@ -87,10 +98,16 @@ interface DealCommentNotification {
   comment_created_at: string;
 }
 
-interface SectionTitleProps { title: string; color: string; }
+interface SectionTitleProps {
+  title: string;
+  color: string;
+}
 function SectionTitle({ title, color }: SectionTitleProps) {
   return (
-    <h2 className="mb-4 text-lg font-bold text-zinc-800 pb-2 border-b-2" style={{ borderColor: color }}>
+    <h2
+      className="mb-4 text-lg font-bold text-zinc-800 pb-2 border-b-2"
+      style={{ borderColor: color }}
+    >
       {title}
     </h2>
   );
@@ -127,7 +144,7 @@ function formatDateInput(date: Date) {
 }
 
 function formatChangeRate(changeRate: number | null | undefined) {
-  if (changeRate == null) return '-';
+  if (changeRate == null) return "-";
   if (changeRate > 0) return `+${changeRate}`;
   return `${changeRate}`;
 }
@@ -135,14 +152,14 @@ function formatChangeRate(changeRate: number | null | undefined) {
 function formatNotificationTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return '';
+    return "";
   }
 
-  return new Intl.DateTimeFormat('ja-JP', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+  return new Intl.DateTimeFormat("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date);
 }
 
@@ -150,7 +167,7 @@ function getDefaultDateRange(period: Period) {
   const now = new Date();
   const current = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  if (period === 'yearly') {
+  if (period === "yearly") {
     const start = new Date(current.getFullYear(), 0, 1);
     const end = new Date(current.getFullYear(), 11, 31);
     return {
@@ -159,7 +176,7 @@ function getDefaultDateRange(period: Period) {
     };
   }
 
-  if (period === 'quarterly') {
+  if (period === "quarterly") {
     const quarterStartMonth = Math.floor(current.getMonth() / 3) * 3;
     const start = new Date(current.getFullYear(), quarterStartMonth, 1);
     const end = new Date(current.getFullYear(), quarterStartMonth + 3, 0);
@@ -169,11 +186,19 @@ function getDefaultDateRange(period: Period) {
     };
   }
 
-  if (period === 'weekly') {
+  if (period === "weekly") {
     const day = current.getDay();
     const diffToMonday = day === 0 ? -6 : 1 - day;
-    const start = new Date(current.getFullYear(), current.getMonth(), current.getDate() + diffToMonday);
-    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    const start = new Date(
+      current.getFullYear(),
+      current.getMonth(),
+      current.getDate() + diffToMonday,
+    );
+    const end = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate() + 6,
+    );
     return {
       from: formatDateInput(start),
       to: formatDateInput(end),
@@ -192,90 +217,117 @@ export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const [period, setPeriod] = useState<Period>('monthly');
-  const [granularity, setGranularity] = useState<Granularity>('all');
+  const [period, setPeriod] = useState<Period>("monthly");
+  const [granularity, setGranularity] = useState<Granularity>("all");
   const defaultRange = getDefaultDateRange(period);
   const [fromDate, setFromDate] = useState(defaultRange.from);
   const [toDate, setToDate] = useState(defaultRange.to);
 
-  const [selectedDept, setSelectedDept] = useState('');
-  const [selectedUser, setSelectedUser] = useState('');
+  const [selectedDept, setSelectedDept] = useState("");
+  const [selectedUser, setSelectedUser] = useState("");
 
-  const [appliedPeriod, setAppliedPeriod] = useState<Period>('monthly');
-  const [appliedGranularity, setAppliedGranularity] = useState<Granularity>('all');
+  const [appliedPeriod, setAppliedPeriod] = useState<Period>("monthly");
+  const [appliedGranularity, setAppliedGranularity] =
+    useState<Granularity>("all");
   const [appliedFromDate, setAppliedFromDate] = useState(defaultRange.from);
   const [appliedToDate, setAppliedToDate] = useState(defaultRange.to);
-  const [appliedDept, setAppliedDept] = useState('');
-  const [appliedUser, setAppliedUser] = useState('');
-  const [salesImportDataKind, setSalesImportDataKind] = useState<ImportDataKind>('delivery');
-  const [appliedSalesImportDataKind, setAppliedSalesImportDataKind] = useState<ImportDataKind>('delivery');
+  const [appliedDept, setAppliedDept] = useState("");
+  const [appliedUser, setAppliedUser] = useState("");
+  const [salesImportDataKind, setSalesImportDataKind] =
+    useState<ImportDataKind>("delivery");
+  const [appliedSalesImportDataKind, setAppliedSalesImportDataKind] =
+    useState<ImportDataKind>("delivery");
   const [data, setData] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [pendingMergeCount, setPendingMergeCount] = useState(0);
   const [isMergeCountLoading, setIsMergeCountLoading] = useState(true);
-  const [commentNotifications, setCommentNotifications] = useState<DealCommentNotification[]>([]);
-  const [unreadCommentNotificationCount, setUnreadCommentNotificationCount] = useState(0);
-  const [isLoadingCommentNotifications, setIsLoadingCommentNotifications] = useState(false);
-  const [commentNotificationError, setCommentNotificationError] = useState('');
-  const [isCommentNotificationsOpen, setIsCommentNotificationsOpen] = useState(false);
-  const [productDepartmentAssignments, setProductDepartmentAssignments] = useState<Record<string, string>>({});
-  const [savingProductAssignmentKey, setSavingProductAssignmentKey] = useState('');
-  const [isBulkProductAssignmentSaving, setIsBulkProductAssignmentSaving] = useState(false);
-  const [productAssignmentMessage, setProductAssignmentMessage] = useState('');
+  const [commentNotifications, setCommentNotifications] = useState<
+    DealCommentNotification[]
+  >([]);
+  const [unreadCommentNotificationCount, setUnreadCommentNotificationCount] =
+    useState(0);
+  const [isLoadingCommentNotifications, setIsLoadingCommentNotifications] =
+    useState(false);
+  const [commentNotificationError, setCommentNotificationError] = useState("");
+  const [isCommentNotificationsOpen, setIsCommentNotificationsOpen] =
+    useState(false);
+  const [productDepartmentAssignments, setProductDepartmentAssignments] =
+    useState<Record<string, string>>({});
+  const [savingProductAssignmentKey, setSavingProductAssignmentKey] =
+    useState("");
+  const [isBulkProductAssignmentSaving, setIsBulkProductAssignmentSaving] =
+    useState(false);
+  const [productAssignmentMessage, setProductAssignmentMessage] = useState("");
   const [dashboardReloadKey, setDashboardReloadKey] = useState(0);
   const [perfStats, setPerfStats] = useState<{
     kpiMs: number;
     kpiStatus: number;
     totalMs: number;
   } | null>(null);
-  const latestDashboardRequestKeyRef = useRef('');
+  const latestDashboardRequestKeyRef = useRef("");
 
   const userDepartmentOptions = Array.from(
     new Map(
       users
         .filter((u) => u.department_id != null && u.department)
-        .map((u) => [String(u.department_id), {
-          id: String(u.department_id),
-          name: u.department,
-        } satisfies DepartmentOption])
-    ).values()
+        .map((u) => [
+          String(u.department_id),
+          {
+            id: String(u.department_id),
+            name: u.department,
+          } satisfies DepartmentOption,
+        ]),
+    ).values(),
   );
-  const departmentOptions = departments.length > 0 ? departments : userDepartmentOptions;
-  const productDepartmentSales: ProductDepartmentPanelItem[] = data?.product_department_sales ?? [];
-  const productDepartmentOptions: ProductDepartmentOption[] = data?.product_department_options ?? [];
-  const unclassifiedProducts: UnclassifiedProductItem[] = data?.unclassified_products ?? [];
-  const selectedProductAssignmentItems = unclassifiedProducts.filter(
-    (item) => Boolean(productDepartmentAssignments[item.key])
+  const departmentOptions =
+    departments.length > 0 ? departments : userDepartmentOptions;
+  const productDepartmentSales: ProductDepartmentPanelItem[] =
+    data?.product_department_sales ?? [];
+  const productDepartmentOptions: ProductDepartmentOption[] =
+    data?.product_department_options ?? [];
+  const unclassifiedProducts: UnclassifiedProductItem[] =
+    data?.unclassified_products ?? [];
+  const selectedProductAssignmentItems = unclassifiedProducts.filter((item) =>
+    Boolean(productDepartmentAssignments[item.key]),
   );
-  const performanceRanking: PerformanceRankingItem[] = data?.performance_ranking ?? [];
+  const performanceRanking: PerformanceRankingItem[] =
+    data?.performance_ranking ?? [];
   const scopedUsers = selectedDept
-    ? users.filter((u) => String(u.department_id ?? '') === selectedDept)
+    ? users.filter((u) => String(u.department_id ?? "") === selectedDept)
     : users;
-  const sortedDepartmentOptions = [...departmentOptions].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  const sortedDepartmentOptions = [...departmentOptions].sort((a, b) =>
+    a.name.localeCompare(b.name, "ja"),
+  );
   const sortedScopedUsers = [...scopedUsers].sort((a, b) => {
-    const departmentCompare = (a.department ?? '').localeCompare((b.department ?? ''), 'ja');
+    const departmentCompare = (a.department ?? "").localeCompare(
+      b.department ?? "",
+      "ja",
+    );
     if (departmentCompare !== 0) return departmentCompare;
-    return a.name.localeCompare(b.name, 'ja');
+    return a.name.localeCompare(b.name, "ja");
   });
 
   const fetchPendingMergeCount = async () => {
     setIsMergeCountLoading(true);
 
     try {
-      const res = await authFetch(`/api/merge/candidates/count?ts=${Date.now()}`, {
-        cache: 'no-store',
-      });
+      const res = await authFetch(
+        `/api/merge/candidates/count?ts=${Date.now()}`,
+        {
+          cache: "no-store",
+        },
+      );
       if (!res.ok) {
-        throw new Error('merge candidates count fetch failed');
+        throw new Error("merge candidates count fetch failed");
       }
 
       const result = await res.json();
       setPendingMergeCount(result.pending_count ?? 0);
     } catch (err) {
-      console.error('merge candidates count error:', err);
+      console.error("merge candidates count error:", err);
       setPendingMergeCount(0);
     } finally {
       setIsMergeCountLoading(false);
@@ -290,23 +342,31 @@ export default function Dashboard() {
     }
 
     setIsLoadingCommentNotifications(true);
-    setCommentNotificationError('');
+    setCommentNotificationError("");
 
     try {
-      const response = await authFetch('/api/deals?path=notifications&limit=10', {
-        cache: 'no-store',
-      });
+      const response = await authFetch(
+        "/api/deals?path=notifications&limit=10",
+        {
+          cache: "no-store",
+        },
+      );
 
       if (!response.ok) {
-        throw new Error('comment notifications fetch failed');
+        throw new Error("comment notifications fetch failed");
       }
 
       const payload = await response.json();
-      setCommentNotifications(Array.isArray(payload?.notifications) ? payload.notifications : []);
+      setCommentNotifications(
+        Array.isArray(payload?.notifications) ? payload.notifications : [],
+      );
       setUnreadCommentNotificationCount(Number(payload?.unread_count ?? 0));
     } catch (notificationError) {
-      console.error('dashboard comment notifications fetch error:', notificationError);
-      setCommentNotificationError('コメント通知の取得に失敗しました');
+      console.error(
+        "dashboard comment notifications fetch error:",
+        notificationError,
+      );
+      setCommentNotificationError("コメント通知の取得に失敗しました");
       setCommentNotifications([]);
       setUnreadCommentNotificationCount(0);
     } finally {
@@ -316,52 +376,69 @@ export default function Dashboard() {
 
   const markCommentNotificationRead = async (notificationId: string) => {
     try {
-      await authFetch('/api/deals?path=notifications', {
-        method: 'PATCH',
+      await authFetch("/api/deals?path=notifications", {
+        method: "PATCH",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ notification_id: notificationId }),
       });
 
-      setCommentNotifications((current) => current.map((notification) => (
-        notification.id === notificationId
-          ? { ...notification, read_at: notification.read_at ?? new Date().toISOString() }
-          : notification
-      )));
+      setCommentNotifications((current) =>
+        current.map((notification) =>
+          notification.id === notificationId
+            ? {
+                ...notification,
+                read_at: notification.read_at ?? new Date().toISOString(),
+              }
+            : notification,
+        ),
+      );
       setUnreadCommentNotificationCount((current) => Math.max(0, current - 1));
     } catch (notificationError) {
-      console.error('dashboard comment notification read error:', notificationError);
+      console.error(
+        "dashboard comment notification read error:",
+        notificationError,
+      );
     }
   };
 
   const markAllCommentNotificationsRead = async () => {
     try {
-      await authFetch('/api/deals?path=notifications', {
-        method: 'PATCH',
+      await authFetch("/api/deals?path=notifications", {
+        method: "PATCH",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mode: 'read_all' }),
+        body: JSON.stringify({ mode: "read_all" }),
       });
 
       const now = new Date().toISOString();
-      setCommentNotifications((current) => current.map((notification) => ({
-        ...notification,
-        read_at: notification.read_at ?? now,
-      })));
+      setCommentNotifications((current) =>
+        current.map((notification) => ({
+          ...notification,
+          read_at: notification.read_at ?? now,
+        })),
+      );
       setUnreadCommentNotificationCount(0);
     } catch (notificationError) {
-      console.error('dashboard comment notifications read all error:', notificationError);
+      console.error(
+        "dashboard comment notifications read all error:",
+        notificationError,
+      );
     }
   };
 
-  const openCommentNotification = async (notification: DealCommentNotification) => {
+  const openCommentNotification = async (
+    notification: DealCommentNotification,
+  ) => {
     if (!notification.read_at) {
       await markCommentNotificationRead(notification.id);
     }
 
-    navigate(`/clinics/${notification.clinic_kind}/${encodeURIComponent(notification.clinic_id)}`);
+    navigate(
+      `/clinics/${notification.clinic_kind}/${encodeURIComponent(notification.clinic_id)}`,
+    );
   };
 
   useEffect(() => {
@@ -372,7 +449,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (user && user.can_view_dashboard === false) {
-      navigate('/deals/new', { replace: true });
+      navigate("/deals/new", { replace: true });
     }
   }, [user, navigate]);
 
@@ -392,13 +469,13 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       setIsLoading(true);
-      setError('');
+      setError("");
 
       try {
         const readPayload = async (res: Response) => {
-          const contentType = res.headers.get('content-type') ?? '';
+          const contentType = res.headers.get("content-type") ?? "";
 
-          if (contentType.includes('application/json')) {
+          if (contentType.includes("application/json")) {
             return await res.json();
           }
 
@@ -409,7 +486,9 @@ export default function Dashboard() {
           const start = perfNow();
           console.info(`[debug] dashboard request start ${url}`);
           const progressTimer = window.setInterval(() => {
-            console.info(`[debug] dashboard still loading ${url} ${(perfNow() - start).toFixed(0)}ms`);
+            console.info(
+              `[debug] dashboard still loading ${url} ${(perfNow() - start).toFixed(0)}ms`,
+            );
           }, 1000);
           let res: Response;
           try {
@@ -423,7 +502,7 @@ export default function Dashboard() {
             res,
             data: payload,
             ms: perfNow() - start,
-            contentType: res.headers.get('content-type') ?? '',
+            contentType: res.headers.get("content-type") ?? "",
           };
         };
 
@@ -435,29 +514,35 @@ export default function Dashboard() {
           data_kind: appliedSalesImportDataKind,
         });
 
-        if (appliedDept) params.set('departmentId', appliedDept);
-        if (appliedUser) params.set('userId', appliedUser);
+        if (appliedDept) params.set("departmentId", appliedDept);
+        if (appliedUser) params.set("userId", appliedUser);
 
         const requestKey = params.toString();
         latestDashboardRequestKeyRef.current = requestKey;
 
         const runFetch = async (): Promise<DashboardFetchResult> => {
           const totalStart = perfNow();
-          const kpiResult = await fetchWithTiming(`/api/kpi?${params.toString()}`);
+          const kpiResult = await fetchWithTiming(
+            `/api/kpi?${params.toString()}`,
+          );
 
           const totalMs = perfNow() - totalStart;
           return { kpiResult, totalMs };
         };
 
         const existingRequest = dashboardFetchInFlight.get(requestKey);
-        const requestPromise = existingRequest ?? runFetch().finally(() => {
-          dashboardFetchInFlight.delete(requestKey);
-        });
+        const requestPromise =
+          existingRequest ??
+          runFetch().finally(() => {
+            dashboardFetchInFlight.delete(requestKey);
+          });
 
         if (!existingRequest) {
           dashboardFetchInFlight.set(requestKey, requestPromise);
         } else {
-          console.info(`[perf] dashboard reused in-flight request key=${requestKey}`);
+          console.info(
+            `[perf] dashboard reused in-flight request key=${requestKey}`,
+          );
         }
 
         const { kpiResult, totalMs } = await requestPromise;
@@ -475,19 +560,23 @@ export default function Dashboard() {
 
           setPerfStats(nextPerfStats);
           console.info(
-            `[perf] dashboard kpi=${kpiResult.ms.toFixed(1)}ms (${kpiResult.res.status}) total=${totalMs.toFixed(1)}ms`
+            `[perf] dashboard kpi=${kpiResult.ms.toFixed(1)}ms (${kpiResult.res.status}) total=${totalMs.toFixed(1)}ms`,
           );
         }
 
         if (!kpiResult.res.ok) {
-          throw new Error('kpi fetch failed');
+          throw new Error("kpi fetch failed");
         }
 
         const kpiData = kpiResult.data;
-        const usersData: User[] = Array.isArray((kpiData as any)?.filter_options?.users)
+        const usersData: User[] = Array.isArray(
+          (kpiData as any)?.filter_options?.users,
+        )
           ? (kpiData as any).filter_options.users
           : [];
-        const departmentsData: DepartmentOption[] = ((kpiData as any)?.filter_options?.departments ?? []).map((department: any) => ({
+        const departmentsData: DepartmentOption[] = (
+          (kpiData as any)?.filter_options?.departments ?? []
+        ).map((department: any) => ({
           id: String(department.id),
           name: department.name,
         }));
@@ -500,14 +589,20 @@ export default function Dashboard() {
           const slowestSteps = [...debugSteps]
             .sort((a, b) => Number(b.ms ?? 0) - Number(a.ms ?? 0))
             .slice(0, 4)
-            .map((step) => `${step.stage}:${Number(step.ms ?? 0).toFixed(0)}ms/${step.rows ?? '-'}rows`)
-            .join(' | ');
+            .map(
+              (step) =>
+                `${step.stage}:${Number(step.ms ?? 0).toFixed(0)}ms/${step.rows ?? "-"}rows`,
+            )
+            .join(" | ");
           console.groupCollapsed(
-            `[debug] dashboard-kpi api total=${kpiResult.ms.toFixed(1)}ms server=${Number((kpiData as any).debug.totalMs ?? 0).toFixed(0)}ms`
+            `[debug] dashboard-kpi api total=${kpiResult.ms.toFixed(1)}ms server=${Number((kpiData as any).debug.totalMs ?? 0).toFixed(0)}ms`,
           );
           console.info(`[debug] dashboard-kpi slowest ${slowestSteps}`);
           console.table(debugSteps);
-          console.info('[debug] dashboard-kpi counts', (kpiData as any).debug.counts ?? {});
+          console.info(
+            "[debug] dashboard-kpi counts",
+            (kpiData as any).debug.counts ?? {},
+          );
           console.groupEnd();
         }
 
@@ -515,8 +610,8 @@ export default function Dashboard() {
         setDepartments(departmentsData);
         setData(kpiData);
       } catch (err) {
-        console.error('dashboard fetch error:', err);
-        setError('ダッシュボードの取得に失敗しました');
+        console.error("dashboard fetch error:", err);
+        setError("ダッシュボードの取得に失敗しました");
         setUsers([]);
         setDepartments([]);
         setData(null);
@@ -526,7 +621,16 @@ export default function Dashboard() {
     };
 
     fetchDashboardData();
-  }, [appliedPeriod, appliedGranularity, appliedDept, appliedUser, appliedFromDate, appliedToDate, appliedSalesImportDataKind, dashboardReloadKey]);
+  }, [
+    appliedPeriod,
+    appliedGranularity,
+    appliedDept,
+    appliedUser,
+    appliedFromDate,
+    appliedToDate,
+    appliedSalesImportDataKind,
+    dashboardReloadKey,
+  ]);
   const handleApplyFilters = () => {
     setAppliedPeriod(period);
     setAppliedGranularity(granularity);
@@ -537,7 +641,9 @@ export default function Dashboard() {
     setAppliedSalesImportDataKind(salesImportDataKind);
   };
 
-  const upsertProductDepartmentAssignments = async (items: UnclassifiedProductItem[]) => {
+  const upsertProductDepartmentAssignments = async (
+    items: UnclassifiedProductItem[],
+  ) => {
     const rows = items
       .map((item) => {
         const productDepartmentId = productDepartmentAssignments[item.key];
@@ -547,21 +653,22 @@ export default function Dashboard() {
           department_id: item.department_id,
           product_department_id: productDepartmentId,
           normalized_product_code: item.normalized_product_code,
-          normalized_product_name: item.normalized_product_name || item.normalized_product_code,
+          normalized_product_name:
+            item.normalized_product_name || item.normalized_product_code,
           sort_order: 0,
         };
       })
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
     if (rows.length === 0) {
-      setProductAssignmentMessage('商品部門を選択してください。');
+      setProductAssignmentMessage("商品部門を選択してください。");
       return 0;
     }
 
-    const response = await authFetch('/api/import/product-categories/upsert', {
-      method: 'POST',
+    const response = await authFetch("/api/import/product-categories/upsert", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         rows,
@@ -570,7 +677,9 @@ export default function Dashboard() {
 
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(payload?.error ?? '商品部門マスタへの追加に失敗しました。');
+      throw new Error(
+        payload?.error ?? "商品部門マスタへの追加に失敗しました。",
+      );
     }
 
     setProductDepartmentAssignments((current) => {
@@ -586,43 +695,51 @@ export default function Dashboard() {
 
   const assignProductDepartment = async (item: UnclassifiedProductItem) => {
     if (!productDepartmentAssignments[item.key]) {
-      setProductAssignmentMessage('商品部門を選択してください。');
+      setProductAssignmentMessage("商品部門を選択してください。");
       return;
     }
 
     setSavingProductAssignmentKey(item.key);
-    setProductAssignmentMessage('');
+    setProductAssignmentMessage("");
 
     try {
       const upsertedCount = await upsertProductDepartmentAssignments([item]);
       if (upsertedCount > 0) {
-        setProductAssignmentMessage('商品部門マスタに追加しました。');
+        setProductAssignmentMessage("商品部門マスタに追加しました。");
       }
     } catch (err: any) {
-      console.error('product department assignment error:', err);
-      setProductAssignmentMessage(err?.message ?? '商品部門マスタへの追加に失敗しました。');
+      console.error("product department assignment error:", err);
+      setProductAssignmentMessage(
+        err?.message ?? "商品部門マスタへの追加に失敗しました。",
+      );
     } finally {
-      setSavingProductAssignmentKey('');
+      setSavingProductAssignmentKey("");
     }
   };
 
   const assignSelectedProductDepartments = async () => {
     if (selectedProductAssignmentItems.length === 0) {
-      setProductAssignmentMessage('商品部門を選択してください。');
+      setProductAssignmentMessage("商品部門を選択してください。");
       return;
     }
 
     setIsBulkProductAssignmentSaving(true);
-    setProductAssignmentMessage('');
+    setProductAssignmentMessage("");
 
     try {
-      const upsertedCount = await upsertProductDepartmentAssignments(selectedProductAssignmentItems);
+      const upsertedCount = await upsertProductDepartmentAssignments(
+        selectedProductAssignmentItems,
+      );
       if (upsertedCount > 0) {
-        setProductAssignmentMessage(`${upsertedCount}件を商品部門マスタに追加しました。`);
+        setProductAssignmentMessage(
+          `${upsertedCount}件を商品部門マスタに追加しました。`,
+        );
       }
     } catch (err: any) {
-      console.error('product department bulk assignment error:', err);
-      setProductAssignmentMessage(err?.message ?? '商品部門マスタへの追加に失敗しました。');
+      console.error("product department bulk assignment error:", err);
+      setProductAssignmentMessage(
+        err?.message ?? "商品部門マスタへの追加に失敗しました。",
+      );
     } finally {
       setIsBulkProductAssignmentSaving(false);
     }
@@ -630,7 +747,7 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     await logout();
-    navigate('/login');
+    navigate("/login");
   };
 
   if (isLoading) {
@@ -645,8 +762,12 @@ export default function Dashboard() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-100 px-6">
         <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
-          <h1 className="text-xl font-bold text-zinc-900">ダッシュボード閲覧権限がありません</h1>
-          <p className="mt-3 text-sm text-zinc-600">案件入力画面へ移動します。</p>
+          <h1 className="text-xl font-bold text-zinc-900">
+            ダッシュボード閲覧権限がありません
+          </h1>
+          <p className="mt-3 text-sm text-zinc-600">
+            案件入力画面へ移動します。
+          </p>
         </div>
       </div>
     );
@@ -659,66 +780,102 @@ export default function Dashboard() {
         <div className="mx-auto max-w-[1600px] px-4 py-3 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3">
             <div className="flex min-w-0 items-center gap-3">
-              <img src={logoImg} alt="Mystarz" className="h-8 w-auto shrink-0 object-contain" />
-              <h1 className="truncate text-lg font-bold tracking-tight text-zinc-900 sm:text-xl">売上管理ダッシュボード</h1>
+              <img
+                src={logoImg}
+                alt="Mystarz"
+                className="h-8 w-auto shrink-0 object-contain"
+              />
+              <h1 className="truncate text-lg font-bold tracking-tight text-zinc-900 sm:text-xl">
+                売上管理ダッシュボード
+              </h1>
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">
-              <span className="hidden max-w-[180px] truncate text-sm font-medium text-zinc-600 sm:block">{user?.name ?? 'ゲスト'}</span>
-              <button onClick={() => navigate('/deals/new')}
-                className="inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
-                <PlusCircle className="h-4 w-4" />新規案件入力
+              <span className="hidden max-w-[180px] truncate text-sm font-medium text-zinc-600 sm:block">
+                {user?.name ?? "ゲスト"}
+              </span>
+              <button
+                onClick={() => navigate("/deals/new")}
+                className="inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+              >
+                <PlusCircle className="h-4 w-4" />
+                新規案件入力
               </button>
-              <button onClick={handleLogout} aria-label="ログアウト" title="ログアウト" className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700">
+              <button
+                onClick={handleLogout}
+                aria-label="ログアウト"
+                title="ログアウト"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+              >
                 <LogOut className="h-5 w-5" />
               </button>
             </div>
           </div>
 
-          <nav className="mt-3 flex items-center gap-2 overflow-x-auto pb-1" aria-label="ダッシュボードメニュー">
-            <button onClick={() => navigate('/deals/history')}
-              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-              <TrendingUp className="h-4 w-4" />商談履歴
+          <nav
+            className="mt-3 flex flex-wrap items-center gap-2"
+            aria-label="ダッシュボードメニュー"
+          >
+            <details className="group relative shrink-0">
+              <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-2 whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 [&::-webkit-details-marker]:hidden">
+                <ClipboardList className="h-4 w-4" />
+                納品・受注
+                {!isMergeCountLoading && pendingMergeCount > 0 && user?.can_manage_users && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-white">{pendingMergeCount}</span>}
+                <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
+              </summary>
+              <div className="absolute left-0 top-11 z-30 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl">
+                <button onClick={() => navigate("/orders")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"><ClipboardList className="h-4 w-4 text-zinc-400" />受注管理</button>
+                <button onClick={() => navigate("/deliveries")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"><ClipboardList className="h-4 w-4 text-zinc-400" />納品確認</button>
+                {user?.can_manage_users && <button onClick={() => navigate("/customer-merge")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"><Target className="h-4 w-4 text-zinc-400" /><span className="flex-1">受注確認</span>{!isMergeCountLoading && pendingMergeCount > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">{pendingMergeCount}</span>}</button>}
+              </div>
+            </details>
+
+            <button
+              onClick={() => navigate("/deals/history")}
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+              <TrendingUp className="h-4 w-4" />
+              商談履歴
             </button>
 
-            <button onClick={() => navigate('/deals/progress')}
-              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-              <Users className="h-4 w-4" />進捗管理
+            <button
+              onClick={() => navigate("/deals/progress")}
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+              <Users className="h-4 w-4" />
+              進捗管理
             </button>
 
-            <button onClick={() => navigate('/sales-performance')}
-              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-              <TrendingUp className="h-4 w-4" />営業パフォーマンス
+            <details className="group relative shrink-0">
+              <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 [&::-webkit-details-marker]:hidden">
+                <TrendingUp className="h-4 w-4" />
+                分析・レポート
+                <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
+              </summary>
+              <div className="absolute left-0 top-11 z-30 w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl">
+                <button onClick={() => navigate("/sales-performance")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"><TrendingUp className="h-4 w-4 text-zinc-400" />営業パフォーマンス</button>
+                <button onClick={() => navigate("/product-category-progress")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"><Target className="h-4 w-4 text-zinc-400" />品目別売上進捗</button>
+                <button onClick={() => navigate("/clinic-assets")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-50"><Building2 className="h-4 w-4 text-zinc-400" />医院アセット</button>
+              </div>
+            </details>
+
+            <button
+              onClick={() => navigate("/crm")}
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+              <Search className="h-4 w-4" />
+              CRM検索
             </button>
 
-            <button onClick={() => navigate('/clinic-assets')}
-              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-              <Building2 className="h-4 w-4" />医院アセット
-            </button>
+            <div className="mx-1 hidden h-6 w-px bg-zinc-200 sm:block" aria-hidden="true" />
 
-            <button onClick={() => navigate('/crm')}
-              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
-              <Search className="h-4 w-4" />CRM検索
-            </button>
-
-            {user?.can_manage_users && (
-              <button onClick={() => navigate('/customer-merge')}
-                className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-medium text-amber-800 transition hover:border-amber-300 hover:bg-amber-100">
-                <Target className="h-4 w-4" />受注確認
-                {!isMergeCountLoading && pendingMergeCount > 0 && (
-                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-bold text-white">
-                    {pendingMergeCount}
-                  </span>
-                )}
-              </button>
-            )}
-
-            {user?.can_manage_users && (
-              <button onClick={() => navigate('/user-master')}
-                className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-purple-200 bg-purple-50 px-3 text-sm font-medium text-purple-800 transition hover:border-purple-300 hover:bg-purple-100">
-                <Users className="h-4 w-4" />ユーザーマスタ
-              </button>
-            )}
+            {user?.can_manage_users && <button
+              onClick={() => navigate("/masters")}
+              className="inline-flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3 text-sm font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50"
+            >
+                <Settings2 className="h-4 w-4" />
+                マスタ管理
+            </button>}
           </nav>
         </div>
       </header>
@@ -726,26 +883,31 @@ export default function Dashboard() {
       <main className="mx-auto max-w-7xl px-6 py-8">
         {perfStats && (
           <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 shadow-sm">
-            kpi API: {perfStats.kpiMs.toFixed(0)}ms ({perfStats.kpiStatus}) / total: {perfStats.totalMs.toFixed(0)}ms
+            kpi API: {perfStats.kpiMs.toFixed(0)}ms ({perfStats.kpiStatus}) /
+            total: {perfStats.totalMs.toFixed(0)}ms
           </div>
         )}
-        {user?.can_manage_users && !isMergeCountLoading && pendingMergeCount > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm"
-          >
-            <div>
-              未対応の受注確認候補が <span className="font-bold">{pendingMergeCount}件</span> あります。
-            </div>
-            <button
-              onClick={() => navigate('/customer-merge')}
-              className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600"
+        {user?.can_manage_users &&
+          !isMergeCountLoading &&
+          pendingMergeCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm"
             >
-              確認する
-            </button>
-          </motion.div>
-        )}
+              <div>
+                未対応の受注確認候補が{" "}
+                <span className="font-bold">{pendingMergeCount}件</span>{" "}
+                あります。
+              </div>
+              <button
+                onClick={() => navigate("/customer-merge")}
+                className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600"
+              >
+                確認する
+              </button>
+            </motion.div>
+          )}
 
         <motion.div
           initial={{ opacity: 0, y: -8 }}
@@ -768,7 +930,9 @@ export default function Dashboard() {
               </div>
               <div>
                 <p className="text-sm font-bold text-zinc-900">コメント通知</p>
-                <p className="text-xs text-zinc-500">商談コメントの更新を確認できます</p>
+                <p className="text-xs text-zinc-500">
+                  商談コメントの更新を確認できます
+                </p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -777,7 +941,9 @@ export default function Dashboard() {
                   未読 {unreadCommentNotificationCount}
                 </span>
               )}
-              <ChevronDown className={`h-4 w-4 text-zinc-400 transition ${isCommentNotificationsOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown
+                className={`h-4 w-4 text-zinc-400 transition ${isCommentNotificationsOpen ? "rotate-180" : ""}`}
+              />
             </div>
           </button>
 
@@ -785,7 +951,7 @@ export default function Dashboard() {
             {isCommentNotificationsOpen && (
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
+                animate={{ height: "auto", opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
                 transition={{ duration: 0.18 }}
                 className="overflow-hidden border-t border-zinc-100"
@@ -825,8 +991,8 @@ export default function Dashboard() {
                           onClick={() => openCommentNotification(notification)}
                           className={`rounded-xl border px-4 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50/50 ${
                             notification.read_at
-                              ? 'border-zinc-100 bg-zinc-50'
-                              : 'border-indigo-200 bg-indigo-50'
+                              ? "border-zinc-100 bg-zinc-50"
+                              : "border-indigo-200 bg-indigo-50"
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
@@ -835,11 +1001,14 @@ export default function Dashboard() {
                                 {notification.clinic_name}
                               </p>
                               <p className="mt-1 text-xs font-semibold text-indigo-600">
-                                {notification.comment_author_name}さんがコメントしました
+                                {notification.comment_author_name}
+                                さんがコメントしました
                               </p>
                             </div>
                             <span className="shrink-0 text-xs text-zinc-400">
-                              {formatNotificationTime(notification.comment_created_at)}
+                              {formatNotificationTime(
+                                notification.comment_created_at,
+                              )}
                             </span>
                           </div>
                           <p className="mt-2 line-clamp-2 text-sm leading-5 text-zinc-600">
@@ -856,15 +1025,18 @@ export default function Dashboard() {
         </motion.div>
 
         {/* Filters */}
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          className="mb-6 flex flex-wrap items-center gap-4 rounded-xl bg-white p-4 shadow-sm">
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 flex flex-wrap items-center gap-4 rounded-xl bg-white p-4 shadow-sm"
+        >
           <div className="flex items-center gap-2 text-zinc-500">
             <Filter className="h-4 w-4" />
             <span className="text-sm font-medium">絞り込み</span>
           </div>
 
           <div className="flex rounded-lg bg-zinc-100 p-1">
-            {(['delivery', 'order'] as ImportDataKind[]).map((kind) => (
+            {(["delivery", "order"] as ImportDataKind[]).map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -874,11 +1046,11 @@ export default function Dashboard() {
                 }}
                 className={`rounded-md px-3 py-1.5 text-sm font-bold transition ${
                   salesImportDataKind === kind
-                    ? 'bg-white text-indigo-700 shadow-sm'
-                    : 'text-zinc-500 hover:text-zinc-800'
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-800"
                 }`}
               >
-                {kind === 'delivery' ? '納品' : '受注'}
+                {kind === "delivery" ? "納品" : "受注"}
               </button>
             ))}
           </div>
@@ -886,8 +1058,11 @@ export default function Dashboard() {
           {/* Period */}
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-zinc-400" />
-            <select value={period} onChange={e => setPeriod(e.target.value as Period)}
-              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as Period)}
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
+            >
               <option value="weekly">週次</option>
               <option value="monthly">月次</option>
               <option value="quarterly">四半期</option>
@@ -900,14 +1075,14 @@ export default function Dashboard() {
             <input
               type="date"
               value={fromDate}
-              onChange={e => setFromDate(e.target.value)}
+              onChange={(e) => setFromDate(e.target.value)}
               className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
             />
             <span className="text-sm text-zinc-400">〜</span>
             <input
               type="date"
               value={toDate}
-              onChange={e => setToDate(e.target.value)}
+              onChange={(e) => setToDate(e.target.value)}
               className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
             />
           </div>
@@ -915,11 +1090,15 @@ export default function Dashboard() {
           {/* Granularity */}
           <div className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-zinc-400" />
-            <select value={granularity} onChange={e => {
-              setGranularity(e.target.value as Granularity);
-              setSelectedDept('');
-              setSelectedUser('');
-            }} className="min-w-[140px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
+            <select
+              value={granularity}
+              onChange={(e) => {
+                setGranularity(e.target.value as Granularity);
+                setSelectedDept("");
+                setSelectedUser("");
+              }}
+              className="min-w-[140px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
+            >
               <option value="all">全体</option>
               <option value="department">部署</option>
               <option value="individual">個人</option>
@@ -927,27 +1106,39 @@ export default function Dashboard() {
           </div>
 
           {/* Department select */}
-          {(granularity === 'department' || granularity === 'individual') && (
+          {(granularity === "department" || granularity === "individual") && (
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-zinc-400" />
-              <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)}
-                className="min-w-[220px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
-                <option value="">{granularity === 'individual' ? '部署で絞る（任意）' : '部署を選択'}</option>
-                {sortedDepartmentOptions.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
+              <select
+                value={selectedDept}
+                onChange={(e) => setSelectedDept(e.target.value)}
+                className="min-w-[220px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
+              >
+                <option value="">
+                  {granularity === "individual"
+                    ? "部署で絞る（任意）"
+                    : "部署を選択"}
+                </option>
+                {sortedDepartmentOptions.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
                 ))}
               </select>
             </div>
           )}
 
           {/* Individual select */}
-          {granularity === 'individual' && (
+          {granularity === "individual" && (
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-zinc-400" />
-              <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)}
-                className="min-w-[280px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm">
+              <select
+                value={selectedUser}
+                onChange={(e) => setSelectedUser(e.target.value)}
+                className="min-w-[280px] rounded-lg border border-zinc-200 px-3 py-1.5 text-sm"
+              >
                 <option value="">担当者を選択</option>
-                {sortedScopedUsers.map(u => (
+                {sortedScopedUsers.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name}（{u.department}）
                   </option>
@@ -962,7 +1153,7 @@ export default function Dashboard() {
             確定
           </button>
         </motion.div>
-      
+
         {error && (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600">
             {error}
@@ -974,45 +1165,88 @@ export default function Dashboard() {
             description={`${IMPORT_DATA_KIND_LABEL[appliedSalesImportDataKind]}を基準に、着地と予算差分を確認します。`}
           />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-              className="rounded-xl bg-white p-6 shadow-sm">
-              <SectionTitle title={appliedSalesImportDataKind === 'order' ? '受注額合計' : '売上合計'} color="#10b981" />
-              <p className="text-4xl font-bold text-emerald-600">¥{(data?.sales.sales ?? 0).toLocaleString()}</p>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="rounded-xl bg-white p-6 shadow-sm"
+            >
+              <SectionTitle
+                title={
+                  appliedSalesImportDataKind === "order"
+                    ? "受注額合計"
+                    : "売上合計"
+                }
+                color="#10b981"
+              />
+              <p className="text-4xl font-bold text-emerald-600">
+                ¥{(data?.sales.sales ?? 0).toLocaleString()}
+              </p>
               <p className="mt-2 text-sm text-zinc-500">
                 前年同期間比 {formatChangeRate(data?.sales.change_rate)}%
-                <span className="ml-2">前年同期間 ¥{(data?.sales.prev_sales ?? 0).toLocaleString()}</span>
+                <span className="ml-2">
+                  前年同期間 ¥{(data?.sales.prev_sales ?? 0).toLocaleString()}
+                </span>
               </p>
             </motion.div>
 
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-              className="rounded-xl bg-white p-6 shadow-sm">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="rounded-xl bg-white p-6 shadow-sm"
+            >
               <SectionTitle title="予算達成率" color="#6366f1" />
-              <p className="text-4xl font-bold text-indigo-600">{data?.budget.achievement_rate ?? 0}%</p>
+              <p className="text-4xl font-bold text-indigo-600">
+                {data?.budget.achievement_rate ?? 0}%
+              </p>
               <p className="mt-2 text-sm text-zinc-500">
-                {appliedSalesImportDataKind === 'order' ? '受注額' : '売上'}：¥{(data?.budget.sales ?? 0).toLocaleString()} ／ 予算：¥{(data?.budget.budget ?? 0).toLocaleString()}
+                {appliedSalesImportDataKind === "order" ? "受注額" : "売上"}：¥
+                {(data?.budget.sales ?? 0).toLocaleString()} ／ 予算：¥
+                {(data?.budget.budget ?? 0).toLocaleString()}
               </p>
               <div className="mt-4 h-3 w-full rounded-full bg-zinc-100">
-                <div className="h-3 rounded-full bg-indigo-500"
-                  style={{ width: `${Math.min(data?.budget.achievement_rate ?? 0, 100)}%` }} />
+                <div
+                  className="h-3 rounded-full bg-indigo-500"
+                  style={{
+                    width: `${Math.min(data?.budget.achievement_rate ?? 0, 100)}%`,
+                  }}
+                />
               </div>
             </motion.div>
           </div>
         </section>
 
         <section className="mb-8">
-          <SectionGroupTitle title="商品部門別" description="商品マスターにひもづく部門別に、売上の構成と前年同期間比を見られるようにしています。" />
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-            className="rounded-xl bg-white p-6 shadow-sm">
+          <SectionGroupTitle
+            title="商品部門別"
+            description="商品マスターにひもづく部門別に、売上の構成と前年同期間比を見られるようにしています。"
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35 }}
+            className="rounded-xl bg-white p-6 shadow-sm"
+          >
             <SectionTitle title="商品部門別売上" color="#14b8a6" />
             {productDepartmentSales.length > 0 ? (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {productDepartmentSales.map((item) => (
-                  <div key={item.key} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                    <p className="text-sm font-semibold text-zinc-500">{item.label}</p>
-                    <p className="mt-2 text-3xl font-bold text-zinc-900">¥{(item.sales ?? 0).toLocaleString()}</p>
+                  <div
+                    key={item.key}
+                    className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4"
+                  >
+                    <p className="text-sm font-semibold text-zinc-500">
+                      {item.label}
+                    </p>
+                    <p className="mt-2 text-3xl font-bold text-zinc-900">
+                      ¥{(item.sales ?? 0).toLocaleString()}
+                    </p>
                     <div className="mt-3 flex items-center justify-between text-sm text-zinc-500">
                       <span>構成比 {(item.share ?? 0).toFixed(1)}%</span>
-                      <span>前年同期間比 {formatChangeRate(item.change_rate)}%</span>
+                      <span>
+                        前年同期間比 {formatChangeRate(item.change_rate)}%
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -1026,8 +1260,12 @@ export default function Dashboard() {
               <div className="mt-6 border-t border-zinc-100 pt-5">
                 <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <h3 className="text-sm font-black text-zinc-900">未分類商品の割当</h3>
-                    <p className="mt-1 text-xs text-zinc-500">選択した内容は商品部門マスタへ追加されます</p>
+                    <h3 className="text-sm font-black text-zinc-900">
+                      未分類商品の割当
+                    </h3>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      選択した内容は商品部門マスタへ追加されます
+                    </p>
                   </div>
                   <div className="flex flex-col gap-2 md:items-end">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1036,15 +1274,22 @@ export default function Dashboard() {
                       </span>
                       <button
                         type="button"
-                        disabled={isBulkProductAssignmentSaving || selectedProductAssignmentItems.length === 0}
+                        disabled={
+                          isBulkProductAssignmentSaving ||
+                          selectedProductAssignmentItems.length === 0
+                        }
                         onClick={assignSelectedProductDepartments}
                         className="rounded-md bg-teal-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
                       >
-                        {isBulkProductAssignmentSaving ? '一括追加中' : '選択済みを一括追加'}
+                        {isBulkProductAssignmentSaving
+                          ? "一括追加中"
+                          : "選択済みを一括追加"}
                       </button>
                     </div>
                     {productAssignmentMessage && (
-                      <p className="text-xs font-semibold text-zinc-600">{productAssignmentMessage}</p>
+                      <p className="text-xs font-semibold text-zinc-600">
+                        {productAssignmentMessage}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -1062,44 +1307,65 @@ export default function Dashboard() {
                     </thead>
                     <tbody className="divide-y divide-zinc-100 bg-white">
                       {unclassifiedProducts.map((item) => {
-                        const scopedProductDepartments = productDepartmentOptions.filter(
-                          (option) => option.department_id === item.department_id
-                        );
-                        const isSaving = savingProductAssignmentKey === item.key;
-                        const isProductAssignmentDisabled = isSaving || isBulkProductAssignmentSaving;
+                        const scopedProductDepartments =
+                          productDepartmentOptions.filter(
+                            (option) =>
+                              option.department_id === item.department_id,
+                          );
+                        const isSaving =
+                          savingProductAssignmentKey === item.key;
+                        const isProductAssignmentDisabled =
+                          isSaving || isBulkProductAssignmentSaving;
 
                         return (
                           <tr key={item.key}>
-                            <td className="px-4 py-3 font-semibold text-zinc-700">{item.department_name || item.department_id}</td>
-                            <td className="px-4 py-3 font-mono text-zinc-700">{item.normalized_product_code}</td>
-                            <td className="max-w-[280px] truncate px-4 py-3 font-semibold text-zinc-900">
-                              {item.normalized_product_name || '-'}
+                            <td className="px-4 py-3 font-semibold text-zinc-700">
+                              {item.department_name || item.department_id}
                             </td>
-                            <td className="px-4 py-3 text-right font-black text-zinc-900">¥{item.sales.toLocaleString()}</td>
+                            <td className="px-4 py-3 font-mono text-zinc-700">
+                              {item.normalized_product_code}
+                            </td>
+                            <td className="max-w-[280px] truncate px-4 py-3 font-semibold text-zinc-900">
+                              {item.normalized_product_name || "-"}
+                            </td>
+                            <td className="px-4 py-3 text-right font-black text-zinc-900">
+                              ¥{item.sales.toLocaleString()}
+                            </td>
                             <td className="px-4 py-3">
                               <select
-                                value={productDepartmentAssignments[item.key] ?? ''}
-                                onChange={(event) => setProductDepartmentAssignments((current) => ({
-                                  ...current,
-                                  [item.key]: event.target.value,
-                                }))}
+                                value={
+                                  productDepartmentAssignments[item.key] ?? ""
+                                }
+                                onChange={(event) =>
+                                  setProductDepartmentAssignments(
+                                    (current) => ({
+                                      ...current,
+                                      [item.key]: event.target.value,
+                                    }),
+                                  )
+                                }
                                 disabled={isProductAssignmentDisabled}
                                 className="w-full min-w-[180px] rounded-md border border-zinc-200 px-3 py-2 text-sm"
                               >
                                 <option value="">選択</option>
                                 {scopedProductDepartments.map((option) => (
-                                  <option key={option.id} value={option.id}>{option.name}</option>
+                                  <option key={option.id} value={option.id}>
+                                    {option.name}
+                                  </option>
                                 ))}
                               </select>
                             </td>
                             <td className="px-4 py-3 text-right">
                               <button
                                 type="button"
-                                disabled={isProductAssignmentDisabled || !productDepartmentAssignments[item.key]}
+                                disabled={
+                                  isProductAssignmentDisabled ||
+                                  !productDepartmentAssignments[item.key]
+                                }
                                 onClick={() => assignProductDepartment(item)}
                                 className="rounded-md bg-teal-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
                               >
-                                {isSaving ? '保存中' : '追加'}
+                                {isSaving ? "保存中" : "追加"}
                               </button>
                             </td>
                           </tr>
@@ -1114,60 +1380,90 @@ export default function Dashboard() {
         </section>
 
         <section className="mb-8">
-          <SectionGroupTitle title="担当別売上" description="担当者ごとの売上と受注の偏りを見比べられる並びにしています。" />
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
-            className="mb-6 rounded-xl bg-white p-5 shadow-sm">
+          <SectionGroupTitle
+            title="担当別売上"
+            description="担当者ごとの売上と受注の偏りを見比べられる並びにしています。"
+          />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="mb-6 rounded-xl bg-white p-5 shadow-sm"
+          >
             <SectionTitle title="営業担当別売上ランキング" color="#0f766e" />
             <div className="space-y-3">
-              {performanceRanking.length > 0 ? performanceRanking.map((item, index) => {
-                return (
-                  <div key={item.user_id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-[56px_minmax(160px,1.15fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(190px,0.9fr)] md:items-center">
-                      <div className="text-sm font-semibold text-zinc-400">#{index + 1}</div>
+              {performanceRanking.length > 0 ? (
+                performanceRanking.map((item, index) => {
+                  return (
+                    <div
+                      key={item.user_id}
+                      className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3"
+                    >
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-[56px_minmax(160px,1.15fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(190px,0.9fr)] md:items-center">
+                        <div className="text-sm font-semibold text-zinc-400">
+                          #{index + 1}
+                        </div>
 
-                      <div className="min-w-0">
-                        <p className="truncate text-lg font-bold text-zinc-900">{item.name}</p>
-                      </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-lg font-bold text-zinc-900">
+                            {item.name}
+                          </p>
+                        </div>
 
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold text-zinc-500">売上 / 予算</p>
-                        <p className="truncate text-base font-bold text-teal-700">
-                          ¥{item.sales.toLocaleString()}
-                          <span className="ml-2 text-xs font-medium text-zinc-500">
-                            / ¥{item.budget.toLocaleString()}
-                          </span>
-                        </p>
-                      </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-zinc-500">
+                            売上 / 予算
+                          </p>
+                          <p className="truncate text-base font-bold text-teal-700">
+                            ¥{item.sales.toLocaleString()}
+                            <span className="ml-2 text-xs font-medium text-zinc-500">
+                              / ¥{item.budget.toLocaleString()}
+                            </span>
+                          </p>
+                        </div>
 
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold text-zinc-500">訪問数 / 訪問目標</p>
-                        <p className="truncate text-base font-bold text-indigo-700">
-                          {item.visits.toLocaleString()}件
-                          <span className="ml-2 text-xs font-medium text-zinc-500">
-                            / {item.visit_goal != null ? `${item.visit_goal.toLocaleString()}件` : '未設定'}
-                          </span>
-                        </p>
-                      </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-zinc-500">
+                            訪問数 / 訪問目標
+                          </p>
+                          <p className="truncate text-base font-bold text-indigo-700">
+                            {item.visits.toLocaleString()}件
+                            <span className="ml-2 text-xs font-medium text-zinc-500">
+                              /{" "}
+                              {item.visit_goal != null
+                                ? `${item.visit_goal.toLocaleString()}件`
+                                : "未設定"}
+                            </span>
+                          </p>
+                        </div>
 
-                      <div className="min-w-0 md:text-right">
-                        <p className="text-[11px] font-semibold text-zinc-500">新規受注 / 目標</p>
-                        <p className="whitespace-nowrap text-base font-bold text-emerald-700">
-                          {item.won_count.toLocaleString()}件
-                          <span className="ml-2 text-xs font-medium text-zinc-500">
-                            / {item.closure_goal != null ? `${item.closure_goal.toLocaleString()}件` : '未設定'}
-                          </span>
-                        </p>
-                        <p className="mt-1 text-xs font-semibold leading-snug text-zinc-500">
-                          新規開拓予算目標
-                        </p>
-                        <p className="whitespace-nowrap text-sm font-bold text-zinc-700">
-                          {item.new_order_amount_goal != null ? `¥${item.new_order_amount_goal.toLocaleString()}` : '未設定'}
-                        </p>
+                        <div className="min-w-0 md:text-right">
+                          <p className="text-[11px] font-semibold text-zinc-500">
+                            新規受注 / 目標
+                          </p>
+                          <p className="whitespace-nowrap text-base font-bold text-emerald-700">
+                            {item.won_count.toLocaleString()}件
+                            <span className="ml-2 text-xs font-medium text-zinc-500">
+                              /{" "}
+                              {item.closure_goal != null
+                                ? `${item.closure_goal.toLocaleString()}件`
+                                : "未設定"}
+                            </span>
+                          </p>
+                          <p className="mt-1 text-xs font-semibold leading-snug text-zinc-500">
+                            新規開拓予算目標
+                          </p>
+                          <p className="whitespace-nowrap text-sm font-bold text-zinc-700">
+                            {item.new_order_amount_goal != null
+                              ? `¥${item.new_order_amount_goal.toLocaleString()}`
+                              : "未設定"}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              }) : (
+                  );
+                })
+              ) : (
                 <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-5 py-8 text-sm text-zinc-500">
                   対象データがありません。
                 </div>
@@ -1175,8 +1471,12 @@ export default function Dashboard() {
             </div>
           </motion.div>
 
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.7 }}
-            className="rounded-xl bg-white p-6 shadow-sm">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.7 }}
+            className="rounded-xl bg-white p-6 shadow-sm"
+          >
             <SectionTitle title="新規受注先一覧" color="#8b5cf6" />
             <div className="overflow-auto max-h-64">
               <table className="w-full text-sm">
@@ -1190,16 +1490,26 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {(data?.new_orders ?? []).map((o: any, i: number) => {
-                    const clinicKind = o.clinic_kind === 'prospect' ? 'prospect' : 'customer';
-                    const clinicId = String(o.clinic_id ?? o.customer_code ?? '').trim();
+                    const clinicKind =
+                      o.clinic_kind === "prospect" ? "prospect" : "customer";
+                    const clinicId = String(
+                      o.clinic_id ?? o.customer_code ?? "",
+                    ).trim();
 
                     return (
-                      <tr key={`${clinicKind}:${clinicId || i}`} className="border-b border-zinc-100 hover:bg-zinc-50">
+                      <tr
+                        key={`${clinicKind}:${clinicId || i}`}
+                        className="border-b border-zinc-100 hover:bg-zinc-50"
+                      >
                         <td className="py-2 font-medium">
                           {clinicId ? (
                             <button
                               type="button"
-                              onClick={() => navigate(`/clinics/${clinicKind}/${encodeURIComponent(clinicId)}`)}
+                              onClick={() =>
+                                navigate(
+                                  `/clinics/${clinicKind}/${encodeURIComponent(clinicId)}`,
+                                )
+                              }
                               className="font-semibold text-indigo-600 underline-offset-2 transition hover:text-indigo-800 hover:underline"
                             >
                               {o.clinic}
@@ -1210,17 +1520,23 @@ export default function Dashboard() {
                         </td>
                         <td className="py-2 text-zinc-700">{o.sales}</td>
                         <td className="py-2">
-                          <span className={`rounded-full px-2 py-1 text-xs font-bold ${
-                            o.source === 'clinic_asset'
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : 'bg-violet-50 text-violet-700'
-                          }`}
+                          <span
+                            className={`rounded-full px-2 py-1 text-xs font-bold ${
+                              o.source === "clinic_asset"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "bg-violet-50 text-violet-700"
+                            }`}
                           >
-                            {o.source_label ?? (o.source === 'clinic_asset' ? '受注明細' : '商談')}
+                            {o.source_label ??
+                              (o.source === "clinic_asset"
+                                ? "受注明細"
+                                : "商談")}
                           </span>
                         </td>
                         <td className="py-2 text-right font-semibold text-zinc-700">
-                          {Number(o.amount ?? 0) > 0 ? `¥${Number(o.amount).toLocaleString()}` : '-'}
+                          {Number(o.amount ?? 0) > 0
+                            ? `¥${Number(o.amount).toLocaleString()}`
+                            : "-"}
                         </td>
                       </tr>
                     );

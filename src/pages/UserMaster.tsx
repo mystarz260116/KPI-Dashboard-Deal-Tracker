@@ -11,17 +11,21 @@ type ManagedUser = {
   role: string;
   department_id: number | null;
   department: string;
+  is_salesperson: boolean;
+  external_staff_code: string;
   can_view_dashboard: boolean;
   can_manage_users: boolean;
   is_suspended: boolean;
   created_at: string | null;
 };
 
-type Department = { id: number; name: string };
+type Department = { id: number; name: string; is_sales_department?: boolean; is_active?: boolean };
+type ExternalStaff = { department_id: number; code: string; name: string | null; raw_label: string | null };
 
 const initialForm = {
   name: '', email: '', password: '', department_id: '', role: 'user',
   can_view_dashboard: false, can_manage_users: false,
+  is_salesperson: false, external_staff_code: '',
 };
 
 function generateInitialPassword() {
@@ -41,6 +45,7 @@ export default function UserMaster() {
   const { user } = useAuth();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [externalStaffs, setExternalStaffs] = useState<ExternalStaff[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState('');
@@ -53,6 +58,7 @@ export default function UserMaster() {
   const [editForm, setEditForm] = useState({
     name: '', email: '', department_id: '', role: 'user',
     can_view_dashboard: false, can_manage_users: false,
+    is_salesperson: false, external_staff_code: '',
   });
 
   const openCreateModal = () => {
@@ -84,6 +90,8 @@ export default function UserMaster() {
       role: target.role,
       can_view_dashboard: target.can_view_dashboard,
       can_manage_users: target.can_manage_users,
+      is_salesperson: target.is_salesperson,
+      external_staff_code: target.external_staff_code,
     });
   };
 
@@ -117,7 +125,9 @@ export default function UserMaster() {
         authFetch('/api/users?action=master'), authFetch('/api/departments'),
       ]);
       if (!usersResponse.ok || !departmentsResponse.ok) throw new Error('load failed');
-      setUsers(await usersResponse.json());
+      const usersPayload = await usersResponse.json();
+      setUsers(Array.isArray(usersPayload) ? usersPayload : usersPayload.users ?? []);
+      setExternalStaffs(Array.isArray(usersPayload?.external_staffs) ? usersPayload.external_staffs : []);
       setDepartments(await departmentsResponse.json());
     } catch {
       setError('ユーザー情報を取得できませんでした');

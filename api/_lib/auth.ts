@@ -12,6 +12,7 @@ type AuthenticatedProfile = {
   can_view_dashboard: boolean;
   can_manage_users: boolean;
   must_change_password: boolean;
+  mfa_temporarily_exempt: boolean;
   authenticator_assurance_level: 'aal1' | 'aal2' | null;
   mfa_verified_at: string | null;
   mfa_reverify_after: string | null;
@@ -43,13 +44,6 @@ if (!supabaseUrl) {
 if (!supabaseAnonKey) {
   throw new Error('SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY is required for API auth');
 }
-
-const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-});
 
 const AUTH_PROFILE_CACHE_TTL_MS = 60_000;
 const authProfileCache = new Map<string, AuthCacheEntry>();
@@ -87,6 +81,7 @@ async function loadLocalDevelopmentProfile(): Promise<AuthenticatedProfile | nul
     can_view_dashboard: true,
     can_manage_users: true,
     must_change_password: false,
+    mfa_temporarily_exempt: false,
     authenticator_assurance_level: 'aal2',
     mfa_verified_at: profile.mfa_verified_at ?? new Date().toISOString(),
     mfa_reverify_after: null,
@@ -94,6 +89,10 @@ async function loadLocalDevelopmentProfile(): Promise<AuthenticatedProfile | nul
 }
 
 function getMfaReverificationError(profile: AuthenticatedProfile) {
+  if (profile.mfa_temporarily_exempt) {
+    return null;
+  }
+
   if (profile.authenticator_assurance_level !== 'aal2') {
     return { error: 'MFA required', code: 'MFA_REQUIRED' };
   }
@@ -131,6 +130,11 @@ export function clearAuthProfileCacheForUser(userId: string) {
 }
 
 function decodeAuthenticatorAssuranceLevel(accessToken: string): 'aal1' | 'aal2' | null {
+  const claims = decodeAccessTokenClaims(accessToken);
+  return claims?.aal === 'aal2' ? 'aal2' : claims?.aal === 'aal1' ? 'aal1' : null;
+}
+
+function decodeAccessTokenClaims(accessToken: string): Record<string, any> | null {
   try {
     const [, payload] = accessToken.split('.');
     if (!payload) return null;
@@ -139,10 +143,9 @@ function decodeAuthenticatorAssuranceLevel(accessToken: string): 'aal1' | 'aal2'
       .replace(/-/g, '+')
       .replace(/_/g, '/')
       .padEnd(Math.ceil(payload.length / 4) * 4, '=');
-    const claims = JSON.parse(Buffer.from(normalizedPayload, 'base64').toString('utf8'));
-    return claims?.aal === 'aal2' ? 'aal2' : claims?.aal === 'aal1' ? 'aal1' : null;
+    return JSON.parse(Buffer.from(normalizedPayload, 'base64').toString('utf8'));
   } catch (error) {
-    console.error('api auth aal decode error:', error);
+    console.error('api auth claims decode error:', error);
     return null;
   }
 }
@@ -189,22 +192,23 @@ export async function requireAuthenticatedProfile(
   }
 
   const loadProfile = async (): Promise<AuthLoadResult> => {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabaseAuth.auth.getUser(accessToken);
+    const claims = decodeAccessTokenClaims(accessToken);
+    const userId = String(claims?.sub ?? '').trim();
 
-    if (userError || !user) {
-      console.error('api auth user lookup error:', userError);
+    if (!userId) {
       return { profile: null, status: 401, payload: { error: 'Unauthorized' } };
     }
 
     const authenticatorAssuranceLevel = decodeAuthenticatorAssuranceLevel(accessToken);
 
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const authenticatedClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    });
+    const { data: profile, error: profileError } = await authenticatedClient
       .from('profiles')
       .select('id, name, email, role, department_id, can_view_dashboard, can_manage_users, must_change_password, mfa_verified_at, mfa_reverify_after')
-      .eq('id', user.id)
+      .eq('id', userId)
       .single();
 
     if (profileError || !profile) {
@@ -214,13 +218,14 @@ export async function requireAuthenticatedProfile(
 
     const authenticatedProfile = {
       id: profile.id,
-      email: profile.email ?? user.email ?? '',
+      email: profile.email ?? String(claims?.email ?? ''),
       name: profile.name ?? '',
       role: profile.role ?? 'sales',
       department_id: profile.department_id ?? null,
       can_view_dashboard: true,
       can_manage_users: profile.can_manage_users ?? false,
       must_change_password: profile.must_change_password ?? false,
+      mfa_temporarily_exempt: claims?.app_metadata?.mfa_temporarily_exempt === true,
       authenticator_assurance_level: authenticatorAssuranceLevel,
       mfa_verified_at: profile.mfa_verified_at ?? null,
       mfa_reverify_after: profile.mfa_reverify_after ?? null,

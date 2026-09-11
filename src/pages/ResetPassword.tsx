@@ -1,49 +1,57 @@
-import { FormEvent, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'motion/react';
-import { ArrowLeft, CheckCircle2, KeyRound, Loader2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
-import logoImg from '../assets/Mystarz-logo.png';
-import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '../lib/passwordPolicy';
+import { FormEvent, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { motion } from "motion/react";
+import { ArrowLeft, CheckCircle2, KeyRound, Loader2 } from "lucide-react";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
+import logoImg from "../assets/Mystarz-logo.png";
+import {
+  isValidPassword,
+  PASSWORD_POLICY_MESSAGE,
+} from "../lib/passwordPolicy";
+import { authFetch } from "../lib/authFetch";
 
 const getPasswordUpdateErrorMessage = (message: string) => {
-  if (message.includes('New password should be different from the old password')) {
-    return '現在のパスワードとは異なる新しいパスワードを入力してください。';
+  if (
+    message.includes("New password should be different from the old password")
+  ) {
+    return "現在のパスワードとは異なる新しいパスワードを入力してください。";
   }
 
-  return 'パスワードを更新できませんでした。再設定メールを送り直して、新しいメール内のリンクから開いてください。';
+  return "パスワードを更新できませんでした。再設定メールを送り直して、新しいメール内のリンクから開いてください。";
 };
 
 export default function ResetPassword() {
   const navigate = useNavigate();
   const { user, isLoading: isAuthLoading } = useAuth();
-  const [password, setPassword] = useState('');
-  const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [userEmail, setUserEmail] = useState('');
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [isReady, setIsReady] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
   const getPostResetPath = () => {
-    if (!user) return '/login';
+    if (!user) return "/login";
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    return isMobile || !user.can_view_dashboard ? '/deals/new' : '/dashboard';
+    return isMobile || !user.can_view_dashboard ? "/deals/new" : "/dashboard";
   };
 
   useEffect(() => {
     let isMounted = true;
 
     const markReady = async (
-      session: Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']
+      session: Awaited<
+        ReturnType<typeof supabase.auth.getSession>
+      >["data"]["session"],
     ) => {
       if (!isMounted) return;
 
       if (!session) {
-        setUserEmail('');
+        setUserEmail("");
         setIsReady(false);
         setIsCheckingSession(false);
         return;
@@ -54,27 +62,33 @@ export default function ResetPassword() {
       if (!isMounted) return;
 
       if (error || !data.user) {
-        setUserEmail('');
+        setUserEmail("");
         setIsReady(false);
         setIsCheckingSession(false);
         return;
       }
 
-      setUserEmail(data.user.email ?? '');
+      setUserEmail(data.user.email ?? "");
       setIsReady(true);
       setIsCheckingSession(false);
     };
 
     const initializeRecoverySession = async () => {
       try {
-        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const hashParams = new URLSearchParams(
+          window.location.hash.replace(/^#/, ""),
+        );
         const queryParams = new URLSearchParams(window.location.search);
-        const accessToken = hashParams.get('access_token');
-        const refreshToken = hashParams.get('refresh_token');
-        const hashType = hashParams.get('type');
-        const code = queryParams.get('code');
+        const accessToken = hashParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token");
+        const hashType = hashParams.get("type");
+        const code = queryParams.get("code");
 
-        if (hashType === 'recovery' && accessToken && refreshToken) {
+        if (
+          (hashType === "recovery" || hashType === "invite") &&
+          accessToken &&
+          refreshToken
+        ) {
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
@@ -84,29 +98,38 @@ export default function ResetPassword() {
             throw error;
           }
 
-          window.history.replaceState(null, document.title, window.location.pathname);
+          window.history.replaceState(
+            null,
+            document.title,
+            window.location.pathname,
+          );
           await markReady(data.session);
           return;
         }
 
         if (code) {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          const { data, error } =
+            await supabase.auth.exchangeCodeForSession(code);
 
           if (error) {
             throw error;
           }
 
-          window.history.replaceState(null, document.title, window.location.pathname);
+          window.history.replaceState(
+            null,
+            document.title,
+            window.location.pathname,
+          );
           await markReady(data.session);
           return;
         }
 
         await markReady(null);
       } catch (error) {
-        console.error('password recovery session error:', error);
+        console.error("password recovery session error:", error);
         if (!isMounted) return;
 
-        setUserEmail('');
+        setUserEmail("");
         setIsReady(false);
         setIsCheckingSession(false);
       }
@@ -117,7 +140,7 @@ export default function ResetPassword() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' && session) {
+      if (event === "PASSWORD_RECOVERY" && session) {
         void markReady(session);
       }
     });
@@ -130,8 +153,8 @@ export default function ResetPassword() {
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setError('');
-    setMessage('');
+    setError("");
+    setMessage("");
 
     if (!isValidPassword(password)) {
       setError(PASSWORD_POLICY_MESSAGE);
@@ -139,7 +162,7 @@ export default function ResetPassword() {
     }
 
     if (password !== passwordConfirm) {
-      setError('確認用パスワードが一致しません');
+      setError("確認用パスワードが一致しません");
       return;
     }
 
@@ -151,16 +174,20 @@ export default function ResetPassword() {
       } = await supabase.auth.getSession();
 
       if (!session) {
-        setError('パスワード再設定リンクの有効期限が切れています。再設定メールを送り直してください。');
+        setError(
+          "パスワード再設定リンクの有効期限が切れています。再設定メールを送り直してください。",
+        );
         return;
       }
 
       const { error } = await supabase.auth.updateUser({ password });
 
       if (error) {
-        console.error('password update error:', error);
-        if (error.message.includes('AAL2')) {
-          setError('MFAを一時停止中のため更新できませんでした。再設定メールを送り直してください。');
+        console.error("password update error:", error);
+        if (error.message.includes("AAL2")) {
+          setError(
+            "MFAを一時停止中のため更新できませんでした。再設定メールを送り直してください。",
+          );
           return;
         }
 
@@ -168,12 +195,24 @@ export default function ResetPassword() {
         return;
       }
 
-      setMessage('パスワードを更新しました。');
-      setPassword('');
-      setPasswordConfirm('');
+      const completionResponse = await authFetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete-initial-change" }),
+      });
+      if (!completionResponse.ok) {
+        setError(
+          "パスワードは更新されましたが、初期設定を完了できませんでした。管理者へご連絡ください。",
+        );
+        return;
+      }
+
+      setMessage("パスワードを更新しました。");
+      setPassword("");
+      setPasswordConfirm("");
     } catch (error) {
-      console.error('password update error:', error);
-      setError('サーバーに接続できませんでした');
+      console.error("password update error:", error);
+      setError("サーバーに接続できませんでした");
     } finally {
       setIsLoading(false);
     }
@@ -186,7 +225,11 @@ export default function ResetPassword() {
         animate={{ opacity: 1, y: 0 }}
         className="mb-8"
       >
-        <img src={logoImg} alt="Mystarz ロゴ" className="h-16 w-auto object-contain" />
+        <img
+          src={logoImg}
+          alt="Mystarz ロゴ"
+          className="h-16 w-auto object-contain"
+        />
       </motion.div>
 
       <motion.div
@@ -195,8 +238,12 @@ export default function ResetPassword() {
         className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl"
       >
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">新しいパスワード</h1>
-          <p className="mt-2 text-zinc-500">今後ログインに使用するパスワードを設定してください</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
+            新しいパスワード
+          </h1>
+          <p className="mt-2 text-zinc-500">
+            今後ログインに使用するパスワードを設定してください
+          </p>
         </div>
 
         {isCheckingSession ? (
@@ -216,7 +263,7 @@ export default function ResetPassword() {
               disabled={isAuthLoading}
               className="flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white transition hover:bg-indigo-700"
             >
-              {isAuthLoading ? '確認中' : 'アプリを開く'}
+              {isAuthLoading ? "確認中" : "アプリを開く"}
             </button>
           </div>
         ) : isReady ? (
@@ -236,12 +283,32 @@ export default function ResetPassword() {
               <input
                 type="password"
                 required
+                minLength={8}
+                pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[^A-Za-z0-9]).{8,}"
+                title="8文字以上で、英大文字・英小文字・記号をそれぞれ1文字以上含めてください"
                 autoComplete="new-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="mt-1 block w-full rounded-lg border border-zinc-300 px-4 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                placeholder="8文字以上"
+                placeholder="8文字以上・英大文字・英小文字・記号"
               />
+              <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs">
+                {[
+                  ["8文字以上", password.length >= 8],
+                  ["英大文字を含む", /[A-Z]/.test(password)],
+                  ["英小文字を含む", /[a-z]/.test(password)],
+                  ["記号を含む", /[^A-Za-z0-9]/.test(password)],
+                ].map(([label, passed]) => (
+                  <span
+                    key={String(label)}
+                    className={
+                      passed ? "font-medium text-emerald-600" : "text-zinc-400"
+                    }
+                  >
+                    {passed ? "✓" : "○"} {label}
+                  </span>
+                ))}
+              </div>
             </div>
 
             <div>
@@ -251,6 +318,7 @@ export default function ResetPassword() {
               <input
                 type="password"
                 required
+                minLength={8}
                 autoComplete="new-password"
                 value={passwordConfirm}
                 onChange={(event) => setPasswordConfirm(event.target.value)}
@@ -259,14 +327,26 @@ export default function ResetPassword() {
               />
             </div>
 
-            {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+            {error && (
+              <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                {error}
+              </div>
+            )}
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={
+                isLoading ||
+                !isValidPassword(password) ||
+                password !== passwordConfirm
+              }
               className="flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
             >
-              {isLoading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <KeyRound className="mr-2 h-5 w-5" />}
+              {isLoading ? (
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              ) : (
+                <KeyRound className="mr-2 h-5 w-5" />
+              )}
               パスワードを更新
             </button>
           </form>

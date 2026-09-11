@@ -18,6 +18,10 @@ import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
 import salesPerformanceHandler from '../src/server-handlers/kpi/sales-performance.js';
 import clinicAssetsHandler from '../src/server-handlers/kpi/clinic-assets.js';
 import detectedNewOrderHandler from '../src/server-handlers/kpi/detected-new-order.js';
+import productCategoryTrendsHandler from '../src/server-handlers/kpi/product-category-trends.js';
+import productCategoryTrendsRefreshHandler from '../src/server-handlers/kpi/product-category-trends-refresh.js';
+import productCategoryProgressHandler from '../src/server-handlers/kpi/product-category-progress.js';
+import materialCategoryMasterHandler from '../src/server-handlers/kpi/material-category-master.js';
 
 
 type Granularity = 'all' | 'department' | 'individual';
@@ -435,6 +439,21 @@ export default async function handler(req: any, res: any) {
     return clinicAssetsHandler(req, res);
   }
 
+  if (route === 'product-category-trends') {
+    return productCategoryTrendsHandler(req, res);
+  }
+
+  if (route === 'product-category-progress') {
+    return productCategoryProgressHandler(req, res);
+  }
+  if (route === 'material-category-master') {
+    return materialCategoryMasterHandler(req, res);
+  }
+
+  if (route === 'product-category-trends-refresh') {
+    return productCategoryTrendsRefreshHandler(req, res);
+  }
+
   if (route === 'detected-new-order') {
     return detectedNewOrderHandler(req, res);
   }
@@ -790,7 +809,7 @@ export default async function handler(req: any, res: any) {
       console.error('kpi sales import rows error:', salesImportRowsError);
       return res.status(500).json({ error: 'sales import rows fetch failed' });
     }
-    markDebug('ireba_sales_rows', {
+    markDebug('sales_import_rows', {
       currentStart,
       currentEnd,
       previousStart,

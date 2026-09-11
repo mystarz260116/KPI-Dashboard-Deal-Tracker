@@ -588,6 +588,7 @@ export default function DealInput() {
   }, [pipelineStage]);
 
   const shortcutButtons = [
+    { label: '受注管理', path: '/orders' },
     { label: '案件の進捗管理', path: '/deals/progress' },
     { label: '医院アセット', path: '/clinic-assets' },
     { label: 'CRM検索', path: '/crm' },
