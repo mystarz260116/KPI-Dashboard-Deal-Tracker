@@ -6,18 +6,18 @@
 
 ## 役割
 
-顧客・prospect検索と売上取込からの顧客同期を扱うAPIです。
+廃止済みのCSV由来医院マスタ同期APIに移行案内を返すルーターです。
 
 ## 主な仕様
 
-- 商談入力やCRM検索で利用する検索結果を返します。
-- 売上インポート後の顧客マスタ生成・同期処理も担います。
+- CSV由来の医院マスタ生成・同期は行いません。
+- 対象サブルートには `410 Gone` を返し、入れ歯くん同期への移行を案内します。
 
 ## コードから読み取れる手がかり
 
-- 主な依存: @vercel/node、../src/server-handlers/customers/sync-and-generate-merge-candidates.js、../src/server-handlers/customers/sync-from-sales-import.js
+- 主な依存: @vercel/node
 - 主な公開要素: handler
-- サブルート: sync-from-sales-import、sync-and-generate-merge-candidates
+- サブルート: sync-from-sales-import（廃止）、sync-and-generate-merge-candidates（廃止）
 
 ## 運用メモ
 

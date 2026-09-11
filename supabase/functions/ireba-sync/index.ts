@@ -5,6 +5,14 @@ type JsonRecord = Record<string, unknown>;
 const MAX_BATCH_ITEMS = 500;
 const REDACTED_PAYLOAD_KEYS = new Set(["患者名"]);
 
+const departmentConfigs = {
+  osaka: { id: 1, secretName: "IREBA_SYNC_API_KEY_OSAKA" },
+  tokyo: { id: 2, secretName: "IREBA_SYNC_API_KEY_TOKYO" },
+  fukuoka: { id: 6, secretName: "IREBA_SYNC_API_KEY_FUKUOKA" },
+} as const;
+
+type DepartmentSlug = keyof typeof departmentConfigs;
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-api-key",
@@ -21,10 +29,23 @@ function jsonResponse(body: JsonRecord, status = 200) {
   });
 }
 
-function isAuthorized(req: Request) {
-  const expected = Deno.env.get("IREBA_SYNC_API_KEY");
+function getDepartmentSlug(req: Request): DepartmentSlug | null {
+  const segments = new URL(req.url).pathname.split("/").filter(Boolean);
+  const functionIndex = segments.lastIndexOf("ireba-sync");
+  const slug = segments[functionIndex + 1];
+  return slug && slug in departmentConfigs ? slug as DepartmentSlug : null;
+}
+
+function authorizeDepartment(req: Request) {
+  const slug = getDepartmentSlug(req);
+  if (!slug) return null;
+
+  const config = departmentConfigs[slug];
+  const expected = Deno.env.get(config.secretName);
   const actual = req.headers.get("x-api-key");
-  return Boolean(expected && actual && expected === actual);
+  return expected && actual && expected === actual
+    ? { slug, departmentId: config.id }
+    : null;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -42,6 +63,12 @@ function text(row: JsonRecord, key: string) {
   if (raw === null || raw === undefined) return null;
   const value = String(raw).trim();
   return value || null;
+}
+
+function requiredText(row: JsonRecord, key: string) {
+  const value = text(row, key);
+  if (value) return value;
+  throw new Error(`${key} is required`);
 }
 
 function integer(row: JsonRecord, key: string, required = false) {
@@ -124,7 +151,7 @@ function normalizeOrderHeader(row: JsonRecord) {
     "内部コード": integer(row, "内部コード", true),
     "受注番号": text(row, "受注番号"),
     "受注日": dateText(row, "受注日", true),
-    "得意先コード": text(row, "得意先コード") ?? "",
+    "得意先コード": requiredText(row, "得意先コード"),
     "得意先名": text(row, "得意先名"),
     "納品日": dateText(row, "納品日"),
     "セット日": dateText(row, "セット日"),
@@ -188,7 +215,7 @@ function normalizeDeliveryHeader(row: JsonRecord) {
   return {
     "内部コード": integer(row, "内部コード", true),
     "納品日": dateText(row, "納品日", true),
-    "得意先コード": text(row, "得意先コード") ?? "",
+    "得意先コード": requiredText(row, "得意先コード"),
     "得意先名": text(row, "得意先名"),
     "担当者コード": text(row, "担当者コード"),
     "取引区分": text(row, "取引区分"),
@@ -242,7 +269,7 @@ function normalizeDeliveryDetail(row: JsonRecord, fallbackInternalCode: number) 
 }
 
 function getDeleteCodes(body: JsonRecord) {
-  const raw = body["内部コード"] ?? body.internal_codes ?? body.codes;
+  const raw = body["内部コード"] ?? body.ids ?? body.internal_codes ?? body.codes;
   const values = Array.isArray(raw) ? raw : [raw];
   return values
     .map((value) => Number(value))
@@ -276,6 +303,7 @@ function getSupabaseAdmin() {
 async function writeApiLog(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   payload: {
+    department_id: number;
     endpoint: string;
     operation: string;
     request_mode: string;
@@ -295,21 +323,47 @@ async function writeApiLog(
   }
 }
 
-async function upsertOrderItem(supabase: ReturnType<typeof getSupabaseAdmin>, body: JsonRecord) {
-  const header = normalizeOrderHeader(getHeaderPayload(body, "受注ID", "order"));
+async function upsertOrderItem(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  body: JsonRecord,
+  departmentId: number,
+) {
+  const normalizedHeader = normalizeOrderHeader(getHeaderPayload(body, "受注ID", "order"));
+  const internalCode = normalizedHeader["内部コード"] as number;
+  const header = {
+    ...normalizedHeader,
+    department_id: departmentId,
+  };
   const details = getArray(body, ["受注明細", "details"]).map((row) =>
-    normalizeOrderDetail(row, header["内部コード"])
+    ({
+      ...normalizeOrderDetail(row, internalCode),
+      department_id: departmentId,
+    })
   );
 
   const { error: headerError } = await supabase
     .from("ireba_order_headers")
-    .upsert(header, { onConflict: "内部コード" });
+    .upsert(header, { onConflict: "department_id,内部コード" });
 
   if (headerError) throw new Error(`order header upsert failed: ${headerError.message}`);
+
+  const { error: customerSyncError } = await supabase.rpc("sync_ireba_customer_master", {
+    p_department_id: departmentId,
+    p_ireba_customer_code: header["得意先コード"],
+    p_customer_name: header["得意先名"],
+    p_external_staff_code: header["担当者コード"],
+    p_order_date: header["受注日"],
+    p_delivery_date: null,
+  });
+
+  if (customerSyncError) {
+    throw new Error(`customer master sync failed: ${customerSyncError.message}`);
+  }
 
   const { error: deleteError } = await supabase
     .from("ireba_order_details")
     .delete()
+    .eq("department_id", departmentId)
     .eq("内部コード", header["内部コード"]);
 
   if (deleteError) throw new Error(`order details cleanup failed: ${deleteError.message}`);
@@ -325,21 +379,47 @@ async function upsertOrderItem(supabase: ReturnType<typeof getSupabaseAdmin>, bo
   return { "内部コード": header["内部コード"] as number, detail_count: details.length };
 }
 
-async function upsertDeliveryItem(supabase: ReturnType<typeof getSupabaseAdmin>, body: JsonRecord) {
-  const header = normalizeDeliveryHeader(getHeaderPayload(body, "納品ID", "delivery"));
+async function upsertDeliveryItem(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  body: JsonRecord,
+  departmentId: number,
+) {
+  const normalizedHeader = normalizeDeliveryHeader(getHeaderPayload(body, "納品ID", "delivery"));
+  const internalCode = normalizedHeader["内部コード"] as number;
+  const header = {
+    ...normalizedHeader,
+    department_id: departmentId,
+  };
   const details = getArray(body, ["納品明細", "details"]).map((row) =>
-    normalizeDeliveryDetail(row, header["内部コード"])
+    ({
+      ...normalizeDeliveryDetail(row, internalCode),
+      department_id: departmentId,
+    })
   );
 
   const { error: headerError } = await supabase
     .from("ireba_delivery_headers")
-    .upsert(header, { onConflict: "内部コード" });
+    .upsert(header, { onConflict: "department_id,内部コード" });
 
   if (headerError) throw new Error(`delivery header upsert failed: ${headerError.message}`);
+
+  const { error: customerSyncError } = await supabase.rpc("sync_ireba_customer_master", {
+    p_department_id: departmentId,
+    p_ireba_customer_code: header["得意先コード"],
+    p_customer_name: header["得意先名"],
+    p_external_staff_code: header["担当者コード"],
+    p_order_date: null,
+    p_delivery_date: header["納品日"],
+  });
+
+  if (customerSyncError) {
+    throw new Error(`customer master sync failed: ${customerSyncError.message}`);
+  }
 
   const { error: deleteError } = await supabase
     .from("ireba_delivery_details")
     .delete()
+    .eq("department_id", departmentId)
     .eq("内部コード", header["内部コード"]);
 
   if (deleteError) throw new Error(`delivery details cleanup failed: ${deleteError.message}`);
@@ -355,7 +435,7 @@ async function upsertDeliveryItem(supabase: ReturnType<typeof getSupabaseAdmin>,
   return { "内部コード": header["内部コード"] as number, detail_count: details.length };
 }
 
-async function upsertOrder(req: Request) {
+async function upsertOrder(req: Request, departmentId: number) {
   const supabase = getSupabaseAdmin();
   const body = await getBody(req);
   const items = getRequestItems(body);
@@ -365,7 +445,7 @@ async function upsertOrder(req: Request) {
 
   for (let index = 0; index < items.length; index += 1) {
     try {
-      const result = await upsertOrderItem(supabase, items[index]);
+      const result = await upsertOrderItem(supabase, items[index], departmentId);
       results.push({ success: true, index, ...result });
       internalCodes.push(result["内部コード"]);
     } catch (error) {
@@ -378,6 +458,7 @@ async function upsertOrder(req: Request) {
   }
 
   await writeApiLog(supabase, {
+    department_id: departmentId,
     endpoint: "orders/upsert",
     operation: "upsert",
     request_mode: items.length > 1 ? "batch" : "single",
@@ -400,7 +481,7 @@ async function upsertOrder(req: Request) {
   }, success ? 200 : 207);
 }
 
-async function upsertDelivery(req: Request) {
+async function upsertDelivery(req: Request, departmentId: number) {
   const supabase = getSupabaseAdmin();
   const body = await getBody(req);
   const items = getRequestItems(body);
@@ -410,7 +491,7 @@ async function upsertDelivery(req: Request) {
 
   for (let index = 0; index < items.length; index += 1) {
     try {
-      const result = await upsertDeliveryItem(supabase, items[index]);
+      const result = await upsertDeliveryItem(supabase, items[index], departmentId);
       results.push({ success: true, index, ...result });
       internalCodes.push(result["内部コード"]);
     } catch (error) {
@@ -423,6 +504,7 @@ async function upsertDelivery(req: Request) {
   }
 
   await writeApiLog(supabase, {
+    department_id: departmentId,
     endpoint: "deliveries/upsert",
     operation: "upsert",
     request_mode: items.length > 1 ? "batch" : "single",
@@ -445,7 +527,7 @@ async function upsertDelivery(req: Request) {
   }, success ? 200 : 207);
 }
 
-async function deleteOrders(req: Request) {
+async function deleteOrders(req: Request, departmentId: number) {
   const supabase = getSupabaseAdmin();
   const codes = getDeleteCodes(await getBody(req));
   if (codes.length === 0) throw new Error("内部コード is required");
@@ -453,11 +535,13 @@ async function deleteOrders(req: Request) {
   const { error } = await supabase
     .from("ireba_order_headers")
     .delete()
+    .eq("department_id", departmentId)
     .in("内部コード", codes);
 
   if (error) throw new Error(`order delete failed: ${error.message}`);
 
   await writeApiLog(supabase, {
+    department_id: departmentId,
     endpoint: "orders/delete",
     operation: "delete",
     request_mode: codes.length > 1 ? "batch" : "single",
@@ -471,7 +555,7 @@ async function deleteOrders(req: Request) {
   return jsonResponse({ success: true, "削除内部コード": codes });
 }
 
-async function deleteDeliveries(req: Request) {
+async function deleteDeliveries(req: Request, departmentId: number) {
   const supabase = getSupabaseAdmin();
   const codes = getDeleteCodes(await getBody(req));
   if (codes.length === 0) throw new Error("内部コード is required");
@@ -479,11 +563,13 @@ async function deleteDeliveries(req: Request) {
   const { error } = await supabase
     .from("ireba_delivery_headers")
     .delete()
+    .eq("department_id", departmentId)
     .in("内部コード", codes);
 
   if (error) throw new Error(`delivery delete failed: ${error.message}`);
 
   await writeApiLog(supabase, {
+    department_id: departmentId,
     endpoint: "deliveries/delete",
     operation: "delete",
     request_mode: codes.length > 1 ? "batch" : "single",
@@ -497,13 +583,14 @@ async function deleteDeliveries(req: Request) {
   return jsonResponse({ success: true, "削除内部コード": codes });
 }
 
-async function checkOrder(req: Request) {
+async function checkOrder(req: Request, departmentId: number) {
   const supabase = getSupabaseAdmin();
   const code = getSingleInternalCode(await getBody(req));
 
   const { data: header, error: headerError } = await supabase
     .from("ireba_order_headers")
     .select("*")
+    .eq("department_id", departmentId)
     .eq("内部コード", code)
     .maybeSingle();
 
@@ -520,6 +607,7 @@ async function checkOrder(req: Request) {
   const { data: details, error: detailsError } = await supabase
     .from("ireba_order_details")
     .select("*")
+    .eq("department_id", departmentId)
     .eq("内部コード", code)
     .order("行No");
 
@@ -534,13 +622,14 @@ async function checkOrder(req: Request) {
   });
 }
 
-async function checkDelivery(req: Request) {
+async function checkDelivery(req: Request, departmentId: number) {
   const supabase = getSupabaseAdmin();
   const code = getSingleInternalCode(await getBody(req));
 
   const { data: header, error: headerError } = await supabase
     .from("ireba_delivery_headers")
     .select("*")
+    .eq("department_id", departmentId)
     .eq("内部コード", code)
     .maybeSingle();
 
@@ -557,6 +646,7 @@ async function checkDelivery(req: Request) {
   const { data: details, error: detailsError } = await supabase
     .from("ireba_delivery_details")
     .select("*")
+    .eq("department_id", departmentId)
     .eq("内部コード", code)
     .order("行No");
 
@@ -580,18 +670,19 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
-  if (!isAuthorized(req)) {
+  const department = authorizeDepartment(req);
+  if (!department) {
     return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   try {
     const pathname = new URL(req.url).pathname;
-    if (pathname.endsWith("/orders/upsert")) return await upsertOrder(req);
-    if (pathname.endsWith("/orders/delete")) return await deleteOrders(req);
-    if (pathname.endsWith("/orders/check")) return await checkOrder(req);
-    if (pathname.endsWith("/deliveries/upsert")) return await upsertDelivery(req);
-    if (pathname.endsWith("/deliveries/delete")) return await deleteDeliveries(req);
-    if (pathname.endsWith("/deliveries/check")) return await checkDelivery(req);
+    if (pathname.endsWith("/orders/upsert")) return await upsertOrder(req, department.departmentId);
+    if (pathname.endsWith("/orders/delete")) return await deleteOrders(req, department.departmentId);
+    if (pathname.endsWith("/orders/check")) return await checkOrder(req, department.departmentId);
+    if (pathname.endsWith("/deliveries/upsert")) return await upsertDelivery(req, department.departmentId);
+    if (pathname.endsWith("/deliveries/delete")) return await deleteDeliveries(req, department.departmentId);
+    if (pathname.endsWith("/deliveries/check")) return await checkDelivery(req, department.departmentId);
 
     return jsonResponse({ error: "Not found" }, 404);
   } catch (error) {

@@ -6,18 +6,18 @@
 
 ## 役割
 
-売上データと商品カテゴリのインポートAPIのルーターです。
+商品カテゴリ更新APIのルーターと、廃止済み売上CSV APIの案内口です。
 
 ## 主な仕様
 
-- アップロード、確定、月締め、商品カテゴリ更新をサブルートで扱います。
-- CSV/TSV取込からDB反映までの入口になります。
+- `sales/*` はすべて `410 Gone` を返し、入れ歯くん同期への移行を案内します。
+- 商品カテゴリ更新だけをサブルートで扱います。
 
 ## コードから読み取れる手がかり
 
-- 主な依存: @vercel/node、../src/server-handlers/import-sales/finalize.js、../src/server-handlers/import-sales/close-month.js、../src/server-handlers/import-sales/month-closures.js、../src/server-handlers/import-sales/upload.js、../src/server-handlers/import-product-categories/upsert.js
+- 主な依存: @vercel/node、../src/server-handlers/import-product-categories/upsert.js
 - 主な公開要素: handler
-- サブルート: sales/upload、sales/finalize、sales/close-month、sales/month-closures、product-categories/upsert
+- サブルート: sales/*（廃止）、product-categories/upsert
 
 ## 運用メモ
 

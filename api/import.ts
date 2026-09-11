@@ -1,8 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import finalizeHandler from '../src/server-handlers/import-sales/finalize.js';
-import closeMonthHandler from '../src/server-handlers/import-sales/close-month.js';
-import monthClosuresHandler from '../src/server-handlers/import-sales/month-closures.js';
-import uploadHandler from '../src/server-handlers/import-sales/upload.js';
 import productCategoryMasterUpsertHandler from '../src/server-handlers/import-product-categories/upsert.js';
 
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
@@ -26,20 +22,11 @@ function getImportRoute(req: VercelRequest) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = getImportRoute(req);
 
-  if (route === 'sales/upload') {
-    return uploadHandler(req, res);
-  }
-
-  if (route === 'sales/finalize') {
-    return finalizeHandler(req, res);
-  }
-
-  if (route === 'sales/close-month') {
-    return closeMonthHandler(req, res);
-  }
-
-  if (route === 'sales/month-closures') {
-    return monthClosuresHandler(req, res);
+  if (route.startsWith('sales/')) {
+    return res.status(410).json({
+      error: 'CSV取込機能は廃止されました。医院・受注・納品データは入れ歯くん同期を使用してください。',
+      code: 'SALES_CSV_IMPORT_RETIRED',
+    });
   }
 
   if (route === 'product-categories/upsert') {

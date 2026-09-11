@@ -31,9 +31,7 @@
 │   │   ├── newOrderDates.ts.md
 │   │   ├── profileExternalStaff.ts.md
 │   │   ├── regionalReads.ts.md
-│   │   ├── regions.ts.md
-│   │   ├── salesImport.ts.md
-│   │   └── salesImportMonthClosures.ts.md
+│   │   └── regions.ts.md
 │   ├── auth
 │   │   ├── mfa.ts.md
 │   │   └── register.ts.md
@@ -69,7 +67,6 @@
 ├── README.md.md
 ├── schema.sql.md
 ├── scripts
-│   ├── debug-sales-upload.mjs.md
 │   ├── local-api-server.ts.md
 │   ├── local-dev.ts.md
 │   └── sync-profile-external-staff-maps.ts.md
@@ -111,9 +108,6 @@
 │   │   ├── SalesPerformanceDashboard.tsx.md
 │   │   └── Signup.tsx.md
 │   ├── server-handlers
-│   │   ├── customers
-│   │   │   ├── sync-and-generate-merge-candidates.ts.md
-│   │   │   └── sync-from-sales-import.ts.md
 │   │   ├── deals
 │   │   │   ├── board.ts.md
 │   │   │   ├── close-month.ts.md
@@ -125,11 +119,6 @@
 │   │   │   └── view.ts.md
 │   │   ├── import-product-categories
 │   │   │   └── upsert.ts.md
-│   │   ├── import-sales
-│   │   │   ├── close-month.ts.md
-│   │   │   ├── finalize.ts.md
-│   │   │   ├── month-closures.ts.md
-│   │   │   └── upload.ts.md
 │   │   ├── kpi
 │   │   │   ├── clinic-assets.ts.md
 │   │   │   ├── detected-new-order.ts.md

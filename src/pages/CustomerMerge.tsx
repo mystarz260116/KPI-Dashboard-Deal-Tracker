@@ -665,7 +665,7 @@ export default function CustomerMerge() {
               {error ? '受注確認候補を取得できませんでした' : '受注確認候補はありません'}
             </p>
             <p className="mt-1 text-sm text-zinc-400">
-              {error || 'CSV取込後に同期処理を実行してください'}
+              {error || '入れ歯くんに新しい医院が登録されると、確認が必要な候補がここに表示されます'}
             </p>
             {!error && pendingCount > 0 && (
               <p className="mt-2 text-sm font-medium text-amber-600">

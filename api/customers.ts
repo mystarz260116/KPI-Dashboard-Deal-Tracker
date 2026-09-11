@@ -1,6 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import syncAndGenerateHandler from '../src/server-handlers/customers/sync-and-generate-merge-candidates.js';
-import syncFromSalesImportHandler from '../src/server-handlers/customers/sync-from-sales-import.js';
 
 function normalizeRoutePath(pathValue: string | string[] | undefined) {
   if (Array.isArray(pathValue)) {
@@ -23,12 +21,11 @@ function getCustomersRoute(req: VercelRequest) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = getCustomersRoute(req);
 
-  if (route === 'sync-from-sales-import') {
-    return syncFromSalesImportHandler(req, res);
-  }
-
-  if (route === 'sync-and-generate-merge-candidates') {
-    return syncAndGenerateHandler(req, res);
+  if (route === 'sync-from-sales-import' || route === 'sync-and-generate-merge-candidates') {
+    return res.status(410).json({
+      error: 'CSV由来の医院マスタ同期は廃止されました。入れ歯くん同期を使用してください。',
+      code: 'LEGACY_CUSTOMER_SYNC_RETIRED',
+    });
   }
 
   return res.status(404).json({ error: 'Not found' });

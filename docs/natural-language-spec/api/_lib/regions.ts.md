@@ -10,11 +10,11 @@ API層の共通ヘルパーです。
 
 ## 主な仕様
 
-- Vercel Functionsから共有される認証、地域・部署判定、売上取込、MFA再検証などの補助処理を提供します。
+- Vercel Functionsが参照する入れ歯くん売上ビュー名を一元管理します。
 
 ## コードから読み取れる手がかり
 
-- 主な公開要素: SALES_IMPORT_RAW_TABLE、CUSTOMERS_TABLE、SALES_IMPORT_ROWS_TABLE、CUSTOMER_STAFF_MAP_TABLE、parseDepartmentId、normalizeRawDate、extractCodePrefix、parseRawAmount
+- 主な公開要素: DASHBOARD_SALES_ROWS_TABLE
 
 ## 運用メモ
 
