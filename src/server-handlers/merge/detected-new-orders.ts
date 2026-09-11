@@ -39,11 +39,12 @@ function explicitMonth(value: unknown) {
 }
 
 async function fetchLatestSalesMonth(dataKind: 'delivery' | 'order') {
-  const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
+  const table = dataKind === 'order' ? 'ireba_order_headers' : 'ireba_delivery_headers';
+  const dateColumn = dataKind === 'order' ? '受注日' : '納品日';
   const { data, error } = await supabaseAdmin
-    .from(DASHBOARD_SALES_ROWS_TABLE)
+    .from(table)
     .select(dateColumn)
-    .eq('data_kind', dataKind)
+    .in('department_id', [1, 2])
     .not(dateColumn, 'is', null)
     .order(dateColumn, { ascending: false })
     .limit(1);
@@ -183,70 +184,44 @@ async function fetchPriorSalesCustomerCodes({
   }
 
   const dataKindsToCheck = Array.from(new Set([dataKind, dataKind === 'order' ? 'delivery' : 'order']));
-  const rpcResults = await Promise.all(
-    dataKindsToCheck.map((kind) => supabaseAdmin
-      .rpc('sales_prior_customer_codes', {
-        p_start_date: startDate,
-        p_end_date: endExclusiveDate,
-        p_department_ids: departmentIds,
-        p_external_staff_codes: externalStaffCodes,
-        p_customer_codes: customerCodes,
-        p_data_kind: kind,
-      }))
-  );
+  const result = new Set<string>();
+  const customerChunkSize = 20;
+  const chunkConcurrency = 5;
+  const customerCodeChunks: string[][] = [];
 
-  const rpcError = rpcResults.find((result) => result.error)?.error;
-  if (!rpcError) {
-    return new Set(
-      rpcResults
-        .flatMap((result) => result.data ?? [])
-        .map((row: any) => normalizeCustomerCode(row.customer_code))
-        .filter(Boolean)
-    );
+  for (let index = 0; index < customerCodes.length; index += customerChunkSize) {
+    customerCodeChunks.push(customerCodes.slice(index, index + customerChunkSize));
   }
 
-  console.warn('detected new order prior customer rpc fallback:', rpcError.message ?? rpcError);
+  for (let index = 0; index < customerCodeChunks.length; index += chunkConcurrency) {
+    const chunkBatch = customerCodeChunks.slice(index, index + chunkConcurrency);
+    const rpcResults = await Promise.all(
+      chunkBatch.flatMap((customerCodeChunk) => (
+        dataKindsToCheck.map((kind) => supabaseAdmin
+          .rpc('sales_prior_customer_codes', {
+            p_start_date: startDate,
+            p_end_date: endExclusiveDate,
+            p_department_ids: departmentIds,
+            p_external_staff_codes: externalStaffCodes,
+            p_customer_codes: customerCodeChunk,
+            p_data_kind: kind,
+          }))
+      ))
+    );
 
-  const result = new Set<string>();
-  const customerChunkSize = 80;
-
-  for (const kind of dataKindsToCheck) {
-    const dateColumn = kind === 'order' ? 'order_date' : 'delivery_date';
-
-    for (let index = 0; index < customerCodes.length; index += customerChunkSize) {
-      const customerChunk = customerCodes.slice(index, index + customerChunkSize);
-      let from = 0;
-
-      while (true) {
-        const { data, error } = await supabaseAdmin
-          .from(DASHBOARD_SALES_ROWS_TABLE)
-          .select('customer_code')
-          .eq('data_kind', kind)
-          .gte(dateColumn, startDate)
-          .lt(dateColumn, endExclusiveDate)
-          .in('department_id', departmentIds)
-          .in('external_staff_code', externalStaffCodes)
-          .in('customer_code', customerChunk)
-          .range(from, from + 999);
-
-        if (error) {
-          throw error;
-        }
-
-        (data ?? []).forEach((row: any) => {
-          const customerCode = normalizeCustomerCode(row.customer_code);
-          if (customerCode) {
-            result.add(customerCode);
-          }
-        });
-
-        if ((data ?? []).length < 1000) {
-          break;
-        }
-
-        from += 1000;
-      }
+    const rpcError = rpcResults.find((rpcResult) => rpcResult.error)?.error;
+    if (rpcError) {
+      throw new Error(`prior sales lookup failed: ${rpcError.message ?? rpcError}`);
     }
+
+    rpcResults.forEach((rpcResult) => {
+      (rpcResult.data ?? []).forEach((row: any) => {
+        const customerCode = normalizeCustomerCode(row.customer_code);
+        if (customerCode) {
+          result.add(customerCode);
+        }
+      });
+    });
   }
 
   return result;
