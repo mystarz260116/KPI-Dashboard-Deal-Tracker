@@ -11,6 +11,7 @@ import {
   fetchRegionalSalesTotal,
   normalizeSalesImportDataKind,
 } from './_lib/regionalReads.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from './_lib/regions.js';
 import { fetchFirstOrderDateByCustomerCode, filterMergedProspectsByFirstOrderDate } from './_lib/newOrderDates.js';
 import { detectExistingDealWins } from './_lib/existingDealWins.js';
 import newOrdersHandler from '../src/server-handlers/kpi/new-orders.js';
@@ -186,7 +187,7 @@ async function fetchDashboardSalesRowsFallback({
 
     while (true) {
       const { data, error } = await supabaseAdmin
-        .from('sales_import_rows')
+        .from(DASHBOARD_SALES_ROWS_TABLE)
         .select('department_id, data_kind, customer_code, amount, delivery_date, order_date, external_staff_code, normalized_product_code, normalized_product_name')
         .eq('data_kind', dataKind)
         .gte(dateColumn, startDate)
@@ -331,7 +332,7 @@ async function fetchDashboardClinicSalesRowsFallback({
 
     while (true) {
       const { data, error } = await supabaseAdmin
-        .from('sales_import_rows')
+        .from(DASHBOARD_SALES_ROWS_TABLE)
         .select('department_id, customer_code, customer_name, amount, delivery_date, order_date, external_staff_code')
         .eq('data_kind', dataKind)
         .gte(dateColumn, startDate)
@@ -789,7 +790,7 @@ export default async function handler(req: any, res: any) {
       console.error('kpi sales import rows error:', salesImportRowsError);
       return res.status(500).json({ error: 'sales import rows fetch failed' });
     }
-    markDebug('sales_import_rows', {
+    markDebug('ireba_sales_rows', {
       currentStart,
       currentEnd,
       previousStart,

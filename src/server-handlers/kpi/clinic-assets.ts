@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { expandYearMonthFormats, toDateString } from '../../lib/dateUtils.js';
 import { requireAuthenticatedProfile, requireDashboardAccess } from '../../../api/_lib/auth.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from '../../../api/_lib/regions.js';
 
 type AssetPeriod = '3m' | '6m' | '12m';
 
@@ -204,7 +205,7 @@ async function fetchSalesRowsFallback({
 
     while (true) {
       const query = supabaseAdmin
-        .from('sales_import_rows')
+        .from(DASHBOARD_SALES_ROWS_TABLE)
         .select('department_id, customer_code, customer_name, external_staff_code, amount, delivery_date, order_date')
         .eq('data_kind', dataKind)
         .gte(dateColumn, startDate)
@@ -698,7 +699,7 @@ export default async function handler(req: any, res: any) {
       const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
       const comparisonStart = toDateString(previousSameMonthStart);
       const { data: insightSalesRows, error: insightSalesError } = await supabaseAdmin
-        .from('sales_import_rows')
+        .from(DASHBOARD_SALES_ROWS_TABLE)
         .select(`customer_code, amount, ${dateColumn}, normalized_product_code, normalized_product_name, source_raw_id`)
         .eq('data_kind', dataKind)
         .in('customer_code', rankingCandidateCodes)

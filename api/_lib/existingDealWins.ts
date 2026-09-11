@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
 import { toDateString } from '../../src/lib/dateUtils.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from './regions.js';
 
 type ExistingDealRow = {
   id: string;
@@ -198,7 +199,7 @@ export async function detectExistingDealWins(options: ExistingDealWinOptions) {
   );
 
   const { data: salesRowsData, error: salesRowsError } = await supabaseAdmin
-    .from('sales_import_rows')
+    .from(DASHBOARD_SALES_ROWS_TABLE)
     .select('department_id, customer_code, amount, order_date, normalized_product_code')
     .eq('data_kind', 'order')
     .in('customer_code', customerCodes)

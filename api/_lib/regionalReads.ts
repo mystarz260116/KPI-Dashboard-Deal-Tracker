@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from './regions.js';
 
 type SalesRowFilters = {
   startDate: string;
@@ -21,7 +22,7 @@ export async function fetchRegionalSalesRows(filters: SalesRowFilters) {
 
   while (true) {
     let query = supabaseAdmin
-      .from('sales_import_rows')
+      .from(DASHBOARD_SALES_ROWS_TABLE)
       .select('department_id, data_kind, customer_code, amount, delivery_date, order_date, external_staff_code, normalized_product_code, normalized_product_name')
       .eq('data_kind', dataKind)
       .gte(dateColumn, filters.startDate)

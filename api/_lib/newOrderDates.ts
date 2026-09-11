@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../src/lib/supabaseAdmin.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from './regions.js';
 
 type SalesDateRow = {
   customer_code: string | null;
@@ -32,7 +33,7 @@ export async function fetchFirstOrderDateByCustomerCode(customerCodes: string[])
 
     while (true) {
       const { data, error } = await supabaseAdmin
-        .from('sales_import_rows')
+        .from(DASHBOARD_SALES_ROWS_TABLE)
         .select('customer_code, delivery_date, order_date')
         .in('customer_code', codeChunk)
         .range(from, from + pageSize - 1);

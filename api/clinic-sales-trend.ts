@@ -1,17 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireAuthenticatedProfile, requireDashboardAccess } from './_lib/auth.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from './_lib/regions.js';
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
 
 const CLINICS = [
   {
     requested_code: '30562',
-    sales_code: '30562',
+    sales_code: '1030562',
     display_name: 'しまだ歯科クリニック',
     ios_rental_start: '2025-10-01',
   },
   {
     requested_code: '4097',
-    sales_code: '40979',
+    sales_code: '1040979',
     display_name: '医療法人社団晃誠会 あおぞらデンタルクリニック',
     ios_rental_start: '2025-04-01',
   },
@@ -41,7 +42,7 @@ async function fetchClinicSales(salesCode: string, from: string, to: string) {
 
   for (let offset = 0; ; offset += 1000) {
     const { data, error } = await supabaseAdmin
-      .from('sales_import_rows')
+      .from(DASHBOARD_SALES_ROWS_TABLE)
       .select('delivery_date, amount, normalized_product_code, normalized_product_name')
       .eq('data_kind', 'delivery')
       .eq('customer_code', salesCode)

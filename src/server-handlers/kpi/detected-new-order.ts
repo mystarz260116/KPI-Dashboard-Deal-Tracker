@@ -4,6 +4,7 @@ import { normalizeCustomerCode, normalizeCustomerName } from '../../lib/customer
 import { clinicNameSimilarity, normalizeClinicNameForMerge } from '../../lib/mergeUtils.js';
 import { requireAuthenticatedProfile, requireUserManagementAccess } from '../../../api/_lib/auth.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from '../../../api/_lib/regions.js';
 
 function normalizeMonth(value: unknown) {
   const raw = String(value ?? '').trim();
@@ -165,7 +166,7 @@ async function hasPriorSales(customerCode: string, detectedMonth: string) {
 
   const [deliveryResult, orderResult] = await Promise.all([
     supabaseAdmin
-      .from('sales_import_rows')
+      .from(DASHBOARD_SALES_ROWS_TABLE)
       .select('source_raw_id')
       .eq('customer_code', customerCode)
       .eq('data_kind', 'delivery')
@@ -173,7 +174,7 @@ async function hasPriorSales(customerCode: string, detectedMonth: string) {
       .lt('delivery_date', targetStart)
       .limit(1),
     supabaseAdmin
-      .from('sales_import_rows')
+      .from(DASHBOARD_SALES_ROWS_TABLE)
       .select('source_raw_id')
       .eq('customer_code', customerCode)
       .eq('data_kind', 'order')

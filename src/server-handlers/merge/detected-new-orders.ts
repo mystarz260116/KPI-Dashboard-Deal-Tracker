@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin.js';
 import { normalizeCustomerCode, normalizeCustomerName } from '../../lib/customerCode.js';
 import { normalizeSalesImportDataKind } from '../../../api/_lib/regionalReads.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from '../../../api/_lib/regions.js';
 
 const EXCLUDED_SALES_EXTERNAL_STAFF_CODES = new Set(['100', '102', '9999']);
 const EXCLUDED_DASHBOARD_DEPARTMENTS = new Set(['管理部']);
@@ -40,7 +41,7 @@ function explicitMonth(value: unknown) {
 async function fetchLatestSalesMonth(dataKind: 'delivery' | 'order') {
   const dateColumn = dataKind === 'order' ? 'order_date' : 'delivery_date';
   const { data, error } = await supabaseAdmin
-    .from('sales_import_rows')
+    .from(DASHBOARD_SALES_ROWS_TABLE)
     .select(dateColumn)
     .eq('data_kind', dataKind)
     .not(dateColumn, 'is', null)
@@ -84,7 +85,7 @@ async function fetchClinicSalesRowsFallback({
 
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseAdmin
-      .from('sales_import_rows')
+      .from(DASHBOARD_SALES_ROWS_TABLE)
       .select('department_id, customer_code, customer_name, amount, delivery_date, order_date, external_staff_code')
       .eq('data_kind', dataKind)
       .gte(dateColumn, startDate)
@@ -218,7 +219,7 @@ async function fetchPriorSalesCustomerCodes({
 
       while (true) {
         const { data, error } = await supabaseAdmin
-          .from('sales_import_rows')
+          .from(DASHBOARD_SALES_ROWS_TABLE)
           .select('customer_code')
           .eq('data_kind', kind)
           .gte(dateColumn, startDate)
