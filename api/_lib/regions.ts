@@ -1,6 +1,7 @@
 export const SALES_IMPORT_RAW_TABLE = 'sales_import_raw_rows';
 export const CUSTOMERS_TABLE = 'customers';
 export const SALES_IMPORT_ROWS_TABLE = 'sales_import_rows';
+export const DASHBOARD_SALES_ROWS_TABLE = 'ireba_sales_rows';
 export const CUSTOMER_STAFF_MAP_TABLE = 'customer_external_staff_maps';
 
 export function parseDepartmentId(value: unknown) {

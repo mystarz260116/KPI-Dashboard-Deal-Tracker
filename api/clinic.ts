@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../src/lib/supabaseAdmin.js';
 import { normalizeCustomerCode } from '../src/lib/customerCode.js';
 import { requireAuthenticatedProfile } from './_lib/auth.js';
+import { DASHBOARD_SALES_ROWS_TABLE } from './_lib/regions.js';
 
 function parseClinicKind(value: unknown) {
   return value === 'customer' || value === 'prospect' ? value : null;
@@ -98,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (kind === 'customer') {
       const { data, error } = await supabaseAdmin
         .from('customers')
-        .select('code, name')
+        .select('code, name, ireba_customer_code')
         .eq('code', clinicId)
         .single();
 
@@ -113,6 +114,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         name: data.name,
       };
       customerCodeForMapping = data.code;
+      const irebaCustomerCode = String(data.ireba_customer_code ?? '').trim();
+      if (irebaCustomerCode) {
+        clinicPayload = {
+          ...clinicPayload,
+          ireba_customer_code: irebaCustomerCode,
+        } as typeof clinicPayload & { ireba_customer_code: string };
+      }
     } else {
       const { data, error } = await supabaseAdmin
         .from('prospect_customers')
@@ -212,10 +220,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }));
       }
 
+      const salesCustomerCode = kind === 'customer'
+        ? String((clinicPayload as any)?.ireba_customer_code ?? customerCodeForMapping)
+        : customerCodeForMapping;
+
       let salesQuery = supabaseAdmin
-        .from('sales_import_rows')
+        .from(DASHBOARD_SALES_ROWS_TABLE)
         .select('delivery_date, order_date, data_kind, external_staff_code, normalized_product_name, amount')
-        .eq('customer_code', customerCodeForMapping)
+        .eq('customer_code', salesCustomerCode)
         .or(`and(data_kind.eq.delivery,delivery_date.gte.${monthStart},delivery_date.lt.${monthEndExclusive}),and(data_kind.eq.order,order_date.gte.${monthStart},order_date.lt.${monthEndExclusive})`)
         .order('delivery_date', { ascending: false, nullsFirst: false })
         .order('order_date', { ascending: false, nullsFirst: false })
